@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { buildApp } from "./app.js";
 import { createAppRuntime, readPackageVersion } from "./context.js";
+import { installHostHttpDispatcher } from "./core/http.js";
 
 const USAGE = `Usage: pi-web [options]
 
@@ -83,6 +84,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
 	const runtime = await createAppRuntime({ dataDir: options.dataDir });
 	const { ctx } = runtime;
+	// Global fetch (pi-ai's OAuth refresh) must honour the host's proxy settings like pi's own CLI.
+	installHostHttpDispatcher(() => ctx.store.getSettings().upstreamProxy);
 	const settings = ctx.store.getSettings();
 	const host = options.host ?? settings.listenHost ?? "127.0.0.1";
 	const port = options.port ?? settings.listenPort ?? 7878;

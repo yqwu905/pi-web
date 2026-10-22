@@ -8,6 +8,7 @@
 //   prompt "/pi-web-<action> {…}" → companion result via setStatus("pi-web:result")
 //   anything else                 → a streamed assistant reply
 // Env: FAKE_PI_NO_COMPANION, FAKE_PI_COMPANION_SILENT, FAKE_PI_IGNORE_STDIN_END, FAKE_PI_IGNORE_SIGTERM
+//      FAKE_PI_HANG=<type,…>  → never answer these command types
 import { randomUUID } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 
@@ -99,8 +100,11 @@ function companion(id, message) {
 	respond(id, "prompt", { disposition: "handled" });
 }
 
+const hangCommands = new Set((process.env.FAKE_PI_HANG ?? "").split(",").filter(Boolean));
+
 function handle(cmd) {
 	const { id, type } = cmd;
+	if (hangCommands.has(type)) return;
 	switch (type) {
 		case "get_state":
 			return respond(id, type, getState());

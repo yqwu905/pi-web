@@ -141,6 +141,8 @@ export function useOAuthStatus() {
 		if (!data || typeof data !== "object" || !Array.isArray(data.providers)) return;
 		client.setQueryData(queryKeys.oauth, data);
 	});
+	// Events published while the socket was down are lost.
+	useWsReconnect(() => void client.invalidateQueries({ queryKey: queryKeys.oauth }));
 	return useQuery({ queryKey: queryKeys.oauth, queryFn: () => getOAuthStatus(), staleTime: 30_000 });
 }
 
@@ -151,6 +153,7 @@ export function useSyncHistory(limit = 50) {
 		if (!ev || typeof ev !== "object" || ev.kind !== "record") return;
 		client.setQueryData<SyncRecord[]>([...queryKeys.syncHistory, limit], (prev) => (prev ? mergeRecord(prev, ev.record, limit) : prev));
 	});
+	useWsReconnect(() => void client.invalidateQueries({ queryKey: queryKeys.syncHistory }));
 	return useQuery({
 		queryKey: [...queryKeys.syncHistory, limit],
 		queryFn: async () => (await getSyncHistory(limit)).records,

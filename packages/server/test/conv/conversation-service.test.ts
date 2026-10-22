@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { ConvEvent, ConversationView } from "@pi-web/shared";
+import {
+	CONV_SNAPSHOT_TIMEOUT_MS,
+	CONV_START_TIMEOUT_MS,
+	LONG_RPC_TIMEOUT_MS,
+	RPC_TIMEOUT_MS,
+	type ConvEvent,
+	type ConversationView,
+} from "@pi-web/shared";
 import { ApiError } from "../../src/core/types.js";
 import { sanitizeFileName } from "../../src/conv/index.js";
 import { FakeAgent, createFakeContext, flush, makeServer, makeWorkspace, until } from "../api/fakes.js";
@@ -271,6 +278,42 @@ describe("ConversationService commands", () => {
 		const replay = await fake.ctx.conversations.replay(convId, 0);
 		expect(replay).toMatchObject({ complete: true, lastSeq: 1 });
 		expect(replay.events.map((e) => e.seq)).toEqual([1]);
+	});
+
+	it("waits on the link longer than the agent's own budget for each command", async () => {
+		const { fake, agent } = await setup();
+		const linkTimeouts: Array<[string, number | undefined]> = [];
+		fake.connections.agentFactory = () => {
+			const client = agent.connect();
+			const call = client.call.bind(client);
+			client.call = ((method: never, params: never, options?: { timeoutMs?: number }) => {
+				linkTimeouts.push([method, options?.timeoutMs]);
+				return call(method, params, options);
+			}) as typeof client.call;
+			return client;
+		};
+		await connect(fake);
+		const { convId } = await fake.ctx.conversations.open("ws1", {});
+		await fake.ctx.conversations.snapshot(convId);
+		await fake.ctx.conversations.rpc(convId, { type: "prompt", message: "hello" });
+		await fake.ctx.conversations.rpc(convId, { type: "prompt", message: "/ext-command arg" });
+		await fake.ctx.conversations.rpc(convId, { type: "bash", command: "ls" });
+		await fake.ctx.conversations.rpc(convId, { type: "get_state" }, 5000);
+		await fake.ctx.conversations.companion(convId, "label", { entryId: "e1" });
+		await fake.ctx.conversations.companion(convId, "reload", {});
+		await fake.ctx.conversations.companion(convId, "navigate", { targetId: "e1" });
+		const margin = 10_000;
+		expect(linkTimeouts.filter(([method]) => method !== "conv.list")).toEqual([
+			["conv.start", CONV_START_TIMEOUT_MS + margin],
+			["conv.snapshot", CONV_SNAPSHOT_TIMEOUT_MS + margin],
+			["conv.send", RPC_TIMEOUT_MS + margin],
+			["conv.send", LONG_RPC_TIMEOUT_MS + margin],
+			["conv.send", LONG_RPC_TIMEOUT_MS + margin],
+			["conv.send", 5000 + margin],
+			["conv.companion", RPC_TIMEOUT_MS + margin],
+			["conv.companion", LONG_RPC_TIMEOUT_MS + margin],
+			["conv.companion", LONG_RPC_TIMEOUT_MS + margin],
+		]);
 	});
 
 	it("exports HTML through a temporary remote file that is removed afterwards", async () => {

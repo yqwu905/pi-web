@@ -139,7 +139,7 @@ export interface ConvSendParams {
 	convId: string;
 	/** Any pi RPC command; the agent assigns the RPC `id` itself. */
 	command: RpcCommand;
-	/** Default 60s; `compact`, `export_html`, `abort`, `bash` default to 10 min. */
+	/** Default: defaultCommandTimeout(command) (timeouts.ts); covers waiting for a starting process too. */
 	timeoutMs?: number;
 }
 /** pi's response plus the conversation's lastSeq at the moment the response line was read. */

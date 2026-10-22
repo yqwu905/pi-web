@@ -182,7 +182,14 @@ function ServerDetail({ view }: { view: ServerView }) {
 	});
 
 	const deployed = Boolean(c.deployed) || view.status.deployState === "deployed" || view.status.deployState === "outdated";
-	const showJob = job && (job.state === "running" || job.jobId !== dismissedJob) && (job.state === "running" || (job.finishedAt ?? 0) > Date.now() - 30 * 60_000);
+	// Jobs this page watched running stay visible when they finish; otherwise only recent failures
+	// are shown (a successful deploy is summarised in 运行环境, as in the artboard).
+	const [watchedJob, setWatchedJob] = useState<string | null>(null);
+	useEffect(() => {
+		if (job?.state === "running" && watchedJob !== job.jobId) setWatchedJob(job.jobId);
+	}, [job?.state, job?.jobId, watchedJob]);
+	const recentFailure = job && job.state !== "done" && (job.finishedAt ?? 0) > Date.now() - 30 * 60_000;
+	const showJob = job && (job.state === "running" || (job.jobId !== dismissedJob && (job.jobId === watchedJob || recentFailure)));
 	const jumpLabel = jumpChainLabel(c.jumpServerIds, servers);
 	const subtitle = [serverTarget(c), jumpLabel && `经 ${jumpLabel}`, c.group && `分组 ${c.group}`].filter(Boolean).join(" · ");
 	const upgradeLabel = deployed ? "升级 pi" : "部署";
@@ -272,12 +279,17 @@ function ServerDetail({ view }: { view: ServerView }) {
 
 				{showJob && (
 					<div className="relative">
-						<DeployProgressPanel job={job} title={job.state === "running" ? "正在部署" : "最近一次部署"} />
-						{job.state !== "running" && (
-							<IconButton aria-label="关闭部署进度" size="md" className="absolute top-3 right-3" onClick={() => setDismissedJob(job.jobId)}>
-								<X size={14} strokeWidth={2} />
-							</IconButton>
-						)}
+						<DeployProgressPanel
+							job={job}
+							title={job.state === "running" ? "正在部署" : "最近一次部署"}
+							headerAction={
+								job.state !== "running" ? (
+									<IconButton aria-label="关闭部署进度" size="md" onClick={() => setDismissedJob(job.jobId)}>
+										<X size={14} strokeWidth={2} />
+									</IconButton>
+								) : undefined
+							}
+						/>
 						{job.state === "running" && (
 							<p className="mt-2 mb-0 flex items-center gap-1.5 text-xs text-fg-3">
 								<CircleAlert size={12} aria-hidden="true" />

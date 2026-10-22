@@ -1,15 +1,18 @@
 import type { BashResult } from "@pi-web/shared";
-import { CircleAlert, MessageSquarePlus, PanelRightOpen } from "lucide-react";
+import { CircleAlert, CloudOff, MessageSquarePlus, PanelRightOpen } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { errorMessage } from "../../api/client";
+import { invalidateSessions } from "../../api/hooks";
 import { ButtonLink, Callout, EmptyState, IconButton, LoadingBlock, toast } from "../../components/ui";
 import { paths } from "../../lib/routes";
 import { sessionTitle } from "../../lib/sessions";
 import { useConversation } from "../../stores/conversation";
 import { useConversationView } from "../../stores/convs";
+import { useServer } from "../../stores/servers";
+import { ConnectButton } from "../workspace/WorkspaceGate";
 import { Composer, type ComposerHandle } from "./components/Composer";
-import { CompactDialog, type DialogRequest, ExtensionUiDialog, ForkDialog, RenameDialog } from "./components/Dialogs";
+import { CompactDialog, DeleteSessionDialog, type DialogRequest, ExtensionUiDialog, ForkDialog, RenameDialog } from "./components/Dialogs";
 import { InfoPanel } from "./components/InfoPanel";
 import { MessageList } from "./components/MessageList";
 import type { BashRunView } from "./components/MessageViews";
@@ -63,6 +66,20 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 	const pinnedConvId = pin && pinView && pinView.info.status !== "exited" ? pin : null;
 	const conv = useConversation({ workspaceId, sessionId: routeSessionId, convId: pinnedConvId });
 	const { state } = conv;
+
+	// The conversation lives on the workspace's server: offline means no history and no sending.
+	const server = useServer(conv.workspace?.config.serverId);
+	const connection = server?.status.connection;
+	const offline = Boolean(server) && connection !== "connected" && connection !== "connecting";
+	const prevConnection = useRef(connection);
+	useEffect(() => {
+		const before = prevConnection.current;
+		prevConnection.current = connection;
+		if (before === undefined || before === connection || connection !== "connected") return;
+		// Back online: reload what failed while the server was away.
+		void invalidateSessions(workspaceId);
+		if (conv.error && conv.convId) void conv.resync();
+	}, [connection, workspaceId, conv]);
 
 	const composerRef = useRef<ComposerHandle>(null);
 	const pendingText = useRef<string | null>(null);
@@ -212,7 +229,7 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 	const waiting = conv.isLive && state.isRunning && !state.streaming && !state.isCompacting && !hasRunningTool(state);
 
 	const [dismissedError, setDismissedError] = useState<string | undefined>(undefined);
-	const syncError = conv.error && items.length > 0 && conv.error !== dismissedError ? conv.error : undefined;
+	const syncError = !offline && conv.error && items.length > 0 && conv.error !== dismissedError ? conv.error : undefined;
 	const lastMessage = state.messages[state.messages.length - 1] as { role: string; errorMessage?: string } | undefined;
 	const lastError =
 		state.lastError && state.lastError !== dismissedError && !(lastMessage?.role === "assistant" && lastMessage.errorMessage === state.lastError) ? state.lastError : undefined;
@@ -230,7 +247,7 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 	const [panelNarrow, setPanelNarrow] = useState(false);
 	const panelOpen = wide ? panelPref : panelNarrow;
 	const setPanelOpen = (open: boolean) => (wide ? setPanelPref(open) : setPanelNarrow(open));
-	const [dialog, setDialog] = useState<"tree" | "fork" | "compact" | "rename" | null>(null);
+	const [dialog, setDialog] = useState<"tree" | "fork" | "compact" | "rename" | "delete" | null>(null);
 	const closeDialog = useCallback(() => setDialog(null), []);
 
 	const pendingDialog = conv.isLive ? (state.ui.pending[0] as DialogRequest | undefined) : undefined;
@@ -239,7 +256,21 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 	// ---------- render ----------
 
 	let placeholder: ReactNode;
-	if (conv.loading) placeholder = <LoadingBlock text="正在加载会话…" />;
+	if (offline && server && items.length === 0 && (conv.error || conv.mode !== "new"))
+		placeholder = (
+			<EmptyState
+				icon={<CloudOff />}
+				title="服务器未连接"
+				description={
+					<>
+						对话需要通过 SSH 连接到 <span className="text-fg">{server.config.name}</span>。
+						{connection === "error" && server.status.error ? <span className="mt-1 block text-danger">{server.status.error}</span> : null}
+					</>
+				}
+				actions={<ConnectButton serverId={server.config.id} />}
+			/>
+		);
+	else if (conv.loading) placeholder = <LoadingBlock text="正在加载会话…" />;
 	else if (conv.mode === "new" && routeSessionId && conv.error)
 		placeholder = (
 			<EmptyState
@@ -287,7 +318,7 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 
 	return (
 		<div className="relative flex min-h-0 flex-1">
-			<main className="flex min-w-0 flex-1 flex-col bg-bg">
+			<section aria-label="对话" className="flex min-w-0 flex-1 flex-col bg-bg">
 				<MessageList
 					items={items}
 					workspaceId={workspaceId}
@@ -306,6 +337,11 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 								onStop={() => conv.call({ type: "abort_retry" }).catch((e: unknown) => toast.error(errorMessage(e), { title: "停止重试失败" }))}
 							/>
 						)}
+						{offline && server && (items.length > 0 || conv.mode === "new") && (
+							<Callout tone="warning" title={`${server.config.name} 未连接`} actions={<ConnectButton serverId={server.config.id} size="sm" label="连接" />}>
+								重新连接后才能发送消息。
+							</Callout>
+						)}
 						{lastError && <ErrorBanner message={lastError} onDismiss={() => setDismissedError(lastError)} />}
 						{syncError && <ErrorBanner message={`同步会话失败：${syncError}`} onDismiss={() => setDismissedError(syncError)} />}
 						{exitInfo && <ExitedBanner exited={exitInfo} onDismiss={() => setExitInfo(undefined)} />}
@@ -315,7 +351,7 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 						{conv.isLive && <ExtensionWidgets widgets={state.ui.widgets} placement="belowEditor" />}
 					</div>
 				</div>
-			</main>
+			</section>
 
 			{panelOpen && (
 				<InfoPanel
@@ -325,6 +361,7 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 					onOpenFork={() => setDialog("fork")}
 					onOpenCompact={() => setDialog("compact")}
 					onOpenRename={() => setDialog("rename")}
+					onOpenDelete={() => setDialog("delete")}
 					className={wide ? "w-[288px] shrink-0" : "absolute inset-y-0 right-0 z-20 w-[300px] max-w-[90%] shadow-pop"}
 				/>
 			)}
@@ -333,6 +370,13 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 			<ForkDialog open={dialog === "fork"} onClose={closeDialog} conv={conv} onForked={fillComposer} />
 			<CompactDialog open={dialog === "compact"} onClose={closeDialog} conv={conv} />
 			<RenameDialog open={dialog === "rename"} onClose={closeDialog} conv={conv} currentName={sessionName} />
+			<DeleteSessionDialog
+				open={dialog === "delete"}
+				onClose={closeDialog}
+				conv={conv}
+				title={sessionName || sessionTitle(conv.session)}
+				onDeleted={() => navigate(paths.chat(workspaceId), { replace: true })}
+			/>
 			{pendingDialog && <ExtensionUiDialog key={pendingDialog.id} request={pendingDialog} onRespond={conv.uiResponse} />}
 		</div>
 	);

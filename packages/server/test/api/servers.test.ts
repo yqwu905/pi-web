@@ -164,6 +164,33 @@ describe("connection actions", () => {
 		expect(t.connections.calls[1].args[0]).toMatchObject({ host: "10.0.0.5", serverId: "srv1", auth: { method: "agent" } });
 	});
 
+	it("tests unsaved edits of an existing server with its trusted key and stored secret", async () => {
+		await withServer();
+		const res = await t.request("POST", "/api/servers/test", {
+			serverId: "srv1",
+			host: "10.0.0.5",
+			port: 22,
+			username: "other",
+			auth: { method: "password" },
+			jumpServerIds: [],
+		});
+		expect(res.statusCode).toBe(200);
+		expect(t.connections.calls[0]).toEqual({
+			method: "testConnection",
+			args: [{ host: "10.0.0.5", port: 22, username: "other", auth: { method: "password" }, jumpServerIds: [], serverId: "srv1" }],
+		});
+		const missing = await t.request("POST", "/api/servers/test", { serverId: "nope", host: "h", username: "u", auth: { method: "agent" } });
+		expect(missing.statusCode).toBe(404);
+		const selfJump = await t.request("POST", "/api/servers/test", {
+			serverId: "srv1",
+			host: "h",
+			username: "u",
+			auth: { method: "agent" },
+			jumpServerIds: ["srv1"],
+		});
+		expect(selfJump.statusCode).toBe(400);
+	});
+
 	it("trusts host keys", async () => {
 		await withServer();
 		const bad = await t.request("POST", "/api/servers/srv1/trust-host-key", { algorithm: "ssh-ed25519", fingerprint: "md5:aa" });

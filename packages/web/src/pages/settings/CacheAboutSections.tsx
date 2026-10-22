@@ -61,7 +61,7 @@ export function CacheSection() {
 					<Callout tone="danger">{errorMessage(cache.error)}</Callout>
 				) : (
 					<>
-						<div className="overflow-x-auto rounded-lg border border-border">
+						<div className="relative overflow-x-auto rounded-lg border border-border">
 							<table className="w-full min-w-[460px] border-collapse text-sm">
 								<thead>
 									<tr className="bg-raised">

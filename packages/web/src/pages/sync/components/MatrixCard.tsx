@@ -116,7 +116,7 @@ export function MatrixCard({
 			) : rows.length === 0 ? (
 				<EmptyState compact title="还没有服务器" description="添加服务器后，这里会显示每台服务器各同步项的状态。" />
 			) : (
-				<div className="overflow-x-auto">
+				<div className="relative overflow-x-auto">
 					<table className="w-full min-w-[960px] border-collapse text-sm">
 						<thead>
 							<tr>

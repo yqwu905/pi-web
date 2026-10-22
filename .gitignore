@@ -4,3 +4,4 @@ dist/
 .DS_Store
 coverage/
 .tmp/
+e2e/screenshots/

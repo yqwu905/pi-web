@@ -25,6 +25,9 @@ import type { Json } from "./util.js";
 type WsParams = { Params: { wsId: string } };
 type ServerParams = { Params: { id: string } };
 
+/** How long a workspace list waits for the agent's session counts before answering without them. */
+const SESSION_COUNT_TIMEOUT_MS = 5_000;
+
 function parseDefaults(body: Json): WorkspaceConfig["defaults"] | undefined {
 	const value = optObject(body, "defaults");
 	if (!value) return undefined;
@@ -42,13 +45,35 @@ function parseDefaults(body: Json): WorkspaceConfig["defaults"] | undefined {
 }
 
 export function workspaceRoutes(app: FastifyInstance, ctx: AppContext): void {
+	/** Last known session count per workspace id, from the agent's session lists. */
+	const sessionCounts = new Map<string, number>();
+	const view = (w: WorkspaceConfig) => workspaceView(ctx, w, sessionCounts.get(w.id));
+
+	/** Refreshes the counts of a server's workspaces over an existing agent link (cached on the agent). */
+	const refreshSessionCounts = async (serverId: string, workspaces: WorkspaceConfig[]): Promise<void> => {
+		const client = ctx.connections.get(serverId).agentClient;
+		if (!client || client.peer?.closed || workspaces.length === 0) return;
+		await Promise.all(
+			workspaces.map(async (w) => {
+				try {
+					const result = await client.call("sessions.list", { cwd: w.path }, { timeoutMs: SESSION_COUNT_TIMEOUT_MS });
+					sessionCounts.set(w.id, result.sessions.length);
+				} catch {
+					// keep the last known count
+				}
+			}),
+		);
+	};
+
 	app.get("/workspaces", async (): Promise<{ workspaces: WorkspaceView[] }> => ({
-		workspaces: ctx.store.listWorkspaces().map((w) => workspaceView(ctx, w)),
+		workspaces: ctx.store.listWorkspaces().map(view),
 	}));
 
 	app.get<ServerParams>("/servers/:id/workspaces", async (request): Promise<{ workspaces: WorkspaceView[] }> => {
 		const server = requireServer(ctx, request.params.id);
-		return { workspaces: ctx.store.listWorkspaces(server.id).map((w) => workspaceView(ctx, w)) };
+		const workspaces = ctx.store.listWorkspaces(server.id);
+		await refreshSessionCounts(server.id, workspaces);
+		return { workspaces: workspaces.map(view) };
 	});
 
 	app.post<ServerParams>("/servers/:id/workspaces", async (request): Promise<WorkspaceView> => {
@@ -86,7 +111,7 @@ export function workspaceRoutes(app: FastifyInstance, ctx: AppContext): void {
 			createdAt: Date.now(),
 		};
 		await ctx.store.saveWorkspace(config);
-		return workspaceView(ctx, config);
+		return view(config);
 	});
 
 	app.put<WsParams>("/workspaces/:wsId", async (request): Promise<WorkspaceView> => {
@@ -105,12 +130,13 @@ export function workspaceRoutes(app: FastifyInstance, ctx: AppContext): void {
 		const env = optEnv(body, "env");
 		if (env) next.env = env;
 		await ctx.store.saveWorkspace(next);
-		return workspaceView(ctx, next);
+		return view(next);
 	});
 
 	app.delete<WsParams>("/workspaces/:wsId", async (request) => {
 		const workspace = requireWorkspace(ctx, request.params.wsId);
 		await ctx.store.deleteWorkspace(workspace.id);
+		sessionCounts.delete(workspace.id);
 		return { ok: true as const };
 	});
 
@@ -118,6 +144,7 @@ export function workspaceRoutes(app: FastifyInstance, ctx: AppContext): void {
 		const workspace = requireWorkspace(ctx, request.params.wsId);
 		const client = await requireAgent(ctx, workspace.serverId);
 		const result = await client.call("sessions.list", { cwd: workspace.path });
+		sessionCounts.set(workspace.id, result.sessions.length);
 		return { sessions: result.sessions };
 	});
 }

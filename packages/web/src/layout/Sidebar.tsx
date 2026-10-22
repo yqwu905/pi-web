@@ -24,6 +24,8 @@ interface SidebarContext {
 	activeServerId?: string;
 	activeWorkspaceId?: string;
 	activeSessionId?: string;
+	/** The workspace's files/terminal/git page is open (its row is highlighted, as in the artboards). */
+	workspacePageActive?: boolean;
 }
 
 function SessionRow({
@@ -80,7 +82,9 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 	const stored = useUiStore((s) => s.expandedWorkspaces[wsId]);
 	const setExpanded = useUiStore((s) => s.setWorkspaceExpanded);
 	const expanded = searching || (stored ?? false);
-	const sessionsQuery = useWorkspaceSessions(expanded ? wsId : undefined);
+	const online = server.status.connection === "connected";
+	// Listing needs the agent: while offline keep showing the cached list instead of failing requests.
+	const sessionsQuery = useWorkspaceSessions(wsId, { enabled: expanded && online });
 	const liveConvs = useLiveConversations(wsId);
 	const navigate = useNavigate();
 	const [showAll, setShowAll] = useState(false);
@@ -99,11 +103,12 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 
 	const visible = showAll || searching ? filtered : filtered.slice(0, SESSIONS_PREVIEW);
 	const activeWs = ctx.activeWorkspaceId === wsId;
-	const offline = server.status.connection !== "connected";
+	const pageActive = activeWs && Boolean(ctx.workspacePageActive);
+	const offline = !online;
 
 	return (
 		<div className="flex flex-col gap-0.5">
-			<div className="group/ws flex h-7 items-center rounded-md hover:bg-raised">
+			<div className={cn("group/ws flex h-7 items-center rounded-md", pageActive ? "bg-selected" : "hover:bg-raised")}>
 				<button
 					type="button"
 					aria-expanded={expanded}
@@ -112,6 +117,7 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 					className={cn(
 						"flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border-0 bg-transparent px-2 text-left text-sm",
 						activeWs ? "text-fg" : "text-fg-2 hover:text-fg",
+						pageActive && "font-semibold",
 					)}
 				>
 					{expanded ? (
@@ -137,14 +143,17 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 			{settingsOpen && <WorkspaceSettingsDialog workspaceId={wsId} open onClose={() => setSettingsOpen(false)} />}
 			{expanded && (
 				<div className="flex flex-col gap-0.5 pl-5">
+					{offline && !sessions && (
+						<span className="flex min-h-7 items-center px-2 text-xs text-fg-3">服务器离线，无法读取会话</span>
+					)}
 					{sessionsQuery.isLoading && (
 						<span className="flex h-7 items-center gap-2 px-2 text-xs text-fg-3">
 							<Spinner size={11} /> 加载会话…
 						</span>
 					)}
-					{sessionsQuery.isError && (
+					{online && sessionsQuery.isError && (
 						<span className="flex min-h-7 items-center gap-2 px-2 text-xs text-fg-3">
-							{offline ? "服务器离线，无法读取会话" : "无法加载会话"}
+							无法加载会话
 							<button
 								type="button"
 								aria-label="重试"
@@ -300,6 +309,7 @@ export function Sidebar({ className }: { className?: string }) {
 		activeServerId,
 		activeWorkspaceId,
 		activeSessionId: route.kind === "workspace" && route.tab === "chat" ? route.sessionId : undefined,
+		workspacePageActive: route.kind === "workspace" && route.tab !== "chat",
 	};
 	useAutoExpand(workspaceServerId, activeWorkspaceId);
 
@@ -334,7 +344,7 @@ export function Sidebar({ className }: { className?: string }) {
 				</div>
 			</div>
 
-			<div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 py-2">
+			<div className="relative flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 py-2">
 				<div className="flex items-center justify-between px-2 pt-1.5 pb-1">
 					<span className="section-label">服务器</span>
 					<Link

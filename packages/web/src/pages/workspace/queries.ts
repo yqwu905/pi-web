@@ -29,6 +29,8 @@ export function dirListQuery(wsId: string, path: string, opts: DirListOptions) {
 		queryKey: workspaceKeys.fsList(wsId, path, opts),
 		queryFn: () => listWorkspaceDir(wsId, { path, showHidden: opts.showHidden, hideIgnored: opts.hideIgnored }),
 		staleTime: 30_000,
+		// Files change behind our back (terminal, agent tools): every visit shows the current tree.
+		refetchOnMount: "always",
 		retry: false,
 		// Keep the old listing visible while a filter toggle refetches it.
 		placeholderData: keepPreviousData,
@@ -41,6 +43,7 @@ export function useFileRead(wsId: string, path: string | undefined) {
 		queryFn: () => readWorkspaceFile(wsId, path as string),
 		enabled: Boolean(path),
 		staleTime: 15_000,
+		refetchOnMount: "always",
 		retry: false,
 	});
 }
@@ -51,6 +54,7 @@ export function useGitDiff(wsId: string, file: { path: string; area: GitArea } |
 		queryFn: () => getGitDiff(wsId, { path: file?.path, area: diffAreaFor(file?.area ?? "unstaged") }),
 		enabled: Boolean(file),
 		staleTime: 15_000,
+		refetchOnMount: "always",
 		retry: false,
 	});
 }
@@ -61,6 +65,7 @@ export function useGitLog(wsId: string, enabled: boolean, limit = 30) {
 		queryFn: () => getGitLog(wsId, limit),
 		enabled,
 		staleTime: 30_000,
+		refetchOnMount: "always",
 		retry: false,
 	});
 }

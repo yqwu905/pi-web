@@ -9,6 +9,9 @@ import {
 	applyConvRecord,
 	COMPANION_COMMAND_PREFIX,
 	COMPANION_STATUS_KEY,
+	companionActionTimeout,
+	CONV_SNAPSHOT_TIMEOUT_MS,
+	CONV_START_TIMEOUT_MS,
 	type ConvCompanionParams,
 	type ConvCompanionResult,
 	type ConversationState,
@@ -27,12 +30,14 @@ import {
 	type ConvStopParams,
 	type ConvUiResponseParams,
 	createConversationState,
+	defaultCommandTimeout,
 	EXTENSION_UI_DIALOG_METHODS,
 	type ExtensionUIRequest,
 	isPlainObject,
 	type PiWebEvent,
 	type RpcCommand,
 	type RpcResponse,
+	RPC_TIMEOUT_MS,
 	type RpcSessionState,
 	type SessionStats,
 } from "@pi-web/shared";
@@ -44,9 +49,7 @@ import type { RemotePaths } from "./paths.js";
 import { RingBuffer } from "./ring.js";
 
 const MINUTE = 60_000;
-const DEFAULT_TIMEOUT_MS = 60_000;
-const LONG_TIMEOUT_MS = 10 * MINUTE;
-const LONG_COMMANDS = new Set(["compact", "export_html", "abort", "bash", "fork", "clone", "new_session", "switch_session"]);
+const DEFAULT_TIMEOUT_MS = RPC_TIMEOUT_MS;
 const SESSION_CHANGING_COMMANDS = new Set(["new_session", "switch_session", "fork", "clone"]);
 /** Read-only commands; they do not count as activity for the idle reaper. */
 const QUERY_COMMANDS = new Set([
@@ -81,8 +84,12 @@ export interface ConversationManagerOptions {
 	stopGraceMs?: number;
 	/** Delay between SIGTERM and SIGKILL. Default 3s. */
 	killGraceMs?: number;
-	/** Timeout of the initial get_state. Default 60s. */
+	/** Timeout of the initial get_state. Default 60s (must stay below CONV_START_TIMEOUT_MS). */
 	startTimeoutMs?: number;
+	/** Total budget of start() when it attaches to an existing process. Default CONV_START_TIMEOUT_MS. */
+	attachTimeoutMs?: number;
+	/** Total budget of snapshot(). Default CONV_SNAPSHOT_TIMEOUT_MS. */
+	snapshotTimeoutMs?: number;
 	/** Idle reaper interval. Default 60s. */
 	reapIntervalMs?: number;
 	/** Base environment for pi processes. Default process.env. */
@@ -153,13 +160,43 @@ class Conversation {
 	}
 }
 
-export function defaultCommandTimeout(command: RpcCommand): number {
-	if (LONG_COMMANDS.has(command.type)) return LONG_TIMEOUT_MS;
-	// Extension commands answer only after their handler finished (which may wait for the user).
-	if (command.type === "prompt" && typeof command.message === "string" && command.message.startsWith("/")) {
-		return LONG_TIMEOUT_MS;
+/**
+ * One budget shared by the steps of a multi-step operation, so the operation as a whole
+ * honours the timeout the host waits for (see @pi-web/shared timeouts).
+ */
+class Deadline {
+	private readonly at: number;
+
+	constructor(
+		private readonly budgetMs: number,
+		private readonly what: string,
+	) {
+		this.at = Date.now() + budgetMs;
 	}
-	return DEFAULT_TIMEOUT_MS;
+
+	error(): AgentError {
+		return new AgentError("TIMEOUT", `${this.what}超时（${Math.round(this.budgetMs / 1000)} 秒）`);
+	}
+
+	/** Milliseconds left, at most `cap`; throws TIMEOUT once the deadline has passed. */
+	remaining(cap = Number.POSITIVE_INFINITY): number {
+		const left = this.at - Date.now();
+		if (left <= 0) throw this.error();
+		return Math.min(left, cap);
+	}
+
+	/** Waits for `promise`, failing with TIMEOUT when the deadline passes first. */
+	async wait<T>(promise: Promise<T>): Promise<T> {
+		let timer: NodeJS.Timeout | undefined;
+		const expired = new Promise<never>((_resolve, reject) => {
+			timer = setTimeout(() => reject(this.error()), Math.max(0, this.at - Date.now()));
+		});
+		try {
+			return await Promise.race([promise, expired]);
+		} finally {
+			clearTimeout(timer);
+		}
+	}
 }
 
 /** argv for the pi process (argv[0] is the CLI script, run with config.nodePath). */
@@ -231,6 +268,8 @@ export class ConversationManager {
 	private readonly stopGraceMs: number;
 	private readonly killGraceMs: number;
 	private readonly startTimeoutMs: number;
+	private readonly attachTimeoutMs: number;
+	private readonly snapshotTimeoutMs: number;
 
 	constructor(private readonly options: ConversationManagerOptions) {
 		this.ringSize = options.ringSize ?? 3000;
@@ -239,6 +278,8 @@ export class ConversationManager {
 		this.stopGraceMs = options.stopGraceMs ?? 5000;
 		this.killGraceMs = options.killGraceMs ?? 3000;
 		this.startTimeoutMs = options.startTimeoutMs ?? 60_000;
+		this.attachTimeoutMs = options.attachTimeoutMs ?? CONV_START_TIMEOUT_MS;
+		this.snapshotTimeoutMs = options.snapshotTimeoutMs ?? CONV_SNAPSHOT_TIMEOUT_MS;
 		const interval = options.reapIntervalMs ?? MINUTE;
 		if (interval > 0) {
 			this.reaper = setInterval(() => this.reapIdle(Date.now()), interval);
@@ -286,14 +327,8 @@ export class ConversationManager {
 		const cwd = resolve(params.cwd);
 		const sessionFile = params.sessionFile ? resolve(params.sessionFile) : undefined;
 
-		if (sessionFile) {
-			const servingId = this.sessionIndex.get(sessionFile);
-			const serving = servingId ? this.convs.get(servingId) : undefined;
-			if (serving && !serving.exited) return this.attach(serving);
-		}
-		const existing = this.convs.get(params.convId);
-		if (existing && !existing.exited) return this.attach(existing);
-		if (existing) this.forget(existing);
+		const running = this.findRunning(params.convId, sessionFile);
+		if (running) return this.attach(running);
 
 		const cwdStat = await stat(cwd).catch(() => null);
 		if (!cwdStat?.isDirectory()) throw new AgentError("CWD_NOT_FOUND", `工作区目录不存在：${cwd}`);
@@ -301,6 +336,11 @@ export class ConversationManager {
 			const fileStat = await stat(sessionFile).catch(() => null);
 			if (!fileStat?.isFile()) throw new AgentError("SESSION_NOT_FOUND", `会话文件不存在：${sessionFile}`);
 		}
+		// A concurrent start may have spawned the process while we were checking the paths.
+		const raced = this.findRunning(params.convId, sessionFile);
+		if (raced) return this.attach(raced);
+		const existing = this.convs.get(params.convId);
+		if (existing) this.forget(existing);
 
 		const args = buildPiArgs(config, params, sessionFile);
 		const env = buildPiEnv(config, this.options.paths, params, this.options.baseEnv);
@@ -339,12 +379,14 @@ export class ConversationManager {
 
 	async send(params: ConvSendParams): Promise<ConvSendResult> {
 		const conv = this.requireLive(params?.convId);
-		await conv.ready;
 		const command = params.command as RpcCommand;
 		if (!isPlainObject(command) || typeof command.type !== "string") throw new AgentError("BAD_PARAMS", "无效的 RPC 命令");
 		const { id: _ignored, ...rest } = command;
 		const timeoutMs = params.timeoutMs && params.timeoutMs > 0 ? params.timeoutMs : defaultCommandTimeout(command);
-		const outcome = await this.rpc(conv, rest as RpcCommand, timeoutMs);
+		// The timeout covers waiting for a still-starting process too: the host waits exactly this long.
+		const deadline = new Deadline(timeoutMs, `pi 命令 ${command.type} `);
+		await deadline.wait(conv.ready);
+		const outcome = await this.rpc(conv, rest as RpcCommand, deadline.remaining());
 		const data = outcome.response.data as { cancelled?: boolean } | undefined;
 		if (outcome.response.success && SESSION_CHANGING_COMMANDS.has(command.type) && !data?.cancelled) {
 			await this.refreshSession(conv).catch((err) =>
@@ -356,16 +398,17 @@ export class ConversationManager {
 
 	async snapshot(params: ConvSnapshotParams): Promise<ConvSnapshot> {
 		const conv = this.requireLive(params?.convId);
-		await conv.ready;
-		const stateOutcome = await this.rpc(conv, { type: "get_state" }, DEFAULT_TIMEOUT_MS);
+		const deadline = new Deadline(this.snapshotTimeoutMs, "读取会话快照");
+		await deadline.wait(conv.ready);
+		const stateOutcome = await this.rpc(conv, { type: "get_state" }, deadline.remaining(DEFAULT_TIMEOUT_MS));
 		if (!stateOutcome.response.success) throw new AgentError("RPC_FAILED", stateOutcome.response.error ?? "get_state 失败");
 		const state = stateOutcome.response.data as RpcSessionState;
 		this.applyState(conv, state);
-		const messagesOutcome = await this.rpc(conv, { type: "get_messages" }, DEFAULT_TIMEOUT_MS);
+		const messagesOutcome = await this.rpc(conv, { type: "get_messages" }, deadline.remaining(DEFAULT_TIMEOUT_MS));
 		if (!messagesOutcome.response.success) throw new AgentError("RPC_FAILED", messagesOutcome.response.error ?? "get_messages 失败");
 		let stats: SessionStats | undefined;
 		try {
-			const statsOutcome = await this.rpc(conv, { type: "get_session_stats" }, DEFAULT_TIMEOUT_MS);
+			const statsOutcome = await this.rpc(conv, { type: "get_session_stats" }, deadline.remaining(DEFAULT_TIMEOUT_MS));
 			if (statsOutcome.response.success) stats = statsOutcome.response.data as SessionStats;
 		} catch {
 			// stats are optional
@@ -416,14 +459,16 @@ export class ConversationManager {
 
 	async companion(params: ConvCompanionParams): Promise<ConvCompanionResult> {
 		const conv = this.requireLive(params?.convId);
-		await conv.ready;
 		const action = params.action;
 		if (action !== "navigate" && action !== "label" && action !== "reload") {
 			throw new AgentError("BAD_PARAMS", `未知操作：${String(action)}`);
 		}
+		// navigate and reload first wait for the agent to become idle; one budget covers every step.
+		const deadline = new Deadline(companionActionTimeout(action), "操作");
+		await deadline.wait(conv.ready);
 		const commandName = `${COMPANION_COMMAND_PREFIX}${action}`;
 		if (!conv.companionAvailable) {
-			const outcome = await this.rpc(conv, { type: "get_commands" }, DEFAULT_TIMEOUT_MS);
+			const outcome = await this.rpc(conv, { type: "get_commands" }, deadline.remaining(DEFAULT_TIMEOUT_MS));
 			const commands = (outcome.response.data as { commands?: Array<{ name?: string }> } | undefined)?.commands ?? [];
 			if (!commands.some((c) => c.name === commandName)) {
 				throw new AgentError("COMPANION_UNAVAILABLE", "Pi-Web 伴随扩展未加载，无法执行该操作");
@@ -431,15 +476,14 @@ export class ConversationManager {
 			conv.companionAvailable = true;
 		}
 		const reqId = randomUUID();
-		// navigate and reload first wait for the agent to become idle.
-		const timeoutMs = action === "label" ? DEFAULT_TIMEOUT_MS : LONG_TIMEOUT_MS;
+		const timeoutMs = deadline.remaining();
 		const payload = { ...(params.args ?? {}), reqId };
 		const message = `/${commandName} ${JSON.stringify(payload)}`;
 
 		const result = new Promise<ConvCompanionResult>((resolvePromise, reject) => {
 			const timer = setTimeout(() => {
 				conv.companions.delete(reqId);
-				reject(new AgentError("TIMEOUT", `操作超时（${Math.round(timeoutMs / 1000)} 秒）`));
+				reject(deadline.error());
 			}, timeoutMs);
 			conv.companions.set(reqId, { resolve: resolvePromise, reject, timer });
 		});
@@ -496,6 +540,17 @@ export class ConversationManager {
 
 	// ---------------------------------------------------------------------------
 
+	/** The live process with this convId or serving this session file, if any. */
+	private findRunning(convId: string, sessionFile: string | undefined): Conversation | undefined {
+		if (sessionFile) {
+			const servingId = this.sessionIndex.get(sessionFile);
+			const serving = servingId ? this.convs.get(servingId) : undefined;
+			if (serving && !serving.exited) return serving;
+		}
+		const existing = this.convs.get(convId);
+		return existing && !existing.exited ? existing : undefined;
+	}
+
 	private requireLive(convId: string | undefined): Conversation {
 		const conv = convId ? this.convs.get(convId) : undefined;
 		if (!conv) throw new AgentError("CONV_NOT_FOUND", "会话进程不存在");
@@ -503,11 +558,13 @@ export class ConversationManager {
 		return conv;
 	}
 
+	/** Returns an existing process; waiting for it to start and refreshing its state share one budget. */
 	private async attach(conv: Conversation): Promise<ConvStartResult> {
-		const initial = await conv.ready;
+		const deadline = new Deadline(this.attachTimeoutMs, "等待会话启动");
+		const initial = await deadline.wait(conv.ready);
 		let state = initial;
 		try {
-			const outcome = await this.rpc(conv, { type: "get_state" }, DEFAULT_TIMEOUT_MS);
+			const outcome = await this.rpc(conv, { type: "get_state" }, deadline.remaining(DEFAULT_TIMEOUT_MS));
 			if (outcome.response.success) state = outcome.response.data as RpcSessionState;
 		} catch {
 			// fall back to the initial state

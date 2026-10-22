@@ -130,7 +130,7 @@ export function WorkspacesCard({ view, className }: { view: ServerView; classNam
 					description={view.config.deployed ? "工作区是服务器上的一个目录，pi 在其中运行。" : "部署完成后即可添加工作区。"}
 				/>
 			) : (
-				<div className="overflow-x-auto">
+				<div className="relative overflow-x-auto">
 					<table className="w-full min-w-[820px] border-collapse text-sm">
 						<thead>
 							<tr>

@@ -61,7 +61,7 @@ function FilesView({ workspace }: { workspace: WorkspaceConfig }) {
 	const rows = useMemo(() => flattenTree(root, (p) => listings.get(p), expanded), [root, listings, expanded]);
 	const rootListing = listings.get(root);
 
-	const git = useGitStatus(wsId, { retry: false });
+	const git = useGitStatus(wsId, { retry: false, refetchOnMount: "always" });
 	const marks = useMemo(() => gitMarksByPath(git.data), [git.data]);
 	const changed = changedFileCount(git.data);
 

@@ -54,6 +54,7 @@ import {
 	type SessionFileResponse,
 	type SessionStats,
 	type SessionSummary,
+	type SyncTopicEvent,
 	type WorkspaceView,
 	createConversationState,
 	dismissNotification as dismissNotificationReducer,
@@ -62,6 +63,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
+	ApiError,
 	conversationRpc,
 	conversationUiResponse,
 	errorMessage,
@@ -72,7 +74,7 @@ import {
 	stopConversation,
 } from "../api/client";
 import { useWorkspace, useWorkspaceSessions } from "../api/hooks";
-import { queryKeys } from "../api/queryClient";
+import { queryClient, queryKeys } from "../api/queryClient";
 import { wsClient } from "../api/ws";
 import { applyEvents, classifyEvent, containsSettled, stateFromSessionFile, stateFromSnapshot } from "../lib/conversation-sync";
 import { findSessionById, liveConversationForSession } from "../lib/sessions";
@@ -97,6 +99,38 @@ export interface LiveConversationView {
 }
 
 const DISPOSE_DELAY_MS = 30_000;
+const RETRY_MIN_MS = 2_000;
+const RETRY_MAX_MS = 30_000;
+
+/** Failures that go away by themselves: server/agent offline (409/503), gateway errors, network. */
+function isTransientError(error: unknown): boolean {
+	if (error instanceof ApiError) return error.status === 409 || error.status === 502 || error.status === 503 || error.status === 504;
+	return error instanceof TypeError;
+}
+const WORKSPACE_REFRESH_DELAY_MS = 300;
+
+const workspaceRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * A tool finished (or the agent settled): it may have changed files, so the workspace's file
+ * browser and git views (and the Git tab's change count) refetch. Debounced per workspace.
+ */
+export function scheduleWorkspaceRefresh(workspaceId: string, delayMs = WORKSPACE_REFRESH_DELAY_MS): void {
+	if (workspaceRefreshTimers.has(workspaceId)) return;
+	workspaceRefreshTimers.set(
+		workspaceId,
+		setTimeout(() => {
+			workspaceRefreshTimers.delete(workspaceId);
+			void queryClient.invalidateQueries({ queryKey: queryKeys.workspaceGit(workspaceId) });
+			void queryClient.invalidateQueries({ queryKey: queryKeys.workspaceFs(workspaceId) });
+		}, delayMs),
+	);
+}
+
+/** Records after which the workspace's files may differ. */
+function changesFiles(type: string): boolean {
+	return type === "tool_execution_end" || type === "agent_settled";
+}
 const STATS_DEBOUNCE_MS = 400;
 const RESYNC_DEBOUNCE_MS = 200;
 
@@ -123,6 +157,9 @@ class LiveConversation {
 	private loadToken = 0;
 	private offTopic: (() => void) | null = null;
 	private offOpen: (() => void) | null = null;
+	private offSync: (() => void) | null = null;
+	/** Servers whose config changed while a snapshot was in flight (it may predate the change). */
+	private readonly configUpdatedDuringLoad = new Set<string>();
 	private disposeTimer: ReturnType<typeof setTimeout> | null = null;
 	private statsTimer: ReturnType<typeof setTimeout> | null = null;
 	private resyncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -177,12 +214,15 @@ class LiveConversation {
 		}
 		const token = ++this.loadToken;
 		if (!this.buffer) this.buffer = [];
+		this.configUpdatedDuringLoad.clear();
 		if (this.view.phase === "ready") this.update({ resyncing: true });
 		try {
 			const snap = await getConversationSnapshot(this.convId);
 			if (token !== this.loadToken || !this.active) return;
 			const buffered = this.buffer ?? [];
 			this.buffer = null;
+			const configStale = snap.configStale || this.configUpdatedDuringLoad.has(snap.serverId);
+			this.configUpdatedDuringLoad.clear();
 			const state = applyEvents(stateFromSnapshot(snap.snapshot), buffered);
 			this.update({
 				phase: "ready",
@@ -193,11 +233,13 @@ class LiveConversation {
 				info: snap.snapshot.info,
 				rpcState: snap.snapshot.state,
 				stats: snap.snapshot.stats ?? this.view.stats,
-				configStale: snap.configStale,
+				configStale,
 				resyncing: false,
 			});
+			this.retryDelayMs = RETRY_MIN_MS;
 			if (state.needsResync) this.scheduleResync();
 			if (containsSettled(buffered)) this.scheduleStats();
+			if (snap.workspaceId && buffered.some((e) => changesFiles(e.record.type))) scheduleWorkspaceRefresh(snap.workspaceId);
 		} catch (error) {
 			if (token !== this.loadToken) return;
 			// Keep applying live events on top of whatever state we had.
@@ -209,7 +251,22 @@ class LiveConversation {
 				state: applyEvents(this.view.state, buffered),
 				resyncing: false,
 			});
+			// The server or its agent is away (503/409/network): retry with backoff while someone
+			// watches, so the view recovers by itself once the server is back.
+			if (this.active && isTransientError(error)) this.scheduleRetry();
 		}
+	}
+
+	private retryDelayMs = RETRY_MIN_MS;
+
+	private scheduleRetry(): void {
+		if (this.resyncTimer) return;
+		const delay = this.retryDelayMs;
+		this.retryDelayMs = Math.min(this.retryDelayMs * 2, RETRY_MAX_MS);
+		this.resyncTimer = setTimeout(() => {
+			this.resyncTimer = null;
+			if (this.active) void this.resync();
+		}, delay);
 	}
 
 	async refreshState(): Promise<RpcSessionState | null> {
@@ -231,8 +288,14 @@ class LiveConversation {
 	private activate(): void {
 		this.active = true;
 		this.offTopic = wsClient.subscribe<ConvEvent>(`conv:${this.convId}`, (ev) => this.onEvent(ev));
+		this.offSync = wsClient.subscribe<SyncTopicEvent>("sync", (ev) => this.onSyncEvent(ev));
+		// Events published before the subscription reaches the server are lost. While the socket is
+		// still connecting, the first snapshot can predate the subscription, so resync on that open too.
+		let resyncOnOpen = wsClient.getStatus().state !== "open";
 		this.offOpen = wsClient.onOpen(({ reconnect }) => {
-			if (reconnect) void this.resync();
+			if (!reconnect && !resyncOnOpen) return;
+			resyncOnOpen = false;
+			void this.resync();
 		});
 		void this.resync();
 	}
@@ -241,8 +304,11 @@ class LiveConversation {
 		this.active = false;
 		this.offTopic?.();
 		this.offOpen?.();
+		this.offSync?.();
 		this.offTopic = null;
 		this.offOpen = null;
+		this.offSync = null;
+		this.configUpdatedDuringLoad.clear();
 		for (const t of [this.disposeTimer, this.statsTimer, this.resyncTimer]) if (t) clearTimeout(t);
 		this.disposeTimer = this.statsTimer = this.resyncTimer = null;
 		this.loadToken++;
@@ -270,8 +336,16 @@ class LiveConversation {
 				this.update({ state, info: this.patchInfo(ev) });
 				if (state.needsResync && !current.needsResync) this.scheduleResync();
 				if (ev.record.type === "agent_settled") this.scheduleStats();
+				if (changesFiles(ev.record.type) && this.view.workspaceId) scheduleWorkspaceRefresh(this.view.workspaceId);
 			}
 		}
+	}
+
+	/** The Host just synced new config to a server: its running conversations need a reload. */
+	private onSyncEvent(ev: SyncTopicEvent): void {
+		if (!ev || ev.kind !== "configUpdated" || typeof ev.serverId !== "string") return;
+		if (this.buffer) this.configUpdatedDuringLoad.add(ev.serverId);
+		if (ev.serverId === this.view.serverId && !this.view.configStale) this.update({ configStale: true });
 	}
 
 	/** Keeps info.status in step with pi_web_status records between snapshots. */

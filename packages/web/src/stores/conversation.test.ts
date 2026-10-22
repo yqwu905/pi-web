@@ -4,10 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const fake = vi.hoisted(() => {
 	const handlers = new Map<string, (data: unknown) => void>();
 	const openListeners = new Set<(info: { reconnect: boolean }) => void>();
+	const status = { state: "open" as "open" | "connecting" | "reconnecting" };
 	return {
 		handlers,
 		openListeners,
+		status,
 		wsClient: {
+			getStatus: () => ({ state: status.state, attempt: 0, nextRetryAt: null, generation: 1 }),
 			subscribe: (topic: string, handler: (data: unknown) => void) => {
 				handlers.set(topic, handler);
 				return () => handlers.delete(topic);
@@ -28,7 +31,8 @@ vi.mock("../api/client", async (importOriginal) => ({
 	conversationRpc: vi.fn(),
 }));
 
-import { conversationRpc, getConversationSnapshot, replayConversation } from "../api/client";
+import { ApiError, conversationRpc, getConversationSnapshot, replayConversation } from "../api/client";
+import { queryClient } from "../api/queryClient";
 import { getLiveConversation } from "./conversation";
 
 const snapshotMock = vi.mocked(getConversationSnapshot);
@@ -82,6 +86,7 @@ describe("live conversation registry", () => {
 		snapshotMock.mockReset();
 		replayMock.mockReset();
 		rpcMock.mockReset();
+		fake.status.state = "open";
 		convId = `c${++n}`;
 	});
 	afterEach(async () => {
@@ -161,6 +166,107 @@ describe("live conversation registry", () => {
 		for (const l of fake.openListeners) l({ reconnect: true });
 		await settle();
 		expect(snapshotMock).toHaveBeenCalledTimes(3);
+	});
+
+	it("resyncs on the first open when the socket was still connecting at load", async () => {
+		fake.status.state = "connecting";
+		snapshotMock.mockResolvedValue(snap(3, convId));
+		const entry = getLiveConversation(convId);
+		release = entry.retain();
+		await settle();
+		expect(snapshotMock).toHaveBeenCalledTimes(1);
+		for (const l of fake.openListeners) l({ reconnect: false });
+		await settle();
+		expect(snapshotMock).toHaveBeenCalledTimes(2);
+		// later first-generation opens (none in practice) and duplicates do not resync again
+		for (const l of fake.openListeners) l({ reconnect: false });
+		await settle();
+		expect(snapshotMock).toHaveBeenCalledTimes(2);
+		expect(entry.getView().phase).toBe("ready");
+	});
+
+	it("does not resync on the first open when the socket was already open", async () => {
+		snapshotMock.mockResolvedValue(snap(3, convId));
+		const entry = getLiveConversation(convId);
+		release = entry.retain();
+		await settle();
+		for (const l of fake.openListeners) l({ reconnect: false });
+		await settle();
+		expect(snapshotMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("marks the conversation stale when its server's config is updated", async () => {
+		snapshotMock.mockResolvedValue(snap(3, convId));
+		const entry = getLiveConversation(convId);
+		release = entry.retain();
+		await settle();
+		const sync = fake.handlers.get("sync");
+		expect(sync).toBeDefined();
+		sync?.({ kind: "configUpdated", serverId: "other", at: 1 });
+		expect(entry.getView().configStale).toBe(false);
+		sync?.({ kind: "record", record: {} });
+		sync?.({ kind: "configUpdated", serverId: "s1", at: 2 });
+		expect(entry.getView().configStale).toBe(true);
+	});
+
+	it("keeps a config update that arrives while a snapshot is loading", async () => {
+		let resolve!: (s: ConversationSnapshot) => void;
+		snapshotMock.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+		const entry = getLiveConversation(convId);
+		release = entry.retain();
+		fake.handlers.get("sync")?.({ kind: "configUpdated", serverId: "s1", at: 2 });
+		resolve(snap(3, convId)); // computed before the change: configStale false
+		await settle();
+		expect(entry.getView().configStale).toBe(true);
+	});
+
+	it("refreshes the workspace's file and git views after a tool finishes", async () => {
+		snapshotMock.mockResolvedValue(snap(3, convId));
+		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue();
+		try {
+			const entry = getLiveConversation(convId);
+			release = entry.retain();
+			await settle();
+			const push = fake.handlers.get(`conv:${convId}`);
+			push?.(ev(4, { type: "tool_execution_start", toolCallId: "t1", toolName: "write", args: {} }, convId));
+			push?.(ev(5, { type: "tool_execution_end", toolCallId: "t1", toolName: "write", result: { content: [] }, isError: false }, convId));
+			push?.(ev(6, { type: "agent_settled", aborted: false }, convId));
+			expect(invalidate).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(400);
+			// One debounced refresh for both records.
+			expect(invalidate.mock.calls.map((c) => (c[0] as { queryKey: unknown }).queryKey)).toEqual([
+				["workspaces", "w1", "git"],
+				["workspaces", "w1", "fs"],
+			]);
+		} finally {
+			invalidate.mockRestore();
+		}
+	});
+
+	it("retries a snapshot that failed because the server was offline", async () => {
+		snapshotMock.mockRejectedValueOnce(new ApiError(503, "AGENT_UNAVAILABLE", "服务器未连接"));
+		snapshotMock.mockRejectedValueOnce(new ApiError(503, "AGENT_UNAVAILABLE", "服务器未连接"));
+		snapshotMock.mockResolvedValue(snap(4, convId));
+		const entry = getLiveConversation(convId);
+		release = entry.retain();
+		await settle();
+		expect(entry.getView()).toMatchObject({ phase: "error", error: "服务器未连接" });
+		await vi.advanceTimersByTimeAsync(2_000);
+		expect(snapshotMock).toHaveBeenCalledTimes(2);
+		expect(entry.getView().phase).toBe("error");
+		await vi.advanceTimersByTimeAsync(4_000); // backoff doubles
+		expect(entry.getView()).toMatchObject({ phase: "ready", error: null });
+		expect(entry.getView().state.seq).toBe(4);
+	});
+
+	it("does not retry errors that will not go away", async () => {
+		snapshotMock.mockRejectedValue(new ApiError(404, "NOT_FOUND", "对话不存在"));
+		const entry = getLiveConversation(convId);
+		release = entry.retain();
+		await settle();
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(snapshotMock).toHaveBeenCalledTimes(1);
+		expect(entry.getView().error).toBe("对话不存在");
 	});
 
 	it("disposes 30s after the last release", async () => {

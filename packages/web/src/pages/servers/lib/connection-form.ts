@@ -99,15 +99,23 @@ export interface ConnectionTestRequest {
 	username: string;
 	auth: ServerAuthInput;
 	jumpServerIds?: string[];
+	/** Existing server being edited: its trusted host key (same host:port) and stored secret apply. */
+	serverId?: string;
 }
 
-export function toTestRequest(values: ConnectionFormValues): ConnectionTestRequest {
+/**
+ * Test request for the values as typed. Pass `serverId` when editing a saved server so the
+ * server checks the host key against the trusted one and uses the stored secret when the
+ * secret field is left empty. Jump hosts are always sent, so removing them all is honoured.
+ */
+export function toTestRequest(values: ConnectionFormValues, serverId?: string): ConnectionTestRequest {
 	return {
 		host: values.host.trim(),
 		port: parsePort(values.port) ?? 22,
 		username: values.username.trim(),
 		auth: toAuthInput(values),
-		...(values.jumpServerIds.length ? { jumpServerIds: [...values.jumpServerIds] } : {}),
+		jumpServerIds: [...values.jumpServerIds],
+		...(serverId ? { serverId } : {}),
 	};
 }
 

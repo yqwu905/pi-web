@@ -249,7 +249,7 @@ function GitView({ workspace, server }: { workspace: WorkspaceConfig; server: Se
 	const wsId = workspace.id;
 	const navigate = useNavigate();
 	const [params, setParams] = useSearchParams();
-	const status = useGitStatus(wsId, { retry: false });
+	const status = useGitStatus(wsId, { retry: false, refetchOnMount: "always" });
 	const isRepo = status.data?.isRepo === true;
 	const log = useGitLog(wsId, isRepo);
 	const mode = useWorkspacePrefs((s) => s.diffMode);

@@ -8,7 +8,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type FSWatcher, watch } from "chokidar";
 import { isPlainObject, type OAuthProviderStatus, type OAuthStatusResponse } from "@pi-web/shared";
-import { ApiError, type AppContext, type OAuthKeeper } from "../core/types.js";
+import { ApiError, type AppContext, type AuthSyncedEvent, type OAuthKeeper } from "../core/types.js";
 
 export type OAuthKeeperContext = Pick<AppContext, "paths" | "log" | "store" | "hub" | "hostPi" | "syncer">;
 
@@ -84,28 +84,52 @@ class OAuthKeeperImpl implements OAuthKeeper {
 		return join(this.ctx.paths.hostAgentDir, "auth.json");
 	}
 
+	/** Regular syncs (deploy, manual, auto, connect) deliver auth.json too: record them as pushes. */
+	private readonly onAuthSynced = (event: AuthSyncedEvent): void => {
+		if (!this.started) return;
+		this.state.pushed[event.serverId] = { at: event.at, ok: event.ok, ...(event.error ? { error: event.error } : {}) };
+		void this.saveState().then(() => this.publish());
+	};
+
 	async start(): Promise<void> {
 		if (this.started) return;
 		this.started = true;
 		const stored = this.ctx.store.getState<OAuthState>(STATE_KEY);
 		this.state = { lastRefreshAt: { ...stored?.lastRefreshAt }, pushed: { ...stored?.pushed } };
+		this.ctx.syncer.on("auth-synced", this.onAuthSynced);
 		const initial = await this.readAuthFile();
 		this.lastHash = initial.hash;
 		for (const entry of initial.entries) this.lastExpires.set(entry.provider, entry.expires);
-		if (this.options.watch !== false) {
-			const watcher = watch(this.authPath, { ignoreInitial: true, awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 } });
-			this.watcher = watcher;
-			watcher.on("all", () => this.onAuthFileEvent());
-			watcher.on("error", (err) => this.ctx.log.warn("auth.json watcher error", { error: errorMessage(err) }));
-			await new Promise<void>((resolve) => watcher.once("ready", () => resolve()));
-		}
+		if (this.options.watch !== false) await this.openWatcher();
 		this.timer = setInterval(() => void this.tick(), this.intervalMs);
 		this.timer.unref?.();
 		await this.tick();
 	}
 
+	async rewatch(): Promise<void> {
+		if (!this.started) return;
+		const previous = this.watcher;
+		this.watcher = undefined;
+		await previous?.close();
+		if (!this.started || this.watcher) return;
+		if (this.options.watch !== false) await this.openWatcher();
+		this.ctx.log.info("auth.json watcher moved", { path: this.authPath });
+		this.onAuthFileEvent();
+	}
+
+	private async openWatcher(): Promise<void> {
+		const watcher = watch(this.authPath, { ignoreInitial: true, awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 } });
+		this.watcher = watcher;
+		watcher.on("all", () => {
+			if (this.watcher === watcher) this.onAuthFileEvent();
+		});
+		watcher.on("error", (err) => this.ctx.log.warn("auth.json watcher error", { error: errorMessage(err) }));
+		await new Promise<void>((resolve) => watcher.once("ready", () => resolve()));
+	}
+
 	async stop(): Promise<void> {
 		this.started = false;
+		this.ctx.syncer.off("auth-synced", this.onAuthSynced);
 		if (this.timer) clearInterval(this.timer);
 		this.timer = undefined;
 		if (this.changeTimer) clearTimeout(this.changeTimer);

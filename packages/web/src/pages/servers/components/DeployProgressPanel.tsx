@@ -143,11 +143,13 @@ export interface DeployProgressPanelProps {
 	idleText?: ReactNode;
 	/** Right side of the header when no job runs (e.g. 开始部署). */
 	idleAction?: ReactNode;
+	/** Extra control at the header's right end, after the percentage (e.g. a close button). */
+	headerAction?: ReactNode;
 	className?: string;
 }
 
 /** Live deploy progress (Add server step 4, server overview): overall bar, steps, log tail. */
-export function DeployProgressPanel({ job, title = "部署进度", idleText, idleAction, className }: DeployProgressPanelProps) {
+export function DeployProgressPanel({ job, title = "部署进度", idleText, idleAction, headerAction, className }: DeployProgressPanelProps) {
 	const titleId = useId();
 	const running = job?.state === "running";
 	const now = useNow(1000, running);
@@ -200,6 +202,7 @@ export function DeployProgressPanel({ job, title = "部署进度", idleText, idl
 				) : (
 					idleAction
 				)}
+				{headerAction && <div className="flex shrink-0 items-center self-start">{headerAction}</div>}
 			</div>
 			<ProgressBar value={job ? percent : 0} tone={tone} label="总体部署进度" />
 			<ol className="m-0 flex list-none flex-col p-0" aria-label="部署步骤">

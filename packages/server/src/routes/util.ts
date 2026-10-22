@@ -155,12 +155,13 @@ export function serverView(ctx: AppContext, config: ServerConfig): ServerView {
 	return { config, status: ctx.connections.status(config.id) };
 }
 
-export function workspaceView(ctx: AppContext, config: WorkspaceConfig): WorkspaceView {
+/** `sessionCount`: the last known number of pi sessions in the workspace (omitted when unknown). */
+export function workspaceView(ctx: AppContext, config: WorkspaceConfig, sessionCount?: number): WorkspaceView {
 	let running = 0;
 	for (const conv of ctx.conversations.list()) {
 		if (conv.workspaceId === config.id && conv.info.status !== "exited") running++;
 	}
-	return { config, runningCount: running };
+	return sessionCount === undefined ? { config, runningCount: running } : { config, sessionCount, runningCount: running };
 }
 
 // ---------- remote paths ----------

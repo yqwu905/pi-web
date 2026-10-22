@@ -2,7 +2,7 @@ import type { HostSettings, UpdateSettingsRequest } from "@pi-web/shared";
 import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../core/types.js";
 import type { AccessControl } from "./auth.js";
-import { badRequest, bodyObject, optBool, optEnum, optInt, optString, optStringArray } from "./util.js";
+import { badRequest, bodyObject, errorMessage, optBool, optEnum, optInt, optString, optStringArray } from "./util.js";
 import type { Json } from "./util.js";
 
 const SETTINGS_KEYS: ReadonlySet<string> = new Set<keyof HostSettings>([
@@ -113,7 +113,14 @@ export function settingsRoutes(app: FastifyInstance, ctx: AppContext, auth: Acce
 			// Keep the browser that enabled the token signed in.
 			auth.setCookie(reply, await auth.ensureToken());
 		}
-		if ("hostAgentDir" in patch && patch.hostAgentDir !== before.hostAgentDir) ctx.hostPi.invalidate();
+		if (updated.hostAgentDir !== before.hostAgentDir) {
+			ctx.hostPi.invalidate();
+			// Auto-sync and OAuth refresh watch files in the host agent dir.
+			const moved = await Promise.allSettled([ctx.syncer.rewatch(), ctx.oauth.rewatch()]);
+			for (const result of moved) {
+				if (result.status === "rejected") ctx.log.warn("failed to watch the new host agent dir", { error: errorMessage(result.reason) });
+			}
+		}
 		return updated;
 	});
 }

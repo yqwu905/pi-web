@@ -30,6 +30,7 @@ interface Env {
 	connection: FakeConnection;
 	syncer: Syncer;
 	events: Array<{ name: string; data: unknown }>;
+	paths: ReturnType<typeof makePaths>;
 }
 
 const syncers: Syncer[] = [];
@@ -60,9 +61,10 @@ async function setup(options: SyncerOptions = {}, serverOverrides: Parameters<ty
 	const remote = await FakeRemote.create();
 	const connection = new FakeConnection(server.id, new FakeAgentClient(server.id, remote));
 	connections.add(connection);
+	const paths = makePaths(agentDir, dataDir);
 	const syncer = createSyncer(
 		{
-			paths: makePaths(agentDir, dataDir),
+			paths,
 			log: noopLogger,
 			store,
 			hub,
@@ -72,8 +74,8 @@ async function setup(options: SyncerOptions = {}, serverOverrides: Parameters<ty
 	);
 	syncers.push(syncer);
 	const events: Env["events"] = [];
-	for (const name of ["status", "record", "running", "configUpdated"]) syncer.on(name, (data: unknown) => events.push({ name, data }));
-	return { home, agentDir, dataDir, store, hub, connections, remote, connection, syncer, events };
+	for (const name of ["status", "record", "running", "configUpdated", "auth-synced"]) syncer.on(name, (data: unknown) => events.push({ name, data }));
+	return { home, agentDir, dataDir, store, hub, connections, remote, connection, syncer, events, paths };
 }
 
 function applyCalls(env: Env) {
@@ -207,7 +209,15 @@ describe("Syncer run", () => {
 		expect(manifest.params).toEqual({ roots: ["auth.json"] });
 		expect(env.store.records[0]).toMatchObject({ trigger: "oauth", updated: 1, status: "ok" });
 
+		// Both runs covered auth.json: the OAuth keeper records them as pushes.
+		expect(env.events.filter((e) => e.name === "auth-synced").map((e) => e.data)).toEqual([
+			{ serverId: "s1", at: expect.any(Number), ok: true },
+			{ serverId: "s1", at: expect.any(Number), ok: true },
+		]);
+
 		env.store.getServer("s1")!.sync.items.auth = false;
+		await env.syncer.run("s1", "manual");
+		expect(env.events.filter((e) => e.name === "auth-synced")).toHaveLength(2);
 		expect(await env.syncer.pushAuth()).toEqual([]);
 		expect(await env.syncer.pushAuth(["s1"])).toEqual([{ serverId: "s1", ok: false, error: expect.any(String) }]);
 	});
@@ -278,6 +288,30 @@ describe("Syncer auto-sync", { timeout: 20_000 }, () => {
 		expect(JSON.parse(await env.remote.read("auth.json")).anthropic.access).toBe("fresh");
 		expect(await env.remote.exists("prompts/later.md")).toBe(false);
 		await waitFor(async () => (await env.syncer.status()).servers[0].items.prompts === "pending");
+	});
+
+	it("follows a changed host agent dir", async () => {
+		const env = await setup();
+		await env.syncer.run("s1", "manual");
+		await env.syncer.rewatch(); // not started: no-op
+		expect(env.store.records.filter((r) => r.trigger === "auto")).toEqual([]);
+		await env.syncer.start();
+		const oldDir = env.agentDir;
+		const newDir = join(env.home, "other-agent");
+		await put(join(newDir, "prompts", "moved.md"), "from the new dir");
+		env.paths.hostAgentDir = newDir;
+		await env.syncer.rewatch();
+		await waitFor(() => env.store.records.some((r) => r.trigger === "auto"), 8000);
+		expect(await env.remote.read("prompts/moved.md")).toBe("from the new dir");
+		expect(await env.remote.exists("prompts/review.md")).toBe(false);
+		const autos = () => env.store.records.filter((r) => r.trigger === "auto").length;
+		const before = autos();
+		await writeFile(join(oldDir, "prompts", "stale.md"), "old dir");
+		await writeFile(join(newDir, "prompts", "fresh.md"), "new dir");
+		await waitFor(async () => env.remote.exists("prompts/fresh.md"), 8000);
+		await new Promise((r) => setTimeout(r, 400));
+		expect(autos()).toBe(before + 1);
+		expect(await env.remote.exists("prompts/stale.md")).toBe(false);
 	});
 
 	it("only refreshes the plan for servers without auto-sync", async () => {

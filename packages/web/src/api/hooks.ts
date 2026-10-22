@@ -144,6 +144,8 @@ export function useSyncStatus(options?: Opts<SyncStatusResponse>) {
 		if (!ev || typeof ev !== "object") return;
 		if (ev.kind === "status") {
 			client.setQueryData(queryKeys.syncStatus, ev.status);
+			// Status snapshots follow host config changes: the host inventory (item counts) may differ too.
+			void client.invalidateQueries({ queryKey: queryKeys.syncInventory });
 		} else if (ev.kind === "running") {
 			client.setQueryData<SyncStatusResponse>(queryKeys.syncStatus, (prev) =>
 				prev
@@ -156,6 +158,8 @@ export function useSyncStatus(options?: Opts<SyncStatusResponse>) {
 			void client.invalidateQueries({ queryKey: queryKeys.syncHistory });
 		}
 	});
+	// Events published while the socket was down are lost.
+	useWsReconnect(() => void client.invalidateQueries({ queryKey: queryKeys.syncStatus }));
 	return useQuery({ queryKey: queryKeys.syncStatus, queryFn: () => getSyncStatus(), staleTime: 30_000, ...options });
 }
 

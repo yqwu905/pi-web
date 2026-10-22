@@ -1,6 +1,6 @@
 import { type SessionEntry, type SessionTreeNode, ZERO_USAGE } from "@pi-web/shared";
 import { describe, expect, it } from "vitest";
-import { describeEntry, initialSelection, layoutTree, matchesTreeQuery, passesTreeFilter, treeFromEntries, type TreeRow } from "./tree";
+import { describeEntry, displayLeafId, initialSelection, layoutTree, matchesTreeQuery, passesTreeFilter, treeFromEntries, type TreeRow } from "./tree";
 
 const ts = "2026-10-22T09:14:00.000Z";
 const userEntry = (id: string, parentId: string | null, text: string): SessionEntry => ({
@@ -122,6 +122,19 @@ describe("layoutTree", () => {
 		expect(initialSelection(layoutTree(roots, { filter: "default", leafId: "a3" }), "a3")).toBe("a3");
 		expect(initialSelection(layoutTree(roots, { filter: "user-only", leafId: "a3" }), "a3")).toBe("u2");
 		expect(initialSelection(layoutTree([], { filter: "default", leafId: null }), null)).toBeNull();
+	});
+
+	it("shows the message before a trailing label/model change as the current position", () => {
+		// The leaf l1 is a label entry appended after a3 (labelling or switching models moves the leaf).
+		const layout = layoutTree(roots, { filter: "default", leafId: "l1" });
+		expect(layout.rows.filter((r) => r.isLeaf).map((r) => r.id)).toEqual(["a3"]);
+		expect(layout.rows.filter((r) => r.onPath).map((r) => r.id)).toEqual(["u1", "t1", "a2", "u2", "a3"]);
+		expect(initialSelection(layout, "l1")).toBe("a3");
+		// Views that show the bookkeeping entry keep the real leaf.
+		expect(layoutTree(roots, { filter: "all", leafId: "l1" }).rows.filter((r) => r.isLeaf).map((r) => r.id)).toEqual(["l1"]);
+		expect(displayLeafId(layout.nodesById, "l1", "default")).toBe("a3");
+		expect(displayLeafId(layout.nodesById, "a3", "default")).toBe("a3");
+		expect(displayLeafId(layout.nodesById, null, "default")).toBeNull();
 	});
 
 	it("handles very long chains without recursion", () => {

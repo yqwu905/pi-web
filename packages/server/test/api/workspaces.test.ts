@@ -123,6 +123,26 @@ describe("workspaces", () => {
 		expect(list.json().workspaces[0].runningCount).toBe(1);
 	});
 
+	it("reports the last known session count per workspace", async () => {
+		await t.store.saveWorkspace(makeWorkspace());
+		await t.store.saveWorkspace(makeWorkspace({ id: "ws2", path: "/home/dev/other" }));
+		const session = (cwd: string, id: string) => ({ file: `/s/${id}.jsonl`, id, cwd, createdMs: 1, modifiedMs: 2, messageCount: 3, firstMessage: "hi" });
+		agent.handle("sessions.list", (p) =>
+			p.cwd === "/home/dev/project" ? { sessions: [session(p.cwd, "a"), session(p.cwd, "b")] } : { sessions: [] },
+		);
+		expect((await t.request("GET", "/api/workspaces")).json().workspaces[0].sessionCount).toBeUndefined();
+		const byServer = (await t.request("GET", "/api/servers/srv1/workspaces")).json().workspaces as WorkspaceView[];
+		expect(byServer.map((w) => [w.config.id, w.sessionCount])).toEqual([
+			["ws1", 2],
+			["ws2", 0],
+		]);
+		agent.handle("sessions.list", (p) => ({ sessions: [session(p.cwd, "c")] }));
+		await t.request("GET", "/api/workspaces/ws1/sessions");
+		const all = (await t.request("GET", "/api/workspaces")).json().workspaces as WorkspaceView[];
+		expect(all.find((w) => w.config.id === "ws1")?.sessionCount).toBe(1);
+		expect(all.find((w) => w.config.id === "ws2")?.sessionCount).toBe(0);
+	});
+
 	it("lists the workspace's sessions", async () => {
 		await t.store.saveWorkspace(makeWorkspace());
 		agent.handle("sessions.list", (p) => ({ sessions: [{ file: "/s/a.jsonl", id: "a", cwd: p.cwd, createdMs: 1, modifiedMs: 2, messageCount: 3, firstMessage: "hi" }] }));

@@ -7,6 +7,7 @@ import { Spinner } from "../components/ui/Spinner";
 import { cn } from "../lib/cn";
 import { parseRoute, paths, type RouteInfo, WORKSPACE_TAB_LABELS } from "../lib/routes";
 import { sessionTitle } from "../lib/sessions";
+import { useLiveConversations } from "../stores/convs";
 import { useServer, useServers } from "../stores/servers";
 import { useUiStore } from "../stores/ui";
 
@@ -38,7 +39,9 @@ function useBreadcrumb(route: RouteInfo): Crumb[] {
 	const wsId = route.kind === "workspace" ? route.workspaceId : undefined;
 	const { workspace } = useWorkspace(wsId);
 	const sessionId = route.kind === "workspace" && route.tab === "chat" ? route.sessionId : undefined;
-	const { session } = useSessionById(sessionId ? wsId : undefined, sessionId);
+	const { session, isLoading: sessionsLoading } = useSessionById(sessionId ? wsId : undefined, sessionId);
+	// A conversation without messages has no session file yet: name it like the sidebar does.
+	const live = useLiveConversations(wsId).find((c) => sessionId && c.info.sessionId === sessionId);
 	const serverName = server?.config.name ?? serverId ?? "…";
 
 	switch (route.kind) {
@@ -53,7 +56,18 @@ function useBreadcrumb(route: RouteInfo): Crumb[] {
 				{ label: serverName, to: serverId ? paths.server(serverId) : undefined },
 				{ label: workspace?.config.alias ?? "…", to: paths.chat(route.workspaceId) },
 			];
-			if (route.tab === "chat") crumbs.push({ label: route.sessionId ? (session ? sessionTitle(session, 48) : "对话") : "新对话" });
+			if (route.tab === "chat") {
+				const label = !route.sessionId
+					? "新对话"
+					: session
+						? sessionTitle(session, 48)
+						: live
+							? live.info.sessionName?.trim() || "新对话"
+							: sessionsLoading
+								? "…"
+								: "对话";
+				crumbs.push({ label });
+			}
 			else crumbs.push({ label: WORKSPACE_TAB_LABELS[route.tab] });
 			return crumbs;
 		}
@@ -177,7 +191,11 @@ export function Header() {
 					to={paths.settings()}
 					aria-label="全局设置"
 					title="全局设置"
-					className="flex size-8 items-center justify-center rounded-md text-fg-2 hover:bg-raised hover:text-fg"
+					aria-current={route.kind === "settings" ? "page" : undefined}
+					className={cn(
+						"flex size-8 items-center justify-center rounded-md hover:bg-raised hover:text-fg",
+						route.kind === "settings" ? "border border-border-strong bg-selected text-fg" : "text-fg-2",
+					)}
 				>
 					<SlidersHorizontal size={18} strokeWidth={1.7} aria-hidden="true" />
 				</Link>

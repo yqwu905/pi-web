@@ -4,21 +4,35 @@ import { LinkRequestError, type LinkPeer } from "@pi-web/shared/link";
 import { ApiError } from "../core/errors.js";
 import type { AgentClient } from "../core/types.js";
 
+/** HTTP status per agent/link error code; unknown codes are reported as 502 (a remote failure). */
 const STATUS_BY_CODE: Record<string, number> = {
 	NOT_FOUND: 404,
 	ENOENT: 404,
+	CONV_NOT_FOUND: 404,
+	SESSION_NOT_FOUND: 404,
+	CWD_NOT_FOUND: 404,
 	BUSY: 409,
 	CONFLICT: 409,
 	EEXIST: 409,
+	CONV_EXITED: 409,
+	NOT_A_REPO: 409,
+	COMPANION_UNAVAILABLE: 409,
 	INVALID: 400,
 	INVALID_PARAMS: 400,
 	BAD_REQUEST: 400,
+	BAD_PARAMS: 400,
+	BAD_PATH: 400,
+	BAD_CONFIG: 400,
+	ENOTDIR: 400,
+	EISDIR: 400,
+	NOT_FILE: 400,
 	EACCES: 403,
 	EPERM: 403,
 	FORBIDDEN: 403,
 	TOO_LARGE: 413,
 	TIMEOUT: 504,
 	LINK_CLOSED: 503,
+	NOT_CONFIGURED: 503,
 	METHOD_NOT_FOUND: 501,
 };
 

@@ -258,6 +258,42 @@ describe("ConversationManager with fake pi", () => {
 		expect(failed.success).toBe(false);
 	});
 
+	it("bounds a snapshot by one budget across its pi commands", async () => {
+		const h = await setup({ snapshotTimeoutMs: 300, baseEnv: { ...process.env, FAKE_PI_HANG: "get_messages" } });
+		await h.manager.start({ convId: "s", cwd: h.cwd, trust: "no-approve" });
+		const started = Date.now();
+		await expect(h.manager.snapshot({ convId: "s" })).rejects.toMatchObject({ code: "TIMEOUT" });
+		expect(Date.now() - started).toBeLessThan(5000);
+	});
+
+	it("bounds attaching to a process that is still starting", async () => {
+		const h = await setup({ startTimeoutMs: 1500, attachTimeoutMs: 200, baseEnv: { ...process.env, FAKE_PI_HANG: "get_state" } });
+		const first = h.manager.start({ convId: "a", cwd: h.cwd, trust: "no-approve" });
+		first.catch(() => {});
+		const started = Date.now();
+		await expect(h.manager.start({ convId: "a", cwd: h.cwd, trust: "no-approve" })).rejects.toMatchObject({ code: "TIMEOUT" });
+		expect(Date.now() - started).toBeLessThan(1000);
+		await expect(h.manager.send({ convId: "a", command: { type: "get_state" }, timeoutMs: 200 })).rejects.toMatchObject({
+			code: "TIMEOUT",
+		});
+		await expect(first).rejects.toMatchObject({ code: "START_FAILED" });
+		expect(new Set(h.infos.map((info) => info.pid)).size).toBe(1); // one process only
+	});
+
+	it("does not spawn a second process for concurrent starts of the same session", async () => {
+		const h = await setup();
+		const sessionFile = join(h.root, "s.jsonl");
+		await writeFile(sessionFile, "");
+		const [a, b] = await Promise.all([
+			h.manager.start({ convId: "c1", cwd: h.cwd, trust: "no-approve", sessionFile }),
+			h.manager.start({ convId: "c2", cwd: h.cwd, trust: "no-approve", sessionFile }),
+		]);
+		// Whichever start finished its checks first spawned pi; the other attached to it.
+		expect([a.attached, b.attached].sort()).toEqual([false, true]);
+		expect(a.conv.convId).toBe(b.conv.convId);
+		expect(h.manager.list().filter((c) => c.status !== "exited")).toHaveLength(1);
+	});
+
 	it("rate-limits stderr and reports process exit with the stderr tail", async () => {
 		const h = await setup();
 		await h.manager.start({ convId: "x", cwd: h.cwd, trust: "no-approve" });

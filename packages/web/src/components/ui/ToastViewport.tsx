@@ -48,13 +48,17 @@ function ToastItem({ toast }: { toast: Toast }) {
 	);
 }
 
-/** Bottom-right toast stack (mounted once by the AppShell). */
+/**
+ * Toast stack at the top right, over the header's status badges (mounted once by the AppShell).
+ * Not bottom-right, where it covered the composer's 发送 button and the settings save bars, and
+ * not below the header, where it covered the pages' action buttons.
+ */
 export function ToastViewport() {
 	const toasts = useToastsStore((s) => s.toasts);
 	return (
 		<div
 			aria-live="polite"
-			className="pointer-events-none fixed right-4 bottom-4 z-[60] flex w-[360px] max-w-[calc(100vw-32px)] flex-col gap-2"
+			className="pointer-events-none fixed top-2 right-4 z-[60] flex w-[360px] max-w-[calc(100vw-32px)] flex-col gap-2"
 		>
 			{toasts.map((t) => (
 				<ToastItem key={t.id} toast={t} />

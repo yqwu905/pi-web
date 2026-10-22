@@ -392,7 +392,7 @@ export function SessionTreeModal({ open, onClose, conv, onFillComposer }: Sessio
 							<span className="w-10 text-right">tokens</span>
 							<span className="w-[38px] text-right">时间</span>
 						</div>
-						<div ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-2" onKeyDown={onListKeyDown}>
+						<div ref={listRef} className="relative min-h-0 flex-1 overflow-y-auto p-2" onKeyDown={onListKeyDown}>
 							{loadError ? (
 								<p className="m-0 p-3 text-sm text-danger">无法读取会话树：{loadError}</p>
 							) : !layout ? (

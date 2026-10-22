@@ -102,6 +102,8 @@ function ToolCardImpl({ tool, workspaceId }: ToolCardProps) {
 
 	return (
 		<div
+			role="group"
+			aria-label={`工具 ${tool.name}${target ? ` ${target}` : ""}`}
 			className={cn(
 				"overflow-hidden rounded-lg border bg-panel",
 				running ? "border-user-border" : tool.isError ? "border-danger/40" : "border-border",

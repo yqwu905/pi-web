@@ -25,11 +25,12 @@ export function useWorkspaceRoute(): { workspaceId: string; workspace?: Workspac
 	return { workspaceId, workspace: workspace?.config, server, serversLoaded };
 }
 
-function ConnectButton({ serverId }: { serverId: string }) {
+export function ConnectButton({ serverId, size, label = "连接服务器" }: { serverId: string; size?: "sm" | "md"; label?: string }) {
 	const [busy, setBusy] = useState(false);
 	return (
 		<Button
 			variant="primary"
+			size={size}
 			icon={<Plug size={14} />}
 			loading={busy}
 			onClick={async () => {
@@ -43,7 +44,7 @@ function ConnectButton({ serverId }: { serverId: string }) {
 				}
 			}}
 		>
-			连接服务器
+			{label}
 		</Button>
 	);
 }

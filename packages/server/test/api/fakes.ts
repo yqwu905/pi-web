@@ -653,6 +653,9 @@ export class FakeSyncer extends EventEmitter implements Syncer {
 	}
 	async start(): Promise<void> {}
 	async stop(): Promise<void> {}
+	async rewatch(): Promise<void> {
+		this.calls.push({ method: "rewatch", args: [] });
+	}
 	onAgentConnected(serverId: string): void {
 		this.calls.push({ method: "onAgentConnected", args: [serverId] });
 	}
@@ -679,8 +682,12 @@ function record(serverId: string, trigger: SyncRecord["trigger"]): SyncRecord {
 
 export class FakeOAuth implements OAuthKeeper {
 	refreshed: string[] = [];
+	rewatched = 0;
 	async start(): Promise<void> {}
 	async stop(): Promise<void> {}
+	async rewatch(): Promise<void> {
+		this.rewatched++;
+	}
 	async status(): Promise<OAuthStatusResponse> {
 		return { providers: [] };
 	}

@@ -262,6 +262,17 @@ export interface TunnelProxy {
 }
 
 /** Emits "status" (SyncStatusResponse), "record" (SyncRecord), "running" ({serverId, running}), "configUpdated" ({serverId, at}). */
+/**
+ * Syncer event "auth-synced": a sync run that covered auth.json finished for a server (any
+ * trigger: deploy, manual, auto, connect or an OAuth push).
+ */
+export interface AuthSyncedEvent {
+	serverId: string;
+	at: number;
+	ok: boolean;
+	error?: string;
+}
+
 export interface Syncer extends EventEmitter {
 	inventory(): Promise<HostInventory>;
 	status(): Promise<SyncStatusResponse>;
@@ -274,6 +285,8 @@ export interface Syncer extends EventEmitter {
 	/** Start/stop watching the host agent dir for auto-sync. */
 	start(): Promise<void>;
 	stop(): Promise<void>;
+	/** settings.hostAgentDir changed: watch the new directory and treat its content as changed (no-op unless started). */
+	rewatch(): Promise<void>;
 	/** Called on every agent (re)connect: syncs when the server is marked pending or auto-sync is on. */
 	onAgentConnected(serverId: string): void;
 	/** Time of the last sync that changed files on that server. */
@@ -283,6 +296,8 @@ export interface Syncer extends EventEmitter {
 export interface OAuthKeeper {
 	start(): Promise<void>;
 	stop(): Promise<void>;
+	/** settings.hostAgentDir changed: watch the new auth.json and re-read it (no-op unless started). */
+	rewatch(): Promise<void>;
 	status(): Promise<OAuthStatusResponse>;
 	refresh(provider: string): Promise<OAuthStatusResponse>;
 }

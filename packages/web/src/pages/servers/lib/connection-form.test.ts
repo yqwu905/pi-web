@@ -77,6 +77,8 @@ describe("request builders", () => {
 			auth: { method: "key", keyPath: "~/.ssh/id_ed25519" },
 			jumpServerIds: ["j1"],
 		});
+		expect(toTestRequest({ ...v, jumpServerIds: [] }, "srv1")).toMatchObject({ jumpServerIds: [], serverId: "srv1" });
+		expect(toTestRequest(v)).not.toHaveProperty("serverId");
 		const create = toCreateRequest(v);
 		expect(create.name).toBe("gpu-01");
 		expect(create.group).toBe("训练集群");

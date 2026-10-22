@@ -7,7 +7,13 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { posix as posixPath } from "node:path";
 import type { Readable } from "node:stream";
-import { shellQuote } from "@pi-web/shared";
+import {
+	companionActionTimeout,
+	CONV_SNAPSHOT_TIMEOUT_MS,
+	CONV_START_TIMEOUT_MS,
+	defaultCommandTimeout,
+	shellQuote,
+} from "@pi-web/shared";
 import type {
 	CompanionActionResponse,
 	ConvCompanionParams,
@@ -35,24 +41,11 @@ export interface ConversationServiceOptions {
 	attachWaitMs?: number;
 }
 
-/** pi commands whose agent-side default timeout is 10 minutes (IMPLEMENTATION.md §2.5). */
-const LONG_COMMANDS = new Set([
-	"compact",
-	"export_html",
-	"abort",
-	"bash",
-	"fork",
-	"clone",
-	"new_session",
-	"switch_session",
-]);
-const SHORT_TIMEOUT_MS = 60_000;
-const LONG_TIMEOUT_MS = 10 * 60_000;
-/** Extra time on the link call so the agent's own timeout fires first and reports a precise error. */
+/**
+ * Extra time on the link call so the agent's own timeout (the shared budgets in
+ * @pi-web/shared timeouts, IMPLEMENTATION.md §2.5) fires first and reports a precise error.
+ */
 const LINK_MARGIN_MS = 10_000;
-/** conv.start waits up to 60s for pi's get_state on the agent. */
-const START_TIMEOUT_MS = 90_000;
-const SNAPSHOT_TIMEOUT_MS = 120_000;
 
 interface ConvEntry {
 	convId: string;
@@ -314,7 +307,7 @@ class ConversationRegistry implements ConversationService {
 		if (thinkingLevel) params.thinkingLevel = thinkingLevel;
 		if (request.name) params.name = request.name;
 
-		const result = await client.call("conv.start", params, { timeoutMs: START_TIMEOUT_MS });
+		const result = await client.call("conv.start", params, { timeoutMs: CONV_START_TIMEOUT_MS + LINK_MARGIN_MS });
 		const offset = this.attachments.get(ws.serverId)?.clockOffsetMs ?? 0;
 		this.bumpSeq(result.conv.convId, result.conv.lastSeq);
 		const entry = this.upsertInfo(ws.serverId, result.conv, offset, ws.id);
@@ -324,7 +317,7 @@ class ConversationRegistry implements ConversationService {
 	async snapshot(convId: string): Promise<ConversationSnapshot> {
 		const entry = this.requireEntry(convId);
 		const client = this.requireClient(entry.serverId);
-		const snapshot = await client.call("conv.snapshot", { convId }, { timeoutMs: SNAPSHOT_TIMEOUT_MS });
+		const snapshot = await client.call("conv.snapshot", { convId }, { timeoutMs: CONV_SNAPSHOT_TIMEOUT_MS + LINK_MARGIN_MS });
 		const offset = this.attachments.get(entry.serverId)?.clockOffsetMs ?? 0;
 		entry.info = snapshot.info;
 		entry.startedAtHost = snapshot.info.startedAt - offset;
@@ -340,7 +333,7 @@ class ConversationRegistry implements ConversationService {
 	async rpc(convId: string, command: RpcCommand, timeoutMs?: number): Promise<RpcResponse & { seq?: number }> {
 		const entry = this.requireEntry(convId);
 		const client = this.requireClient(entry.serverId);
-		const effective = timeoutMs ?? (LONG_COMMANDS.has(command.type) ? LONG_TIMEOUT_MS : SHORT_TIMEOUT_MS);
+		const effective = timeoutMs ?? defaultCommandTimeout(command);
 		const params = timeoutMs === undefined ? { convId, command } : { convId, command, timeoutMs };
 		return client.call("conv.send", params, { timeoutMs: effective + LINK_MARGIN_MS });
 	}
@@ -358,7 +351,7 @@ class ConversationRegistry implements ConversationService {
 		const entry = this.requireEntry(convId);
 		const client = this.requireClient(entry.serverId);
 		const params = { convId, action, args } as ConvCompanionParams;
-		const timeoutMs = (action === "navigate" ? LONG_TIMEOUT_MS : SHORT_TIMEOUT_MS) + LINK_MARGIN_MS;
+		const timeoutMs = companionActionTimeout(action) + LINK_MARGIN_MS;
 		const result = await client.call("conv.companion", params, { timeoutMs });
 		if (action === "reload" && result.ok) entry.reloadedAt = Date.now();
 		return result;

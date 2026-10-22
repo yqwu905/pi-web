@@ -13,7 +13,9 @@
     "build": "npm run build -w @pi-web/agent && npm run build -w @pi-web/web && npm run build -w pi-web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "dev": "npm run dev -w pi-web"
+    "dev": "npm run dev -w pi-web",
+    "e2e:api": "node e2e/api-e2e.mjs",
+    "e2e:ui": "node e2e/ui-e2e.mjs"
   },
   "engines": {
     "node": ">=22.19.0"

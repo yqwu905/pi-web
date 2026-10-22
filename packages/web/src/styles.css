@@ -204,6 +204,27 @@
 	}
 }
 
+/*
+ * Visually hidden text. Tailwind's sr-only leaves the element at its static position, so inside
+ * a scroll container that is not positioned (a long list, a wide table) the 1px box sits far down
+ * or right of its containing block and stretches an outer scroller: phantom page scrollbars and
+ * scroll jumps. Pinning it to the containing block's corner keeps it out of every scroll area.
+ */
+@utility sr-only {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	clip-path: inset(50%);
+	white-space: nowrap;
+	border-width: 0;
+}
+
 @utility sr-only-focusable {
 	&:not(:focus) {
 		position: absolute;

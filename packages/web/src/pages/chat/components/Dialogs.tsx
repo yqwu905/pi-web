@@ -1,9 +1,9 @@
 import type { ExtensionUIRequest, ExtensionUIResponse } from "@pi-web/shared";
 import { Check, Clock, TriangleAlert } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { errorMessage } from "../../../api/client";
+import { deleteSession, errorMessage } from "../../../api/client";
 import { invalidateSessions } from "../../../api/hooks";
-import { Button, Field, Input, LoadingBlock, Modal, Textarea, toast } from "../../../components/ui";
+import { Button, Callout, Field, Input, LoadingBlock, Modal, Textarea, toast } from "../../../components/ui";
 import { cn } from "../../../lib/cn";
 import { formatTokens } from "../../../lib/format";
 import type { ConversationHandle } from "../../../stores/conversation";
@@ -406,6 +406,83 @@ export function RenameDialog({ open, onClose, conv, currentName }: { open: boole
 					<Input value={name} onChange={(e) => setName(e.target.value)} maxLength={200} placeholder="例如：修复数据加载器的内存泄漏" />
 				</Field>
 			</form>
+		</Modal>
+	);
+}
+
+/** Moves the session file to the server's trash (`~/.pi-web/trash`), stopping its pi process first. */
+export function DeleteSessionDialog({
+	open,
+	onClose,
+	conv,
+	title,
+	onDeleted,
+}: {
+	open: boolean;
+	onClose: () => void;
+	conv: ConversationHandle;
+	title: string;
+	onDeleted: () => void;
+}) {
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const [prevOpen, setPrevOpen] = useState(open);
+	if (prevOpen !== open) {
+		setPrevOpen(open);
+		if (open) setError(null);
+	}
+	const { serverId, sessionFile, isLive, stop } = conv;
+	const workspaceId = conv.workspace?.config.id;
+
+	const remove = async () => {
+		if (!serverId || !sessionFile || busy) return;
+		setBusy(true);
+		setError(null);
+		try {
+			// The agent refuses to delete a file a running pi process still writes to.
+			if (isLive) await stop();
+			await deleteSession(serverId, sessionFile);
+			if (workspaceId) void invalidateSessions(workspaceId);
+			toast.success("会话已移到服务器的回收站");
+			onClose();
+			onDeleted();
+		} catch (e) {
+			setError(errorMessage(e));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	return (
+		<Modal
+			open={open}
+			role="alertdialog"
+			size="sm"
+			onClose={onClose}
+			icon={<TriangleAlert className="text-warning" />}
+			title="删除会话？"
+			description={
+				<>
+					<span className="text-fg">{title}</span> 的会话文件将移到服务器上的 <code className="text-xs text-fg-code">~/.pi-web/trash</code>
+					，可以从那里手动恢复。{isLive ? "正在运行的 pi 进程会先被停止。" : ""}
+				</>
+			}
+			footer={
+				<>
+					<Button onClick={onClose} data-autofocus>
+						取消
+					</Button>
+					<Button variant="danger" loading={busy} disabled={!serverId || !sessionFile} onClick={() => void remove()}>
+						删除
+					</Button>
+				</>
+			}
+		>
+			{error && (
+				<Callout tone="danger" title="删除失败">
+					{error}
+				</Callout>
+			)}
 		</Modal>
 	);
 }

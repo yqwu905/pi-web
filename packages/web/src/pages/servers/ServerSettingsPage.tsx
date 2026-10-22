@@ -2,7 +2,7 @@ import type { ServerView } from "@pi-web/shared";
 import { ArrowLeft, Folder, Plug, RefreshCw, Server, Shield, Timer, TriangleAlert } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { useBlocker, useLocation, useParams } from "react-router";
-import { connectServer, disconnectServer, errorMessage, runSync, updateServer } from "../../api/client";
+import { errorMessage, runSync, updateServer } from "../../api/client";
 import { invalidateSync } from "../../api/hooks";
 import { toast } from "../../components/ui";
 import { Button, ButtonLink } from "../../components/ui/Button";
@@ -139,12 +139,9 @@ function ServerSettings({ view }: { view: ServerView }) {
 			setShowErrors(false);
 			toast.success(`已保存 ${updated.config.name} 的设置`);
 			if (affectsConnection(fields) && updated.status.connection === "connected") {
-				// pi processes live in the remote daemon, so reconnecting does not interrupt them.
+				// The server re-opens the session itself when the saved connection settings (or the
+				// stored secret) changed; pi processes live in the remote daemon and keep running.
 				toast.info("正在使用新的连接参数重新连接…");
-				disconnectServer(c.id)
-					.then(() => connectServer(c.id))
-					.then((v) => useServersStore.getState().upsertServer(v))
-					.catch((e: unknown) => toast.error(errorMessage(e), { title: "重新连接失败" }));
 			}
 			if (affectsSync(fields) && updated.status.connection === "connected" && !updated.config.jumpOnly) {
 				runSync({ serverIds: [c.id] })

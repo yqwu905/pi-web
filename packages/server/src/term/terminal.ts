@@ -215,8 +215,10 @@ export async function handleTerminalSocket(
 	ch.on("error", (err: Error) => {
 		log.debug("terminal channel error", { serverId, error: err.message });
 	});
-	ch.on("close", () => {
+	ch.on("close", (closeCode?: number | null) => {
 		channelClosed = true;
+		// ssh2 repeats the exit status as the "close" arguments when "exit" fired before we listened.
+		if (exitCode === null && typeof closeCode === "number") exitCode = closeCode;
 		sendControl({ type: "exit", code: exitCode });
 		closeSocket(1000);
 	});

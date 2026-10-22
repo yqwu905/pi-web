@@ -193,6 +193,8 @@ export interface TestConnectionRequest {
 	username: string;
 	auth: ServerAuthInput;
 	jumpServerIds?: string[];
+	/** Existing server being edited: its trusted host key (same host:port) and stored secret apply. */
+	serverId?: string;
 }
 
 export const listServers = () => get<{ servers: ServerView[] }>("/servers");
@@ -278,19 +280,28 @@ export const replayConversation = (convId: string, afterSeq: number) =>
 export const conversationExportUrl = (convId: string) => buildUrl(`/conversations/${enc(convId)}/export`);
 export const exportConversation = async (convId: string): Promise<{ blob: Blob; fileName: string }> => {
 	const res = await requestRaw("GET", `/conversations/${enc(convId)}/export`, { headers: { accept: "text/html" } });
-	const disposition = res.headers.get("content-disposition") ?? "";
-	const match = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(disposition);
-	const raw = match ? (match[1] ?? match[2]) : undefined;
-	let fileName = `${convId}.html`;
-	if (raw) {
-		try {
-			fileName = decodeURIComponent(raw);
-		} catch {
-			fileName = raw;
-		}
-	}
+	const fileName = fileNameFromDisposition(res.headers.get("content-disposition")) ?? `${convId}.html`;
 	return { blob: await res.blob(), fileName };
 };
+
+/**
+ * File name from a Content-Disposition header. The UTF-8 `filename*` wins over the ASCII
+ * `filename` fallback (where non-ASCII characters are replaced), wherever it appears.
+ */
+export function fileNameFromDisposition(disposition: string | null | undefined): string | undefined {
+	if (!disposition) return undefined;
+	const extended = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(disposition)?.[1]?.trim();
+	if (extended) {
+		try {
+			return decodeURIComponent(extended);
+		} catch {
+			// malformed escape: fall back to the plain filename
+		}
+	}
+	const plain = /(?:^|;)\s*filename\s*=\s*(?:"([^"]*)"|([^;]*))/i.exec(disposition);
+	const value = (plain?.[1] ?? plain?.[2])?.trim();
+	return value || undefined;
+}
 
 // ---------- sync & oauth ----------
 

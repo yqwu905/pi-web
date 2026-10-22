@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createReadStream as createLocalReadStream, existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
@@ -239,6 +240,24 @@ export async function connectChain(
 	}
 }
 
+/**
+ * Identity of everything an SSH session depends on: endpoint, user, auth, trusted key and
+ * (hashed) stored secret of every hop.
+ */
+export function hopsKey(hops: readonly HopTarget[]): string {
+	return JSON.stringify(
+		hops.map((h) => [
+			h.host,
+			h.port,
+			h.username,
+			h.auth.method,
+			h.auth.keyPath ?? null,
+			h.trustedKey?.fingerprint ?? null,
+			h.secret === undefined ? null : createHash("sha256").update(h.secret).digest("base64"),
+		]),
+	);
+}
+
 /** Builds the hop list for a saved server: its jump servers (saved configs), then the server itself. */
 export async function resolveHops(
 	server: ServerConfig,
@@ -412,6 +431,7 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 	private pingTimer?: NodeJS.Timeout;
 	/** Settings (all hops) the current SSH session was opened with. */
 	private connectedKey?: string;
+	private refreshChain: Promise<void> = Promise.resolve();
 
 	constructor(private readonly deps: ServerConnectionDeps) {
 		super();
@@ -473,7 +493,7 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 			const clients = await connectChain(hops, { timings: this.options.timings, log: this.log });
 			const generation = ++this.generation;
 			this.clients = clients;
-			this.connectedKey = this.settingsKey();
+			this.connectedKey = hopsKey(hops);
 			for (const client of clients) {
 				client.on("close", () => this.onSshClosed(generation));
 			}
@@ -491,20 +511,34 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 		}
 	}
 
-	/** Identity of everything the SSH session depends on (endpoint, user, auth, trusted key of every hop). */
-	private settingsKey(): string | undefined {
+	/** Identity of what a new SSH session would use now; undefined when the settings are unusable. */
+	private async currentKey(): Promise<string | undefined> {
 		const server = this.deps.store.getServer(this.serverId);
 		if (!server) return undefined;
-		const hops = [...(server.jumpServerIds ?? []).map((id) => this.deps.store.getServer(id)), server];
-		return JSON.stringify(hops.map((s) => (s ? [s.host, s.port, s.username, s.auth, s.hostKey?.fingerprint] : null)));
+		try {
+			return hopsKey(await resolveHops(server, this.deps.store, this.deps.secrets));
+		} catch {
+			return undefined;
+		}
 	}
 
 	/**
-	 * Re-opens the SSH session when its settings changed since it was opened (called by the
-	 * manager whenever a server is saved). The agent link follows when it was wanted.
+	 * Re-opens the SSH session when its settings (including stored secrets) changed since it was
+	 * opened; called by the manager whenever a server is saved. The agent link follows when it
+	 * was wanted. This is the only reconnect a settings change needs.
 	 */
-	async refreshSettings(): Promise<void> {
-		if (!this.sshConnected || this.settingsKey() === this.connectedKey) return;
+	refreshSettings(): Promise<void> {
+		// Serialized: quick successive saves must not interleave two reconnects.
+		const next = this.refreshChain.then(() => this.refreshSettingsNow());
+		this.refreshChain = next.catch(() => {});
+		return next;
+	}
+
+	private async refreshSettingsNow(): Promise<void> {
+		if (!this.sshConnected) return;
+		const connectedKey = this.connectedKey;
+		const key = await this.currentKey();
+		if (key === connectedKey || !this.sshConnected || this.connectedKey !== connectedKey) return;
 		this.log.info("connection settings changed; reconnecting");
 		const autoReconnect = this.autoReconnect;
 		const agentWanted = this.agentWanted;
@@ -657,10 +691,14 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 				if (signalName) signal = signalName;
 			});
 			channel.on("error", () => {});
-			channel.on("close", () => {
+			channel.on("close", (closeCode?: number | null, closeSignal?: string) => {
 				if (timer) clearTimeout(timer);
 				if (settled) return;
 				settled = true;
+				// A fast command's exit-status can arrive in the same read as the exec reply, i.e.
+				// before the "exit" listener above exists; ssh2 repeats it as the "close" arguments.
+				if (code === null && typeof closeCode === "number") code = closeCode;
+				if (!signal && closeSignal) signal = closeSignal;
 				resolve({ stdout: stdout.toBuffer(), stderr: stderr.toBuffer(), code, ...(signal ? { signal } : {}) });
 			});
 			if (options.stdin !== undefined) channel.end(options.stdin);
@@ -840,7 +878,9 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 			channel.on("error", () => {});
 			// ssh2 emits "close" only after the readable side ended, so stdout must flow.
 			channel.resume();
-			channel.on("close", () => {
+			channel.on("close", (closeCode?: number | null) => {
+				// ssh2 repeats the exit status as the "close" arguments (see execBuffer).
+				if (code === null && typeof closeCode === "number") code = closeCode;
 				if (code !== 0) finish(new ApiError(502, "UPLOAD_FAILED", `上传失败：${stderr.trim() || `退出码 ${code}`}`));
 				else finish();
 			});

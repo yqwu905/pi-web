@@ -19,7 +19,23 @@ function shortFingerprint(fp: string): string {
 	return body.length > 12 ? `SHA256:${body.slice(0, 4)}…${body.slice(-4)}` : fp;
 }
 
-function TestResult({ result, error }: { result: TestConnectionResult | null; error: unknown }) {
+interface ConnectionTest {
+	result: TestConnectionResult;
+	/** Host or port differed from the saved configuration (its trusted key does not apply). */
+	endpointChanged: boolean;
+}
+
+function failureMessage({ result, endpointChanged }: ConnectionTest): string {
+	const key = result.hostKey;
+	if (key && result.hostKeyStatus === "mismatch") return "主机指纹与已信任的不一致，请核对后使用“重置指纹”";
+	if (key && result.hostKeyStatus === "unknown") {
+		const fp = shortFingerprint(key.fingerprint);
+		return endpointChanged ? `新地址的主机指纹尚未确认（${fp}），保存后使用“确认指纹”核对` : `主机指纹尚未确认（${fp}），请使用“确认指纹”核对`;
+	}
+	return result.error ?? "连接失败";
+}
+
+function TestResult({ test, error }: { test: ConnectionTest | null; error: unknown }) {
 	if (error)
 		return (
 			<span role="alert" className="flex items-center gap-1.5 text-xs text-danger">
@@ -27,7 +43,8 @@ function TestResult({ result, error }: { result: TestConnectionResult | null; er
 				{errorMessage(error)}
 			</span>
 		);
-	if (!result) return null;
+	if (!test) return null;
+	const { result } = test;
 	if (result.ok)
 		return (
 			<span role="status" className="flex items-center gap-1.5 text-xs text-success-fg">
@@ -38,9 +55,7 @@ function TestResult({ result, error }: { result: TestConnectionResult | null; er
 	return (
 		<span role="alert" className="flex min-w-0 items-center gap-1.5 text-xs text-danger">
 			<CircleAlert size={13} className="shrink-0" aria-hidden="true" />
-			<span className="min-w-0 break-words">
-				{result.hostKeyStatus === "unknown" && result.hostKey ? "主机指纹与已信任的不同或尚未确认，请使用“重置指纹”核对" : (result.error ?? "连接失败")}
-			</span>
+			<span className="min-w-0 break-words">{failureMessage(test)}</span>
 		</span>
 	);
 }
@@ -50,9 +65,15 @@ export function ConnectionSection({ view, form, set, errors, dirty }: SectionPro
 	const [hostKeyOpen, setHostKeyOpen] = useState(false);
 	const ids = { name: useId(), group: useId(), host: useId(), port: useId(), user: useId(), auth: useId(), key: useId(), secret: useId(), jump: useId() };
 	const connDirty = ["host", "port", "username", "authMethod", "keyPath", "secret", "jumpServerIds"].some((f) => dirty.has(f as never));
-	// Unsaved connection fields are tested as typed; otherwise the saved configuration (with its stored secret).
+	// Unsaved connection fields are tested as typed, against this server's trusted key and stored
+	// secret (when left empty); otherwise the saved configuration.
 	const test = useMutation({
-		mutationFn: () => (connDirty ? testConnection(toTestRequest(form)) : testServer(view.config.id)),
+		mutationFn: async (): Promise<ConnectionTest> => {
+			const request = toTestRequest(form, view.config.id);
+			const endpointChanged = request.host !== view.config.host || request.port !== view.config.port;
+			const result = connDirty ? await testConnection(request) : await testServer(view.config.id);
+			return { result, endpointChanged: connDirty && endpointChanged };
+		},
 	});
 	const hostKey = view.config.hostKey;
 	const auth = view.config.auth;
@@ -64,7 +85,7 @@ export function ConnectionSection({ view, form, set, errors, dirty }: SectionPro
 			description="修改后将重新连接；pi 进程由服务器上的 daemon 持有，不会中断。"
 			actions={
 				<div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-					<TestResult result={test.data ?? null} error={test.error} />
+					<TestResult test={test.data ?? null} error={test.error} />
 					<Button size="sm" loading={test.isPending} onClick={() => test.mutate()}>
 						测试连接
 					</Button>

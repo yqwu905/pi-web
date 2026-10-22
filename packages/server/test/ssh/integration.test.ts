@@ -107,6 +107,47 @@ describe.skipIf(!!skipReason)("ssh integration (local sshd)", () => {
 		await manager.remove("pw");
 	}, 60_000);
 
+	it("re-opens the session once when the saved settings or the stored secret change", async () => {
+		const until = async (cond: () => boolean, timeoutMs = 15_000) => {
+			const start = Date.now();
+			while (!cond()) {
+				if (Date.now() - start > timeoutMs) throw new Error("timed out");
+				await new Promise((r) => setTimeout(r, 50));
+			}
+		};
+		const pw = createServerConfig({ name: "pw2", ...base(), auth: { method: "password", secret: fx.password } }, { id: "pw2" });
+		pw.hostKey = store.getServer("local")!.hostKey;
+		await secrets.set("server:pw2:secret", fx.password);
+		await store.saveServer(pw);
+		await manager.connect("pw2");
+		const states: string[] = [];
+		const onStatus = (s: ServerRuntimeStatus) => {
+			if (s.serverId === "pw2") states.push(s.connection);
+		};
+		manager.on("status", onStatus);
+		try {
+			// Unrelated changes keep the session.
+			await store.saveServer({ ...store.getServer("pw2")!, name: "renamed" });
+			await new Promise((r) => setTimeout(r, 300));
+			expect(states).not.toContain("connecting");
+
+			// A new password with the same auth method is a connection change too.
+			await secrets.set("server:pw2:secret", "wrong-password");
+			await store.saveServer({ ...store.getServer("pw2")! });
+			await until(() => manager.status("pw2").connection === "error");
+			expect(states.filter((s) => s === "connecting")).toHaveLength(1);
+
+			await secrets.set("server:pw2:secret", fx.password);
+			await manager.connect("pw2");
+			expect(manager.status("pw2").connection).toBe("connected");
+			expect((await manager.get("pw2").exec("whoami")).stdout.trim()).toBe(fx.user);
+		} finally {
+			manager.off("status", onStatus);
+			await manager.remove("pw2");
+			await store.deleteServer("pw2");
+		}
+	}, 60_000);
+
 	it("exec: stdout/stderr/exit code, stdin, timeout and output cap", async () => {
 		const conn = manager.get("local");
 		const statuses: ServerRuntimeStatus[] = [];
@@ -125,6 +166,28 @@ describe.skipIf(!!skipReason)("ssh integration (local sshd)", () => {
 		const parallel = await Promise.all(Array.from({ length: 15 }, (_, i) => conn.exec(`echo ${i}`)));
 		expect(parallel.map((p) => p.stdout.trim())).toEqual(Array.from({ length: 15 }, (_, i) => String(i)));
 	}, 60_000);
+
+	it("exec keeps the exit status when it arrives before the listeners are attached", async () => {
+		const conn = manager.get("local");
+		await manager.connect("local");
+		type ExecFn = (command: string, ...rest: unknown[]) => boolean;
+		const client = (conn as unknown as { clients: { exec: ExecFn }[] }).clients.at(-1);
+		if (!client) throw new Error("no ssh client");
+		const original = client.exec;
+		// Deliver the exec callback late, so exit-status and close are processed first (as when
+		// the reply, the output and the exit status arrive in one read).
+		client.exec = function (this: unknown, command: string, ...rest: unknown[]) {
+			const callback = rest.pop() as (err: Error | undefined, channel: unknown) => void;
+			return original.call(this, command, ...rest, (err: Error | undefined, channel: unknown) => setTimeout(() => callback(err, channel), 150));
+		};
+		try {
+			expect(await conn.exec("echo late; exit 7")).toMatchObject({ stdout: "late\n", code: 7 });
+			await expect(conn.execChecked("mkdir -p ~/up-late && echo ok")).resolves.toMatchObject({ code: 0, stdout: "ok\n" });
+		} finally {
+			client.exec = original;
+			runAsTestUser("rm -rf ~/up-late");
+		}
+	}, 30_000);
 
 	it("upload with progress (SFTP and exec fallback), writeFile, readFile, createReadStream", async () => {
 		const conn = manager.get("local");

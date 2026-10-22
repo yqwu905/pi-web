@@ -236,9 +236,19 @@ export function serverRoutes(app: FastifyInstance, ctx: AppContext, options: Ser
 		const username = reqString(body, "username", { max: 255 }).trim();
 		const port = optInt(body, "port", 1, 65535) ?? 22;
 		const auth = parseAuth(body.auth);
+		// Unsaved edits of an existing server: its trusted host key (same host:port) and stored secret apply.
+		const serverId = optString(body, "serverId", { max: 200 });
+		if (serverId !== undefined) requireServer(ctx, serverId);
 		const jumpServerIds = optStringArray(body, "jumpServerIds", { maxItems: 8 });
-		if (jumpServerIds) validateJumps(ctx, "", jumpServerIds);
-		return ctx.connections.testConnection({ host, port, username, auth, ...(jumpServerIds ? { jumpServerIds } : {}) });
+		if (jumpServerIds) validateJumps(ctx, serverId ?? "", jumpServerIds);
+		return ctx.connections.testConnection({
+			host,
+			port,
+			username,
+			auth,
+			...(jumpServerIds ? { jumpServerIds } : {}),
+			...(serverId !== undefined ? { serverId } : {}),
+		});
 	});
 
 	app.get<IdParams>("/servers/:id", async (request): Promise<ServerView> => serverView(ctx, requireServer(ctx, request.params.id)));

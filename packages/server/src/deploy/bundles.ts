@@ -7,8 +7,9 @@ import { Readable, Transform } from "node:stream";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { pipeline } from "node:stream/promises";
 import type { CacheEntry, HostSettings } from "@pi-web/shared";
-import { EnvHttpProxyAgent, ProxyAgent, fetch, type Dispatcher, type Response } from "undici";
+import { fetch, type Dispatcher, type Response } from "undici";
 import { ApiError, badRequest, errorMessage } from "../core/errors.js";
+import { HostProxyDispatcher } from "../core/http.js";
 import type { HostPaths, Logger } from "../core/types.js";
 import { AGENT_FILES, PI_PACKAGE, compareVersions } from "./scripts.js";
 
@@ -160,6 +161,7 @@ export interface BundleCacheOptions {
 export class BundleCache {
 	private readonly inflight = new Map<string, Promise<unknown>>();
 	private index?: { at: number; base: string; entries: NodeIndexEntry[] };
+	private proxyDispatcher?: HostProxyDispatcher;
 
 	constructor(private readonly options: BundleCacheOptions) {}
 
@@ -171,10 +173,11 @@ export class BundleCache {
 		return path.join(this.cacheDir, kind);
 	}
 
+	/** settings.upstreamProxy or HTTP(S)_PROXY, honouring NO_PROXY; one agent shared by every download. */
 	private dispatcher(): Dispatcher {
 		if (this.options.dispatcher) return this.options.dispatcher;
-		const upstream = this.options.getSettings().upstreamProxy?.trim();
-		return upstream ? new ProxyAgent(upstream) : new EnvHttpProxyAgent();
+		this.proxyDispatcher ??= new HostProxyDispatcher(() => this.options.getSettings().upstreamProxy);
+		return this.proxyDispatcher;
 	}
 
 	private once<T>(key: string, task: () => Promise<T>): Promise<T> {

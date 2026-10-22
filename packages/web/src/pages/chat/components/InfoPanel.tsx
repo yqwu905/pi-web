@@ -1,6 +1,6 @@
-import { Copy as CopyIcon, Download, GitFork, Layers, ListTree, PanelRightClose, Pencil } from "lucide-react";
+import { Copy as CopyIcon, Download, FileDown, GitFork, Layers, ListTree, PanelRightClose, Pencil, Trash2 } from "lucide-react";
 import { type ReactNode, useId, useMemo, useState } from "react";
-import { errorMessage, exportConversation, reloadConversation, saveBlob } from "../../../api/client";
+import { downloadWorkspaceFile, errorMessage, exportConversation, reloadConversation, saveBlob } from "../../../api/client";
 import { Button, Callout, IconButton, ProgressBar, SectionLabel, toast } from "../../../components/ui";
 import { cn } from "../../../lib/cn";
 import { formatCost, formatNumber, formatTokens, tildify } from "../../../lib/format";
@@ -19,6 +19,7 @@ export interface InfoPanelProps {
 	onOpenFork: () => void;
 	onOpenCompact: () => void;
 	onOpenRename: () => void;
+	onOpenDelete: () => void;
 	className?: string;
 }
 
@@ -41,9 +42,9 @@ function ToggleRow({ label, checked, onChange, disabled }: { label: string; chec
 }
 
 /** Right-hand 会话信息 panel: context bar, usage, session file and session actions. */
-export function InfoPanel({ conv, onClose, onOpenTree, onOpenFork, onOpenCompact, onOpenRename, className }: InfoPanelProps) {
+export function InfoPanel({ conv, onClose, onOpenTree, onOpenFork, onOpenCompact, onOpenRename, onOpenDelete, className }: InfoPanelProps) {
 	const server = useServer(conv.serverId);
-	const [busy, setBusy] = useState<"clone" | "export" | "reload" | null>(null);
+	const [busy, setBusy] = useState<"clone" | "export" | "jsonl" | "reload" | null>(null);
 	const [, setRetryTick] = useState(0);
 	const { state, stats, rpcState } = conv;
 	const live = conv.mode === "live";
@@ -53,12 +54,12 @@ export function InfoPanel({ conv, onClose, onOpenTree, onOpenFork, onOpenCompact
 	const autoCompaction = rpcState?.autoCompactionEnabled ?? true;
 	const autoRetry = (conv.convId ? autoRetryByConv.get(conv.convId) : undefined) ?? true;
 
-	const run = async (kind: "clone" | "export" | "reload", action: () => Promise<void>) => {
+	const run = async (kind: "clone" | "export" | "jsonl" | "reload", action: () => Promise<void>) => {
 		setBusy(kind);
 		try {
 			await action();
 		} catch (e) {
-			toast.error(errorMessage(e), { title: kind === "clone" ? "克隆失败" : kind === "export" ? "导出失败" : "重新加载失败" });
+			toast.error(errorMessage(e), { title: kind === "clone" ? "克隆失败" : kind === "reload" ? "重新加载失败" : "导出失败" });
 		} finally {
 			setBusy(null);
 		}
@@ -77,6 +78,16 @@ export function InfoPanel({ conv, onClose, onOpenTree, onOpenFork, onOpenCompact
 			const convId = await conv.ensureLive();
 			const { blob, fileName } = await exportConversation(convId);
 			saveBlob(blob, fileName);
+		});
+
+	/** The raw session file: works for saved sessions without starting pi. */
+	const exportJsonl = () =>
+		run("jsonl", async () => {
+			const workspaceId = conv.workspace?.config.id;
+			const file = conv.sessionFile;
+			if (!workspaceId || !file) throw new Error("会话文件尚未创建");
+			const blob = await downloadWorkspaceFile(workspaceId, file);
+			saveBlob(blob, file.slice(file.lastIndexOf("/") + 1) || "session.jsonl");
 		});
 
 	const reload = () =>
@@ -208,8 +219,14 @@ export function InfoPanel({ conv, onClose, onOpenTree, onOpenFork, onOpenCompact
 					<ActionButton icon={<Download size={13} strokeWidth={1.8} />} onClick={() => void exportHtml()} loading={busy === "export"} disabled={conv.mode === "new"}>
 						导出 HTML
 					</ActionButton>
+					<ActionButton icon={<FileDown size={13} strokeWidth={1.8} />} onClick={() => void exportJsonl()} loading={busy === "jsonl"} disabled={!conv.sessionFile}>
+						导出 JSONL
+					</ActionButton>
 					<ActionButton icon={<Pencil size={13} strokeWidth={1.8} />} onClick={onOpenRename} disabled={conv.mode === "new"}>
 						重命名
+					</ActionButton>
+					<ActionButton icon={<Trash2 size={13} strokeWidth={1.8} />} onClick={onOpenDelete} disabled={!conv.sessionFile}>
+						删除会话
 					</ActionButton>
 				</div>
 				<div className="flex flex-col gap-2 pt-1">

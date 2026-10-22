@@ -37,9 +37,14 @@ describe("settings", () => {
 		expect(cleared.json().upstreamProxy).toBeUndefined();
 	});
 
-	it("invalidates the host pi cache when its agent dir changes", async () => {
+	it("invalidates the host pi cache and moves the watchers when its agent dir changes", async () => {
 		await t.request("PUT", "/api/settings", { hostAgentDir: "/other/agent" });
 		expect(t.hostPi.invalidations).toBe(1);
+		expect(t.syncer.calls.filter((c) => c.method === "rewatch")).toHaveLength(1);
+		expect(t.oauth.rewatched).toBe(1);
+		await t.request("PUT", "/api/settings", { hostAgentDir: "/other/agent", listenPort: 7979 });
+		expect(t.hostPi.invalidations).toBe(1);
+		expect(t.oauth.rewatched).toBe(1);
 	});
 
 	it("rejects invalid settings", () => {

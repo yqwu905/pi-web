@@ -153,7 +153,7 @@ export function WorkspaceFormFields({ values, onChange, errors, modelSuggestions
 					<Input
 						mono
 						list={modelSuggestions.length > 0 ? listId : undefined}
-						placeholder="anthropic/claude-sonnet-4-5"
+						placeholder={`留空使用默认，例如 ${modelSuggestions[0] ?? "anthropic/claude-sonnet-4-5"}`}
 						value={values.model}
 						disabled={disabled}
 						spellCheck={false}

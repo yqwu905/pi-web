@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -39,15 +40,16 @@ async function setup(options: { watch?: boolean; failRefresh?: boolean } = {}) {
 	const runtime = { getAuth } as unknown as ModelRuntime;
 	const hostPi: HostPi = { agentDir, version: async () => "1.4.0", modelRuntime: async () => runtime, invalidate() {} };
 	const pushAuth = vi.fn(async () => [{ serverId: "s1", ok: true }]);
-	const syncer = { pushAuth } as unknown as Syncer;
+	const syncer = Object.assign(new EventEmitter(), { pushAuth }) as unknown as Syncer;
 	const store = new MemoryStore([makeServer()]);
 	const hub = new FakeHub();
+	const paths = makePaths(agentDir, join(dir, "data"));
 	const keeper = createOAuthKeeper(
-		{ paths: makePaths(agentDir, join(dir, "data")), log: noopLogger, store, hub, hostPi, syncer },
+		{ paths, log: noopLogger, store, hub, hostPi, syncer },
 		{ intervalMs: 3600_000, watch: options.watch ?? false, changeDebounceMs: 50 },
 	);
 	keepers.push(keeper);
-	return { agentDir, authPath, keeper, getAuth, pushAuth, store, hub };
+	return { dir, agentDir, authPath, paths, keeper, getAuth, pushAuth, syncer, store, hub };
 }
 
 describe("OAuthKeeper", () => {
@@ -74,6 +76,37 @@ describe("OAuthKeeper", () => {
 		await (env.keeper as unknown as { tick(): Promise<void> }).tick();
 		expect(env.getAuth).toHaveBeenCalledTimes(1);
 		expect(env.pushAuth).toHaveBeenCalledTimes(1);
+	});
+
+	it("records auth.json delivered by regular syncs (deploy, manual, auto) as pushed", async () => {
+		const env = await setup();
+		await env.keeper.start();
+		env.syncer.emit("auth-synced", { serverId: "s1", at: 1234, ok: false, error: "disk full" });
+		expect((await env.keeper.status()).providers[0].pushed).toEqual([{ serverId: "s1", at: 1234, ok: false, error: "disk full" }]);
+		env.syncer.emit("auth-synced", { serverId: "s1", at: 5678, ok: true });
+		expect((await env.keeper.status()).providers[0].pushed).toEqual([{ serverId: "s1", at: 5678, ok: true }]);
+		await waitFor(() => env.store.getState<{ pushed: Record<string, { at: number }> }>("oauth")?.pushed.s1?.at === 5678);
+		await env.keeper.stop();
+		env.syncer.emit("auth-synced", { serverId: "s1", at: 9999, ok: true });
+		expect(env.syncer.listenerCount("auth-synced")).toBe(0);
+	});
+
+	it("watches the auth.json of a changed host agent dir", async () => {
+		const env = await setup({ watch: true });
+		await env.keeper.start();
+		expect(env.pushAuth).toHaveBeenCalledTimes(1);
+		const newDir = join(env.dir, "other");
+		const later = Date.now() + 120 * MIN;
+		await put(join(newDir, "auth.json"), JSON.stringify({ anthropic: { type: "oauth", access: "n-1", refresh: "nr-1", expires: later } }));
+		env.paths.hostAgentDir = newDir;
+		await env.keeper.rewatch();
+		await waitFor(() => env.pushAuth.mock.calls.length === 2, 5000);
+		expect((await env.keeper.status()).providers).toMatchObject([{ provider: "anthropic", expiresAt: later }]);
+		await writeFile(env.authPath, JSON.stringify({})); // the old file is no longer watched
+		await new Promise((r) => setTimeout(r, 600));
+		expect(env.pushAuth).toHaveBeenCalledTimes(2);
+		await writeFile(join(newDir, "auth.json"), JSON.stringify({ anthropic: { type: "oauth", access: "n-2", refresh: "nr-1", expires: later + MIN } }));
+		await waitFor(() => env.pushAuth.mock.calls.length === 3, 5000);
 	});
 
 	it("pushes when the host pi changes auth.json by itself", async () => {

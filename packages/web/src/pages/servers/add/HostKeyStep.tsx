@@ -2,6 +2,7 @@ import type { HostKeyInfo, ServerView } from "@pi-web/shared";
 import { CircleCheck, ShieldAlert, TriangleAlert } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { Callout } from "../../../components/ui/Display";
+import { cn } from "../../../lib/cn";
 import { serverTarget } from "../lib/connection-form";
 
 export interface HostKeyStepProps {
@@ -88,16 +89,36 @@ export function HostKeyStep({ view, hostKey, jumps, busy, error, jumpOnly, onTru
 			</section>
 		);
 	}
+	// A saved key that differs from the presented one: the server was reinstalled or someone is in between.
+	const previous = c.hostKey && c.hostKey.fingerprint !== hostKey.fingerprint ? c.hostKey : undefined;
 	return (
-		<section aria-labelledby="as-hk-t" className="flex max-w-[760px] flex-col gap-4 rounded-xl border border-warning-border bg-warning-soft p-5">
+		<section
+			aria-labelledby="as-hk-t"
+			className={cn(
+				"flex max-w-[760px] flex-col gap-4 rounded-xl border p-5",
+				previous ? "border-danger/40 bg-danger-faint" : "border-warning-border bg-warning-soft",
+			)}
+		>
 			<div className="flex items-start gap-3">
-				<ShieldAlert size={20} strokeWidth={1.8} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
+				<ShieldAlert size={20} strokeWidth={1.8} className={cn("mt-0.5 shrink-0", previous ? "text-danger" : "text-warning")} aria-hidden="true" />
 				<div className="flex min-w-0 flex-col gap-1">
-					<span className="text-xs font-semibold text-warning-fg">需要确认 · 未知主机</span>
-					<h2 id="as-hk-t" className="m-0 text-lg font-semibold text-fg">
-						首次连接 {c.host}:{c.port}
-						{via}
-					</h2>
+					{previous ? (
+						<>
+							<span className="text-xs font-semibold text-danger">主机指纹已变化</span>
+							<h2 id="as-hk-t" className="m-0 text-lg font-semibold text-fg">
+								{c.host}:{c.port}
+								{via} 的主机指纹与已信任的不一致
+							</h2>
+						</>
+					) : (
+						<>
+							<span className="text-xs font-semibold text-warning-fg">需要确认 · 未知主机</span>
+							<h2 id="as-hk-t" className="m-0 text-lg font-semibold text-fg">
+								首次连接 {c.host}:{c.port}
+								{via}
+							</h2>
+						</>
+					)}
 				</div>
 			</div>
 			<dl className="m-0 grid grid-cols-[80px_minmax(0,1fr)] items-baseline gap-x-4 gap-y-2.5 text-sm">
@@ -111,10 +132,27 @@ export function HostKeyStep({ view, hostKey, jumps, busy, error, jumpOnly, onTru
 						{algorithmLabel(hostKey.algorithm)}
 					</code>
 				</dd>
-				<dt className="text-fg-2">指纹</dt>
+				<dt className="text-fg-2">{previous ? "新指纹" : "指纹"}</dt>
 				<dd className="m-0 min-w-0">
-					<code className="block rounded-md border border-warning-border bg-code px-2.5 py-2 text-sm leading-5 break-all text-fg select-all">{hostKey.fingerprint}</code>
+					<code
+						className={cn(
+							"block rounded-md border bg-code px-2.5 py-2 text-sm leading-5 break-all text-fg select-all",
+							previous ? "border-danger/40" : "border-warning-border",
+						)}
+					>
+						{hostKey.fingerprint}
+					</code>
 				</dd>
+				{previous && (
+					<>
+						<dt className="text-fg-2">原指纹</dt>
+						<dd className="m-0 min-w-0">
+							<code className="block rounded-md border border-border bg-code px-2.5 py-2 text-sm leading-5 break-all text-fg-2">
+								{algorithmLabel(previous.algorithm)} · {previous.fingerprint}
+							</code>
+						</dd>
+					</>
+				)}
 				{jumps.length > 0 && (
 					<>
 						<dt className="text-fg-2">跳板机</dt>
@@ -139,7 +177,11 @@ export function HostKeyStep({ view, hostKey, jumps, busy, error, jumpOnly, onTru
 					</>
 				)}
 			</dl>
-			<p className="m-0 text-sm leading-[21px] text-fg">请与服务器管理员核对指纹。信任后会保存到 Pi-Web，指纹变化时将拒绝连接。</p>
+			<p className="m-0 text-sm leading-[21px] text-fg">
+				{previous
+					? "只有在服务器重装系统或更换了主机密钥时，指纹才会变化；否则可能存在中间人攻击。请先与服务器管理员核对新指纹，确认无误后再信任。"
+					: "请与服务器管理员核对指纹。信任后会保存到 Pi-Web，指纹变化时将拒绝连接。"}
+			</p>
 			<p className="m-0 text-xs leading-[18px] text-fg-2">
 				在服务器上运行 <code className="text-xs text-fg-code">{keygenCommand(hostKey.algorithm)}</code> 可查看本机指纹。
 			</p>
@@ -150,8 +192,8 @@ export function HostKeyStep({ view, hostKey, jumps, busy, error, jumpOnly, onTru
 			)}
 			<div className="flex justify-end gap-2 pt-1">
 				<Button onClick={onBack}>取消</Button>
-				<Button variant="primary" loading={busy} onClick={onTrust}>
-					{jumpOnly ? "信任并完成" : "信任并继续"}
+				<Button variant={previous ? "danger" : "primary"} loading={busy} onClick={onTrust}>
+					{previous ? (jumpOnly ? "信任新指纹并完成" : "信任新指纹并继续") : jumpOnly ? "信任并完成" : "信任并继续"}
 				</Button>
 			</div>
 		</section>

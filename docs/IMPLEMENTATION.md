@@ -91,7 +91,7 @@ R/trash/sessions/
       - 代理开启时：`HTTP_PROXY`/`HTTPS_PROXY`/`http_proxy`/`https_proxy`=`http://pw:<token>@127.0.0.1:<port>`，`NO_PROXY`/`no_proxy`=noProxy 用逗号连接
       - 依次合并 `config.extraEnv`、`params.env`
       - PATH 前面加上 `R/bin` 和 node 所在目录
-  - 启动后发送 `get_state`（超时 60s）；成功后状态置为 idle，返回 `{conv, state}`。
+  - 启动后发送 `get_state`（超时 60s）；成功后状态置为 idle，返回 `{conv, state}`。若该 convId 或 sessionFile 已有存活进程（包括并发的 start），则等待它启动并返回 `attached: true`，总预算 `CONV_START_TIMEOUT_MS`（90s）。
 - stdout 按 **LF 严格分帧**（StringDecoder + indexOf("\n")，去掉行尾 `\r`；**禁止用 readline**）。逐条记录处理：
   - `type==="response"`：按 id 交给等待中的 send。
   - `extension_ui_request`：
@@ -102,14 +102,15 @@ R/trash/sessions/
   - 每条转发的记录分配递增的 seq，存入环形缓冲（3000 条），并 `emitEvent("conv.event", {convId, seq, ts, record})`。状态变化时额外发送 `pi_web_status` 记录和 `conv.info` 事件。
   - 同时把每条记录喂给 shared 的 `applyConvRecord` 维护 tracker 状态（为节省内存，每次应用后把 `messages` 清空），供 `conv.snapshot` 使用。
 - `conv.send`：
-  - 给命令分配 id `pw-<n>`，写入 stdin，等待 response。默认超时 60s；compact、export_html、abort、bash、fork、clone、new_session、switch_session 的超时为 10 分钟。
+  - 给命令分配 id `pw-<n>`，写入 stdin，等待 response。默认超时 60s；compact、export_html、abort、bash、fork、clone、new_session、switch_session 以及以 `/` 开头的 prompt（扩展命令，pi 在命令处理完、包括等待对话框之后才回复）的超时为 10 分钟。超时从收到请求开始计算，包括等待仍在启动的进程。
+  - 超时常量和 `defaultCommandTimeout` 在 `@pi-web/shared` 的 `timeouts.ts` 中，agent 和 host 共用；host 在 link 上多等 10s，保证先收到 agent 的精确错误。
   - 返回 `{...response, seq: 读到 response 时的 lastSeq}`。
   - new_session、switch_session、fork、clone 成功后：重新 `get_state`，更新 sessionFile 索引，并转发一条 `pi_web_session_changed` 记录。
-- `conv.snapshot`：依次 `get_state`、`get_messages`（**记录此 response 被读到时的 seq 和 tracker 状态**）、`get_session_stats`（失败可忽略）。组装并返回 ConvSnapshot：runningTools 取 tracker.tools 中 status==="running" 的项。
+- `conv.snapshot`：在总预算 `CONV_SNAPSHOT_TIMEOUT_MS`（120s）内依次 `get_state`、`get_messages`（**记录此 response 被读到时的 seq 和 tracker 状态**）、`get_session_stats`（失败可忽略）。组装并返回 ConvSnapshot：runningTools 取 tracker.tools 中 status==="running" 的项。
 - `conv.uiResponse`：写入 stdin，从 pendingUi 中移除，转发 `pi_web_ui_resolved`，重新计算状态。
 - `conv.companion`：
   - 生成 reqId，发送 prompt `/pi-web-<action> <JSON.stringify({reqId,...args})>`。扩展命令在 streaming 期间也会立即执行。
-  - 等待 setStatus(`pi-web:result`) 中 reqId 匹配的 JSON；navigate 超时 10 分钟，其余 60s。
+  - 等待 setStatus(`pi-web:result`) 中 reqId 匹配的 JSON；navigate 和 reload（先等待 pi 空闲）的总超时为 10 分钟，label 为 60s（`companionActionTimeout`，包括首次的 get_commands 检查）。
 - `conv.stop`：关闭 stdin，5s 后发 SIGTERM，再过 3s 发 SIGKILL；`force` 时直接 SIGKILL。
 - 进程退出时：
   - 状态改为 exited，发送 `pi_web_exit`（附带 stderr 末尾 4KB）和 `conv.info`；
@@ -346,6 +347,8 @@ logs/pi-web.log
 - 使用 `ModelRuntime.create({ authPath: <hostAgentDir>/auth.json, modelsPath: <hostAgentDir>/models.json, refreshOnCreate: false })`，即 HostPi.modelRuntime()。
 - 每 60s 读取 Host auth.json。对每个 `type:"oauth"` 的条目，当 `expires - now < 20min` 时，调用 `runtime.getAuth(provider, { minOAuthValidityMs: 20*60_000 })` 触发 pi 自身的刷新，结果会在文件锁下写回 Host 的 auth.json。
 - Host auth.json 发生变化时（无论刷新来自本服务还是 Host 上的 pi），执行 `syncer.pushAuth()`，并记录各服务器的推送结果。
+- pi-ai 的刷新请求用的是全局 `fetch`，而 pi 只在自己的 CLI 入口里安装代理 dispatcher。因此 `cli.ts` 启动时用 `installHostHttpDispatcher`（`src/core/http.ts`）安装全局 undici dispatcher：优先 settings.upstreamProxy（运行时修改即生效），否则 HTTP(S)_PROXY，两种情况都遵循 NO_PROXY。BundleCache 的下载复用同一种 dispatcher。
+- settings.hostAgentDir 修改后，Syncer 和 OAuthKeeper 通过 `rewatch()` 改为监视新目录（Syncer 把新目录的全部内容视为已变化）。
 - status 返回每个 OAuth provider 的 expiresAt、lastRefreshAt、refreshAt（= expiresAt − 20min）和 pushed。
 
 ### 3.8 ConversationService
@@ -358,7 +361,7 @@ logs/pi-web.log
 - `open`：
   - 未连接时先 connect；
   - 调用 `conv.start`，参数包括 cwd=workspace.path、trust、model/thinking（请求值优先，其次 workspace.defaults）、env=workspace.env。
-- `snapshot`：调用 `conv.snapshot`，并计算 `configStale = syncer.lastChangeAt(serverId) > info.startedAt`。
+- `snapshot`：调用 `conv.snapshot`，并计算 `configStale = syncer.lastChangeAt(serverId) > info.startedAt`。前端在对话打开期间还订阅 `sync` 话题，收到本服务器的 `configUpdated` 时直接显示“配置已更新”。
 - `exportHtml`：
   - 先 `rpc export_html {outputPath: R/state/exports/<convId>-<ts>.html}`；
   - 再用 `createReadStream` 读取，读取结束后删除远端文件；
@@ -479,7 +482,8 @@ POST   /auth/login          { token }          → { ok: true }   (设置 cookie
 
 GET    /servers                                → { servers: ServerView[] }
 POST   /servers             CreateServerRequest → ServerView
-POST   /servers/test        { host, port, username, auth: ServerAuthInput, jumpServerIds? } → TestConnectionResult
+POST   /servers/test        { host, port, username, auth: ServerAuthInput, jumpServerIds?, serverId? } → TestConnectionResult
+                            （serverId：编辑已有服务器时传入；host:port 不变则用其已信任的指纹，auth.secret 省略则用已保存的密码/口令）
 GET    /servers/:id                            → ServerView
 PUT    /servers/:id         UpdateServerRequest → ServerView
 DELETE /servers/:id                            → { ok: true }
@@ -553,4 +557,6 @@ WebSocket：`/ws`（话题见 `api.ts`），`/ws/term`（见 `api.ts` 末尾）�
 5. 验证 fork/tree/label/reload、文件浏览、git、终端；
 6. 验证自动同步和 OAuth 推送（用伪造的 oauth 条目验证变换）。
 
-最后用 Playwright（Chromium 已预装）驱动前端，对每个页面做冒烟测试并截图。
+以上流程已自动化为 API 级 E2E：`npm run build && npm run e2e:api`（`e2e/api-e2e.mjs`，需 root + OpenSSH；`E2E_KEEP=1` 保留临时目录，`E2E_VERBOSE=1` 打印全部事件）。它像浏览器一样驱动 REST + `/ws` + `/ws/term`，并额外覆盖扩展对话框（ui-response）、提示模板/技能展开、write 工具、abort、Pi-Web 重启后的事件补发与卸载。
+
+浏览器 E2E：`npm run build && npm run e2e:ui`（`e2e/ui-e2e.mjs`，与 API E2E 共用 `e2e/lib/env.mjs` 中的环境：sshd fixture、mock LLM、Host agent 目录、数据目录）。用 Playwright 驱动 Chromium（1440×960）走完添加服务器向导（连接 → 主机指纹 → 探测 → 离线部署 → 同步）、新建工作区（目录选择器 + 新建文件夹）、对话（流式回复、bash 工具卡片、信息面板、会话树与标签、模型/思考选择、`/` 补全与提示模板、刷新恢复、离开再返回）、文件/Git/终端、同步中心（预览、手动同步）、全局设置、服务器设置，以及断开/重连。每一步截图到 `e2e/screenshots/`，出现页面异常、未预期的 console.error、失败的 `/api` 请求或整页滚动即判失败。需要全局或本地安装的 `playwright` 包与 `PLAYWRIGHT_BROWSERS_PATH` 下的 Chromium；`E2E_HOLD=1` 在结束后保留环境便于手动调试。

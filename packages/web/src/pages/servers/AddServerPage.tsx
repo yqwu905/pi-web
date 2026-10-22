@@ -159,7 +159,7 @@ export default function AddServerPage() {
 		setTesting(true);
 		setStepError(null);
 		try {
-			setTest({ signature, result: await testConnection(toTestRequest(form)) });
+			setTest({ signature, result: await testConnection(toTestRequest(form, view?.config.id)) });
 		} catch (e) {
 			setStepError(errorMessage(e));
 		} finally {
@@ -177,7 +177,7 @@ export default function AddServerPage() {
 		try {
 			let result = test?.signature === signature ? test.result : null;
 			if (!result) {
-				result = await testConnection(toTestRequest(form));
+				result = await testConnection(toTestRequest(form, view?.config.id));
 				setTest({ signature, result });
 			}
 			if (!result.ok && !result.hostKey) {

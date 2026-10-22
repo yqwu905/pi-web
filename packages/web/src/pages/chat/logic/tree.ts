@@ -363,10 +363,29 @@ export interface TreeLayoutOptions {
 	leafId: string | null | undefined;
 }
 
+/**
+ * The entry to show as the current position: the leaf itself, or — when the leaf is a
+ * bookkeeping entry the filter hides (a label, model or thinking-level change appended after
+ * the last message) — the nearest entry above it that is not bookkeeping. Continuing from that
+ * entry is the same as continuing from the leaf.
+ */
+export function displayLeafId(nodesById: ReadonlyMap<string, SessionTreeNode>, leafId: string | null | undefined, filter: TreeFilter): string | null | undefined {
+	const leaf = leafId ? nodesById.get(leafId) : undefined;
+	if (!leaf || passesTreeFilter(leaf, filter, leafId)) return leafId;
+	let node: SessionTreeNode | undefined = leaf;
+	const guard = new Set<string>();
+	while (node && SETTINGS_TYPES.has(node.entry.type) && !guard.has(node.entry.id)) {
+		guard.add(node.entry.id);
+		node = node.entry.parentId ? nodesById.get(node.entry.parentId) : undefined;
+	}
+	return node ? node.entry.id : leafId;
+}
+
 export function layoutTree(roots: readonly SessionTreeNode[], options: TreeLayoutOptions): TreeLayout {
 	const nodes = allNodes(roots);
 	const nodesById = new Map(nodes.map((n) => [n.entry.id, n]));
 	const activeIds = activePathIds(nodes, options.leafId);
+	const leafId = displayLeafId(nodesById, options.leafId, options.filter);
 	const toolCalls = collectToolCalls(nodes);
 	const infos = new Map<SessionTreeNode, EntryInfo>();
 	const infoOf = (n: SessionTreeNode) => {
@@ -378,7 +397,7 @@ export function layoutTree(roots: readonly SessionTreeNode[], options: TreeLayou
 		return info;
 	};
 	const query = options.query ?? "";
-	const visible = (n: SessionTreeNode) => passesTreeFilter(n, options.filter, options.leafId) && matchesTreeQuery(n, infoOf(n), query);
+	const visible = (n: SessionTreeNode) => passesTreeFilter(n, options.filter, leafId) && matchesTreeQuery(n, infoOf(n), query);
 
 	// Visible forest: hidden nodes are skipped and their visible descendants attach to the nearest visible ancestor.
 	const forest: VNode[] = [];
@@ -423,7 +442,7 @@ export function layoutTree(roots: readonly SessionTreeNode[], options: TreeLayou
 			connector: p.connector,
 			segments: p.continuation || kids.length > 0 ? [{ col: p.depth, top: p.continuation, bottom: kids.length > 0 }] : [],
 			onPath: activeIds.has(id),
-			isLeaf: id === options.leafId,
+			isLeaf: id === leafId,
 			childCount: p.v.node.children.length,
 		});
 		if (kids.length === 1) {

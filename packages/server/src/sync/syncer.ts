@@ -20,7 +20,7 @@ import {
 	type SyncStatusResponse,
 	type SyncTopicEvent,
 } from "@pi-web/shared";
-import { type AgentClient, ApiError, type AppContext, type ServerConnection, type Syncer } from "../core/types.js";
+import { type AgentClient, ApiError, type AppContext, type AuthSyncedEvent, type ServerConnection, type Syncer } from "../core/types.js";
 import { buildDesiredTree, type DesiredTree } from "./desired.js";
 import { executePlan } from "./executor.js";
 import { HashCache, type HashCacheEntry } from "./hash-cache.js";
@@ -193,19 +193,7 @@ class SyncerImpl extends EventEmitter implements Syncer {
 	async start(): Promise<void> {
 		this.stopped = false;
 		if (this.watcher) return;
-		const extra = await this.discoverExtraWatchPaths();
-		for (const path of extra) this.watchedExtra.add(path);
-		const watcher = watch([this.agentDir, ...this.watchedExtra], {
-			ignoreInitial: true,
-			persistent: true,
-			usePolling: this.options.usePolling,
-			awaitWriteFinish: { stabilityThreshold: this.writeFinishMs, pollInterval: 100 },
-			ignored: (path: string) => this.isIgnoredWatchPath(path),
-		});
-		this.watcher = watcher;
-		watcher.on("all", (_event, path) => this.onHostChange(path));
-		watcher.on("error", (err) => this.log.warn("sync watcher error", { error: errorMessage(err) }));
-		await new Promise<void>((resolve) => watcher.once("ready", () => resolve()));
+		await this.openWatcher();
 		for (const server of this.syncableServers()) {
 			const state = this.state(server.id);
 			if (state.pending) this.pushRuntimeStatus(server.id);
@@ -227,6 +215,19 @@ class SyncerImpl extends EventEmitter implements Syncer {
 		await watcher?.close();
 		await Promise.allSettled([...this.chains.values()]);
 		await this.hashCache.flush();
+	}
+
+	async rewatch(): Promise<void> {
+		const previous = this.watcher;
+		if (this.stopped || !previous) return;
+		this.watcher = undefined;
+		this.watchedExtra.clear();
+		await previous.close();
+		if (this.stopped || this.watcher) return;
+		await this.openWatcher();
+		this.log.info("sync watcher moved", { agentDir: this.agentDir });
+		// Everything the servers get now comes from another directory.
+		for (const item of SYNC_ITEM_KEYS) this.onHostItemChange(item);
 	}
 
 	onAgentConnected(serverId: string): void {
@@ -335,6 +336,11 @@ class SyncerImpl extends EventEmitter implements Syncer {
 				});
 			}
 			record = this.recordFrom(serverId, trigger, runId, startedAt, computed, result);
+			if (prepared.items.includes("auth")) {
+				// Every successful run that covers auth.json leaves the server with the host's current access tokens.
+				const authError = result.errors.find((e) => e.path === "auth.json");
+				this.emit("auth-synced", { serverId, at: Date.now(), ok: !authError, ...(authError ? { error: authError.error } : {}) } satisfies AuthSyncedEvent);
+			}
 			this.cachePlan(serverId, prepared.items, {
 				...computed.plan,
 				entries: computed.plan.entries.filter((entry) => result.errors.some((e) => e.path === entry.path)),
@@ -623,10 +629,31 @@ class SyncerImpl extends EventEmitter implements Syncer {
 		return undefined;
 	}
 
+	private async openWatcher(): Promise<void> {
+		const extra = await this.discoverExtraWatchPaths();
+		for (const path of extra) this.watchedExtra.add(path);
+		const watcher = watch([this.agentDir, ...this.watchedExtra], {
+			ignoreInitial: true,
+			persistent: true,
+			usePolling: this.options.usePolling,
+			awaitWriteFinish: { stabilityThreshold: this.writeFinishMs, pollInterval: 100 },
+			ignored: (path: string) => this.isIgnoredWatchPath(path),
+		});
+		this.watcher = watcher;
+		watcher.on("all", (_event, path) => {
+			if (this.watcher === watcher) this.onHostChange(path);
+		});
+		watcher.on("error", (err) => this.log.warn("sync watcher error", { error: errorMessage(err) }));
+		await new Promise<void>((resolve) => watcher.once("ready", () => resolve()));
+	}
+
 	private onHostChange(path: string): void {
-		if (this.stopped) return;
 		const item = this.itemForHostPath(path);
-		if (!item) return;
+		if (item) this.onHostItemChange(item);
+	}
+
+	private onHostItemChange(item: SyncItemKey): void {
+		if (this.stopped) return;
 		this.changedItems.add(item);
 		if (this.debounceTimer) clearTimeout(this.debounceTimer);
 		this.debounceTimer = setTimeout(() => {

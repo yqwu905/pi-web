@@ -31,6 +31,9 @@ export const queryKeys = {
 	workspaces: ["workspaces"] as const,
 	sessions: (workspaceId: string) => ["workspaces", workspaceId, "sessions"] as const,
 	gitStatus: (workspaceId: string) => ["workspaces", workspaceId, "git", "status"] as const,
+	/** Prefixes of a workspace's git views (status, diff, log) and file browser queries. */
+	workspaceGit: (workspaceId: string) => ["workspaces", workspaceId, "git"] as const,
+	workspaceFs: (workspaceId: string) => ["workspaces", workspaceId, "fs"] as const,
 	sessionFile: (serverId: string, file: string) => ["session-file", serverId, file] as const,
 	conversations: ["conversations"] as const,
 	syncStatus: ["sync", "status"] as const,

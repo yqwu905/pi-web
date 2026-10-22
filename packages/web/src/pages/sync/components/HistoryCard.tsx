@@ -77,7 +77,7 @@ export function HistoryCard({ records, loading, error, servers, onSelectServer, 
 			) : !records?.length ? (
 				<EmptyState compact title="还没有同步记录" />
 			) : (
-				<div className="overflow-x-auto">
+				<div className="relative overflow-x-auto">
 					<table className="w-full min-w-[760px] border-collapse text-sm">
 						<thead>
 							<tr>
