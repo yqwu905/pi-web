@@ -1,0 +1,23 @@
+{
+  "name": "@pi-web/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Remote daemon (pi-web-agent), stdio bridge and pi companion extension deployed to servers",
+  "exports": {
+    "./package.json": "./package.json",
+    "./dist/*": "./dist/*"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@pi-web/shared": "*",
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.28.0",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.5"
+  }
+}

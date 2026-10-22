@@ -1,0 +1,21 @@
+{
+  "name": "pi-web-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "packages/agent",
+    "packages/server",
+    "packages/web"
+  ],
+  "scripts": {
+    "build": "npm run build -w @pi-web/agent && npm run build -w @pi-web/web && npm run build -w pi-web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "dev": "npm run dev -w pi-web"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
