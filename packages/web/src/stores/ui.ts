@@ -18,6 +18,8 @@ interface UiState {
 	setWorkspaceExpanded(workspaceId: string, expanded: boolean): void;
 	rememberSession(workspaceId: string, sessionId: string): void;
 	forgetSession(workspaceId: string, sessionId: string): void;
+	/** Drops every remembered session of these workspaces (workspace or server removed). */
+	forgetWorkspaces(workspaceIds: readonly string[]): void;
 	setSidebarOpen(open: boolean): void;
 }
 
@@ -43,6 +45,13 @@ export const useUiStore = create<UiState>()(
 					const lastSession = { ...s.lastSession };
 					if (lastSession[workspaceId] === sessionId) delete lastSession[workspaceId];
 					const lastVisited = s.lastVisited?.sessionId === sessionId ? null : s.lastVisited;
+					return { lastSession, lastVisited };
+				}),
+			forgetWorkspaces: (workspaceIds) =>
+				set((s) => {
+					const ids = new Set(workspaceIds);
+					const lastSession = Object.fromEntries(Object.entries(s.lastSession).filter(([ws]) => !ids.has(ws)));
+					const lastVisited = s.lastVisited && ids.has(s.lastVisited.workspaceId) ? null : s.lastVisited;
 					return { lastSession, lastVisited };
 				}),
 			setSidebarOpen: (open) => set({ sidebarOpen: open }),

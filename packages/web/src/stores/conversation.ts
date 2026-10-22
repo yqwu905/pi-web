@@ -136,6 +136,39 @@ const RESYNC_DEBOUNCE_MS = 200;
 
 const EMPTY_STATE = createConversationState();
 
+/**
+ * When each pending extension dialog times out on pi's side (browser clock). Recorded when the
+ * request arrives live, or from the remaining time an agent snapshot reports: pi's timer started
+ * when it asked, not when this tab first rendered the dialog.
+ */
+const dialogDeadlines = new Map<string, number>();
+
+export function dialogDeadline(requestId: string): number | undefined {
+	return dialogDeadlines.get(requestId);
+}
+
+function noteDialogEvents(events: readonly ConvEvent[], now = Date.now()): void {
+	for (const ev of events) {
+		const record = ev.record as { type: string; id?: unknown; method?: unknown; timeout?: unknown };
+		if (record.type === "extension_ui_request" && typeof record.id === "string" && typeof record.timeout === "number" && record.timeout > 0) {
+			if (!dialogDeadlines.has(record.id)) dialogDeadlines.set(record.id, now + record.timeout);
+		} else if (record.type === "pi_web_ui_resolved" && typeof record.id === "string") {
+			dialogDeadlines.delete(record.id);
+		}
+	}
+	if (dialogDeadlines.size > 500) {
+		for (const [id, at] of dialogDeadlines) if (at < now - 60_000) dialogDeadlines.delete(id);
+	}
+}
+
+/** Streaming deltas: the state is applied at once, listeners hear about it once per frame. */
+function isDeltaRecord(type: string): boolean {
+	return type === "message_update" || type === "tool_execution_update";
+}
+
+const nextFrame: (fn: () => void) => void =
+	typeof requestAnimationFrame === "function" ? (fn) => void requestAnimationFrame(fn) : (fn) => void setTimeout(fn, 16);
+
 class LiveConversation {
 	private view: LiveConversationView = {
 		phase: "loading",
@@ -195,8 +228,26 @@ class LiveConversation {
 		};
 	}
 
-	update(patch: Partial<LiveConversationView>): void {
+	private framePending = false;
+
+	update(patch: Partial<LiveConversationView>, options: { coalesce?: boolean } = {}): void {
 		this.view = { ...this.view, ...patch };
+		if (options.coalesce) {
+			// Every streamed token would otherwise re-render the whole chat view synchronously.
+			if (this.framePending) return;
+			this.framePending = true;
+			nextFrame(() => {
+				if (!this.framePending) return;
+				this.framePending = false;
+				this.notify();
+			});
+			return;
+		}
+		this.framePending = false;
+		this.notify();
+	}
+
+	private notify(): void {
 		for (const l of [...this.listeners]) l();
 	}
 
@@ -223,6 +274,12 @@ class LiveConversation {
 			this.buffer = null;
 			const configStale = snap.configStale || this.configUpdatedDuringLoad.has(snap.serverId);
 			this.configUpdatedDuringLoad.clear();
+			const now = Date.now();
+			for (const [id, ms] of Object.entries(snap.snapshot.uiRemainingMs ?? {})) {
+				const at = now + ms;
+				dialogDeadlines.set(id, Math.min(at, dialogDeadlines.get(id) ?? at));
+			}
+			noteDialogEvents(buffered, now);
 			const state = applyEvents(stateFromSnapshot(snap.snapshot), buffered);
 			this.update({
 				phase: "ready",
@@ -332,8 +389,9 @@ class LiveConversation {
 				void this.fillGap(current.seq);
 				return;
 			default: {
+				noteDialogEvents([ev]);
 				const state = applyEvents(current, [ev]);
-				this.update({ state, info: this.patchInfo(ev) });
+				this.update({ state, info: this.patchInfo(ev) }, { coalesce: isDeltaRecord(ev.record.type) });
 				if (state.needsResync && !current.needsResync) this.scheduleResync();
 				if (ev.record.type === "agent_settled") this.scheduleStats();
 				if (changesFiles(ev.record.type) && this.view.workspaceId) scheduleWorkspaceRefresh(this.view.workspaceId);
@@ -369,6 +427,7 @@ class LiveConversation {
 			const buffered = this.buffer ?? [];
 			this.buffer = null;
 			const events = [...replay.events, ...buffered];
+			noteDialogEvents(events);
 			const state = applyEvents(this.view.state, events);
 			this.update({ state });
 			if (state.needsResync) this.scheduleResync();
@@ -528,11 +587,15 @@ export function useConversation(params: UseConversationParams): ConversationHand
 
 	const live = useLiveConversation(resolvedConvId);
 
+	const fileKey = queryKeys.sessionFile(serverId ?? "", session?.file ?? "");
 	const readOnlyQuery = useQuery({
-		queryKey: [...queryKeys.sessionFile(serverId ?? "", session?.file ?? ""), session?.modifiedMs ?? 0],
+		queryKey: [...fileKey, session?.modifiedMs ?? 0],
 		queryFn: ({ signal }) => readSession(serverId as string, (session as SessionSummary).file, signal),
 		enabled: !resolvedConvId && Boolean(serverId && session),
 		staleTime: 5_000,
+		// A newer modifiedMs of the same file: keep showing the previous content while it reloads.
+		placeholderData: (previous, previousQuery) =>
+			previousQuery && JSON.stringify(previousQuery.queryKey.slice(0, -1)) === JSON.stringify(fileKey) ? previous : undefined,
 	});
 	const readOnlyState = useMemo(
 		() => (readOnlyQuery.data ? stateFromSessionFile(readOnlyQuery.data, session?.name) : null),
@@ -540,9 +603,23 @@ export function useConversation(params: UseConversationParams): ConversationHand
 	);
 
 	const mode: ConversationMode = resolvedConvId ? "live" : session ? "readonly" : "new";
-	const state = mode === "live" ? (live?.state ?? EMPTY_STATE) : mode === "readonly" ? (readOnlyState ?? EMPTY_STATE) : EMPTY_STATE;
-	const loading =
-		mode === "live"
+
+	// Read-only ↔ live switches keep the messages on screen: the last live state while the file
+	// loads after the process exited, the file's content while a just-started process loads.
+	const lastLive = useRef<{ sessionId: string; state: ConversationState } | null>(null);
+	const liveReady = mode === "live" && live?.phase === "ready";
+	const liveStateSessionId = live?.rpcState?.sessionId ?? live?.info?.sessionId;
+	useLayoutEffect(() => {
+		if (liveReady && live && liveStateSessionId) lastLive.current = { sessionId: liveStateSessionId, state: live.state };
+	});
+	let seeded: ConversationState | null = null;
+	if (mode === "readonly" && !readOnlyState && session && lastLive.current?.sessionId === session.id) seeded = lastLive.current.state;
+	else if (mode === "live" && (!live || live.phase === "loading") && readOnlyState && session && session.id === sessionId) seeded = readOnlyState;
+
+	const state = seeded ?? (mode === "live" ? (live?.state ?? EMPTY_STATE) : mode === "readonly" ? (readOnlyState ?? EMPTY_STATE) : EMPTY_STATE);
+	const loading = seeded
+		? false
+		: mode === "live"
 			? !live || live.phase === "loading"
 			: mode === "readonly"
 				? readOnlyQuery.isLoading || !serverId
@@ -634,8 +711,21 @@ export function useConversation(params: UseConversationParams): ConversationHand
 	const uiResponse = useCallback(async (response: ExtensionUIResponse) => {
 		const convId = latest.current.convId;
 		if (!convId) throw new Error("对话尚未启动");
-		getLiveConversation(convId).mutateState((s) => resolveUiRequest(s, response.id));
-		await conversationUiResponse(convId, { response });
+		const entry = getLiveConversation(convId);
+		const request = entry.getView().state.ui.pending.find((r) => r.id === response.id);
+		entry.mutateState((s) => resolveUiRequest(s, response.id));
+		try {
+			await conversationUiResponse(convId, { response });
+		} catch (error) {
+			// pi still waits for an answer: bring the dialog back (and reconcile with the agent).
+			if (request) {
+				entry.mutateState((s) =>
+					s.ui.pending.some((r) => r.id === request.id) ? s : { ...s, ui: { ...s.ui, pending: [request, ...s.ui.pending] } },
+				);
+			}
+			void entry.resync();
+			throw error;
+		}
 	}, []);
 
 	const dismissNotification = useCallback((id: string) => {

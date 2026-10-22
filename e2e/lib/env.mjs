@@ -479,7 +479,7 @@ export async function startSshdFixture({ cleanPaths = [] } = {}) {
 	const reason = mod.integrationSkipReason();
 	assert(!reason, `sshd fixture unavailable: ${reason}`);
 	const tidy = () =>
-		spawnSync("sh", ["-c", `rm -rf ${mod.TEST_HOME}/.pi-web ${mod.TEST_HOME}/pi-web-sessions-backup-* ${cleanPaths.map((p) => `${mod.TEST_HOME}/${p}`).join(" ")}`]);
+		spawnSync("sh", ["-c", `rm -rf ${mod.TEST_HOME}/.pi-web ${mod.TEST_HOME}/pi-web-sessions-backup-* ${mod.TEST_HOME}/pi-web-backups ${cleanPaths.map((p) => `${mod.TEST_HOME}/${p}`).join(" ")}`]);
 	// A previous run may have left the agent daemon or pi processes behind.
 	spawnSync("pkill", ["-KILL", "-u", mod.TEST_USER]);
 	tidy();

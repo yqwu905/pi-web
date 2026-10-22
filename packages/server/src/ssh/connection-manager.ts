@@ -27,7 +27,7 @@ export interface ConnectionManagerContext {
 	readonly log: Logger;
 	readonly store: Store;
 	readonly secrets: Secrets;
-	readonly deployer?: Pick<Deployer, "agentVersion" | "buildAgentConfig" | "getJob">;
+	readonly deployer?: Pick<Deployer, "agentVersion" | "buildAgentConfig" | "getJob"> & Partial<Pick<Deployer, "syncAgentDir">>;
 }
 
 /** Fields owned by the connection itself; updateStatus() cannot override them. */
@@ -98,6 +98,10 @@ export class SshConnectionManager extends EventEmitter implements ConnectionMana
 		if (!deployer) return;
 		const config = await deployer.buildAgentConfig(serverId);
 		await client.call("agent.configure", config, { timeoutMs: 30_000 });
+		// An agentDirMode change made while the server was offline: bring R/bin/pi in line too.
+		deployer.syncAgentDir?.(serverId).catch((err: unknown) =>
+			this.log.warn("failed to update bin/pi for the agent dir", { serverId, error: err instanceof Error ? err.message : String(err) }),
+		);
 	}
 
 	async connect(serverId: string): Promise<void> {
@@ -117,9 +121,10 @@ export class SshConnectionManager extends EventEmitter implements ConnectionMana
 	async remove(serverId: string): Promise<void> {
 		const conn = this.connections.get(serverId);
 		if (conn) {
-			await conn.disconnect();
-			conn.removeAllListeners();
+			// dispose(): an SSH chain still connecting ends its clients instead of attaching to the orphan.
 			this.connections.delete(serverId);
+			await conn.dispose();
+			conn.removeAllListeners();
 		}
 		this.overrides.delete(serverId);
 		this.lastEmitted.delete(serverId);

@@ -10,7 +10,42 @@ import { dq } from "../ssh/remote-path.js";
 export const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 export const AGENT_FILES = ["pi-web-agent.mjs", "bridge.mjs", "pi-web-ext.mjs", "VERSION"] as const;
 export const MIN_GLIBC = "2.28";
+/**
+ * Oldest pi the deployer installs: the floor of the @earendil-works/pi-coding-agent dependency
+ * range of this package (the version pi-web is built and tested against). Older host versions
+ * (or the deprecated @mariozechner scope) fall back to the bundled version.
+ */
+export const MIN_PI_VERSION = "1.4.0";
+/** Written into R at install: uninstall only removes directories that carry it (or a legacy install). */
+export const ROOT_MARKER = ".pi-web-root";
+/** Everything pi-web creates directly under R (uninstall removes exactly these, then R if empty). */
+export const ROOT_ENTRIES = [".upload", ROOT_MARKER, "agent", "bin", "daemon", "daemon.tmp", "logs", "pi", "run", "runtime", "state", "trash"] as const;
+/** Container for what uninstall keeps (sessions, sync backups); mode 0700. */
+export const BACKUP_CONTAINER = "pi-web-backups";
 const MIN_DISK_BYTES = 500 * 1024 * 1024;
+
+/**
+ * Normalizes a remote root ("~/x/", "/opt//pi-web/.") and rejects the home directory itself,
+ * "/", ".." segments and relative paths. Returns the normalized "~/…" or absolute path.
+ */
+export function normalizeRemoteRoot(input: string): string {
+	const value = input.trim();
+	const home = value === "~" || value.startsWith("~/");
+	if (!home && !value.startsWith("/")) throw new Error("远端安装目录必须是绝对路径或以 ~/ 开头");
+	const rest = home ? value.slice(1) : value;
+	const segments = rest.split("/").filter((s) => s !== "" && s !== ".");
+	if (segments.includes("..")) throw new Error("远端安装目录不能包含 ..");
+	if (segments.length === 0) throw new Error(home ? "远端安装目录不能是家目录本身" : "远端安装目录不能是 /");
+	return `${home ? "~" : ""}/${segments.join("/")}`;
+}
+
+/** sh snippet: fails (via `$1`) when R is "/", $HOME or one of its parents. */
+function rootGuardSnippet(onFail: string): string {
+	return [
+		'case "$R" in ""|/) ' + onFail + ' ;; esac',
+		'case "$HOME/" in "$R"/*) ' + onFail + ' ;; esac',
+	].join("\n");
+}
 
 /** sh snippet that sets $R to the absolute remote root (expanding a leading "~"). */
 function remoteRootSnippet(remoteRoot: string): string {
@@ -36,6 +71,20 @@ p kernel "$(uname -r 2>/dev/null)"
 p home "$HOME"
 p shell "\${SHELL:-}"
 p root "$R"
+if [ -e "$R" ] || [ -L "$R" ]; then
+  if [ -f "$R/${ROOT_MARKER}" ] || [ -f "$R/daemon/VERSION" ]; then p root_state pi-web
+  elif [ ! -d "$R" ]; then p root_state notdir
+  elif [ -z "$(ls -A "$R" 2>/dev/null | grep -v '^\\.upload$')" ]; then p root_state empty
+  else p root_state foreign; fi
+else
+  p root_state missing
+fi
+p long_bit "$(getconf LONG_BIT 2>/dev/null)"
+LD=""
+for L in /lib64/ld-linux-x86-64.so.2 /lib/ld-linux-aarch64.so.1 /lib/ld-linux-armhf.so.3 /lib/ld-linux.so.2; do
+  if [ -e "$L" ]; then LD="$LD$L,"; fi
+done
+p loaders "$LD"
 G=$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')
 if [ -z "$G" ]; then
   G=$(ldd --version 2>&1 | sed -n '1s/.* \\([0-9][0-9]*\\.[0-9][0-9]*\\).*/\\1/p')
@@ -82,6 +131,12 @@ export function parseKeyValues(stdout: string): Record<string, string> {
 	}
 	return out;
 }
+
+/** ELF interpreter of the official Node.js linux builds. */
+const EXPECTED_LOADER: Record<"x64" | "arm64", string> = {
+	x64: "/lib64/ld-linux-x86-64.so.2",
+	arm64: "/lib/ld-linux-aarch64.so.1",
+};
 
 export function mapArch(raw: string): "x64" | "arm64" | null {
 	const value = raw.trim().toLowerCase();
@@ -142,6 +197,17 @@ export function parseProbeOutput(stdout: string, sftp: boolean): RemoteProbe {
 	const warnings: string[] = [];
 	if (os !== "Linux") issues.push(`不支持的操作系统：${os || "未知"}（仅支持 Linux）`);
 	if (!nodeArch) issues.push(`不支持的 CPU 架构：${rawArch || "未知"}（仅支持 x86_64 / aarch64）`);
+	else if (os === "Linux") {
+		// `uname -m` reports the kernel: a 64-bit kernel may run a 32-bit userland (Raspberry Pi OS
+		// 32-bit on a Pi 4/5, i386/armhf containers), where the official Node.js cannot start.
+		const loader = EXPECTED_LOADER[nodeArch];
+		const loaders = list(kv.loaders);
+		if (kv.long_bit?.trim() === "32") {
+			issues.push(`内核是 ${rawArch}，但用户空间是 32 位（getconf LONG_BIT = 32），无法运行官方 ${nodeArch} Node.js`);
+		} else if (kv.loaders !== undefined && !loaders.includes(loader)) {
+			issues.push(`缺少 ${nodeArch} 的动态链接器 ${loader}（可能是 32 位用户空间或非 glibc 系统），无法运行官方 Node.js`);
+		}
+	}
 	if (!glibc) issues.push("未检测到 glibc（可能是 musl 系统），无法运行官方 Node.js");
 	else if (!glibcOk) issues.push(`glibc 版本过低：${glibc}（需要 ≥ ${MIN_GLIBC}）`);
 	if (!hasTar) issues.push("服务器缺少 tar 命令");
@@ -180,6 +246,15 @@ export function parseProbeOutput(stdout: string, sftp: boolean): RemoteProbe {
 		hasCurl: kv.curl === "1",
 	};
 	if (!result.home) result.issues.push("无法确定远程 $HOME");
+	const root = result.remoteRoot.replace(/\/+$/, "");
+	if (result.home && root && (root === "" || root === result.home.replace(/\/+$/, "") || `${result.home.replace(/\/+$/, "")}/`.startsWith(`${root}/`))) {
+		result.issues.push(`远端安装目录 ${root || "/"} 是家目录或其上级目录，请换一个专用目录（例如 ~/.pi-web）`);
+	}
+	if (kv.root_state === "foreign") {
+		result.issues.push(`远端安装目录 ${root} 已存在且不是 Pi-Web 的安装目录（卸载时会删除该目录），请换一个空目录或新目录`);
+	} else if (kv.root_state === "notdir") {
+		result.issues.push(`远端安装目录 ${root} 已存在且不是目录`);
+	}
 	return result;
 }
 
@@ -193,18 +268,55 @@ export function toProbeResult(probe: RemoteProbe): ProbeResult {
 // bin/pi wrapper
 // ---------------------------------------------------------------------------
 
+/**
+ * pi's CLI script relative to R/pi/<version>, for installs that predate DeployedInfo.piCli
+ * (the bin of every supported version). New installs read `bin.pi` from the package.json.
+ */
 export function piCliRelative(): string {
 	return `node_modules/${PI_PACKAGE}/dist/bundle/cli.js`;
 }
 
-export function piWrapperScript(params: { remoteRoot: string; agentDir: string }): string {
+/** A relative CLI path is interpolated into sh and sed: only plain path characters. */
+export function isSafeCliPath(value: string): boolean {
+	return /^[A-Za-z0-9@._/-]+$/.test(value) && !value.split("/").includes("..");
+}
+
+export function piWrapperScript(params: { remoteRoot: string; agentDir: string; piCli?: string }): string {
 	const R = dq(params.remoteRoot);
+	const cli = params.piCli ?? piCliRelative();
 	return `#!/bin/sh
 export PI_CODING_AGENT_DIR="\${PI_CODING_AGENT_DIR:-${dq(params.agentDir)}}"
 export PI_OFFLINE="\${PI_OFFLINE:-1}"
 [ -f "${R}/run/proxy.env" ] && . "${R}/run/proxy.env"
-exec "${R}/runtime/current/bin/node" "${R}/pi/current/${piCliRelative()}" "$@"
+exec "${R}/runtime/current/bin/node" "${R}/pi/current/${cli}" "$@"
 `;
+}
+
+/** sh lines writing R/bin/pi atomically ($R must be set; the wrapper text is not expanded). */
+function wrapperWriteLines(wrapper: string): string[] {
+	return [
+		'cat > "$R/bin/pi.tmp" <<\'PIWEB_WRAPPER_EOF\'',
+		wrapper.trimEnd(),
+		"PIWEB_WRAPPER_EOF",
+		'chmod 755 "$R/bin/pi.tmp"',
+		'mv -f "$R/bin/pi.tmp" "$R/bin/pi"',
+	];
+}
+
+/**
+ * Rewrites R/bin/pi (used by the web terminal and the user's shell) after a setting baked into
+ * it changed, e.g. agentDirMode. Prints @@wrapper=ok.
+ */
+export function wrapperUpdateScript(params: { remoteRoot: string; agentDir: string; piCli?: string }): string {
+	if (params.piCli !== undefined && !isSafeCliPath(params.piCli)) throw new Error(`invalid pi CLI path: ${params.piCli}`);
+	return `${[
+		"set -eu",
+		"umask 077",
+		`R=${shellQuote(params.remoteRoot)}`,
+		'[ -d "$R/bin" ] || { echo "$R/bin is missing" >&2; exit 1; }',
+		...wrapperWriteLines(piWrapperScript(params)),
+		"printf '@@wrapper=ok\\n'",
+	].join("\n")}\n`;
 }
 
 // ---------------------------------------------------------------------------
@@ -230,6 +342,11 @@ export interface InstallParams {
 	/** Replace version directories even when they already exist. */
 	force: boolean;
 }
+
+const PI_CLI_PLACEHOLDER = "@PI_WEB_PI_CLI@";
+/** Prints bin.pi (or the single string bin) of a package.json given as argv[1]. */
+const PI_BIN_SCRIPT =
+	'const p=require(process.argv[1]);const b=typeof p.bin==="string"?p.bin:p.bin&&p.bin.pi;if(typeof b!=="string"||!b)process.exit(1);console.log(b.replace(/^\\.\\//,""))';
 
 /**
  * Installs uploaded components: verifies checksums, extracts into "<dir>.tmp" then
@@ -257,10 +374,17 @@ export function installScript(params: InstallParams): string {
 		'  ACTUAL=$(sum "$1")',
 		'  if [ "$ACTUAL" != skip ] && [ "$ACTUAL" != "$2" ]; then fail "checksum mismatch for $1"; fi',
 		"}",
+		rootGuardSnippet('fail "refusing to install into $R (/, the home directory or one of its parents)"'),
+		// Never mix pi-web into an unrelated existing directory: uninstall would remove it.
+		`if [ -d "$R" ] && [ ! -f "$R/${ROOT_MARKER}" ] && [ ! -f "$R/daemon/VERSION" ] && [ -n "$(ls -A "$R" 2>/dev/null | grep -v '^\\.upload$')" ]; then`,
+		'  rm -rf "$U"',
+		'  fail "$R already exists and is not a Pi-Web install directory"',
+		"fi",
 		'for d in "$R" "$R/runtime" "$R/pi" "$R/daemon" "$R/bin" "$R/run" "$R/logs" "$R/state" "$R/trash" "$AGENT_DIR"; do',
 		'  mkdir -p "$d"',
 		"done",
 		'chmod 700 "$R" "$R/runtime" "$R/pi" "$R/daemon" "$R/bin" "$R/run" "$R/logs" "$R/state" "$R/trash"',
+		`[ -f "$R/${ROOT_MARKER}" ] || printf 'pi-web install root\\n' > "$R/${ROOT_MARKER}"`,
 	];
 	if (params.node) {
 		lines.push(
@@ -278,23 +402,31 @@ export function installScript(params: InstallParams): string {
 	}
 	lines.push(
 		'[ -x "$R/runtime/$NODE_DIR/bin/node" ] || fail "node runtime $NODE_DIR is not installed"',
+		// The executable bit says nothing about the userland (e.g. arm64 Node.js on 32-bit armhf).
+		'"$R/runtime/$NODE_DIR/bin/node" -v >/dev/null 2>&1 || fail "Node.js $NODE_DIR cannot run on this server (32-bit userland or missing glibc loader?)"',
 		'ln -sfn "$NODE_DIR" "$R/runtime/current"',
 	);
+	const pkgJson = `node_modules/${PI_PACKAGE}/package.json`;
 	if (params.pi) {
 		lines.push(
 			`${verify(params.pi.archive)} ${shellQuote(params.pi.sha256)}`,
-			`if [ "$FORCE" = 1 ] || [ ! -f "$R/pi/$PI_VER/${piCliRelative()}" ]; then`,
+			`if [ "$FORCE" = 1 ] || [ ! -f "$R/pi/$PI_VER/${pkgJson}" ]; then`,
 			'  rm -rf "$R/pi/$PI_VER.tmp"',
 			'  mkdir -p "$R/pi/$PI_VER.tmp"',
 			`  tar -xzf ${shellQuote(params.pi.archive)} -C "$R/pi/$PI_VER.tmp" || fail "failed to extract pi"`,
-			`  [ -f "$R/pi/$PI_VER.tmp/${piCliRelative()}" ] || fail "pi archive has unexpected layout"`,
+			`  [ -f "$R/pi/$PI_VER.tmp/${pkgJson}" ] || fail "pi archive has unexpected layout"`,
 			'  rm -rf "$R/pi/$PI_VER"',
 			'  mv "$R/pi/$PI_VER.tmp" "$R/pi/$PI_VER"',
 			"fi",
 		);
 	}
 	lines.push(
-		`[ -f "$R/pi/$PI_VER/${piCliRelative()}" ] || fail "pi $PI_VER is not installed"`,
+		`[ -f "$R/pi/$PI_VER/${pkgJson}" ] || fail "pi $PI_VER is not installed"`,
+		// The CLI script is the package's bin.pi (it moved between pi releases).
+		`PI_BIN=$("$R/runtime/$NODE_DIR/bin/node" -e ${shellQuote(PI_BIN_SCRIPT)} "$R/pi/$PI_VER/${pkgJson}") || fail "cannot read bin.pi of pi $PI_VER"`,
+		`PI_CLI="node_modules/${PI_PACKAGE}/$PI_BIN"`,
+		'case "$PI_CLI" in *[!A-Za-z0-9@._/-]*|*..*) fail "unexpected pi bin path: $PI_CLI" ;; esac',
+		'[ -f "$R/pi/$PI_VER/$PI_CLI" ] || fail "pi archive has unexpected layout (missing $PI_CLI)"',
 		'ln -sfn "$PI_VER" "$R/pi/current"',
 	);
 	if (params.agent) {
@@ -313,12 +445,13 @@ export function installScript(params: InstallParams): string {
 		);
 	}
 	lines.push(
-		'cat > "$R/bin/pi.tmp" <<\'PIWEB_WRAPPER_EOF\'',
-		piWrapperScript({ remoteRoot: params.remoteRoot, agentDir: params.agentDir }).trimEnd(),
-		"PIWEB_WRAPPER_EOF",
+		...wrapperWriteLines(piWrapperScript({ remoteRoot: params.remoteRoot, agentDir: params.agentDir, piCli: PI_CLI_PLACEHOLDER })),
+		// PI_CLI only holds plain path characters (checked above): safe in the sed expression.
+		`sed "s#${PI_CLI_PLACEHOLDER}#$PI_CLI#" "$R/bin/pi" > "$R/bin/pi.tmp"`,
 		'chmod 755 "$R/bin/pi.tmp"',
 		'mv -f "$R/bin/pi.tmp" "$R/bin/pi"',
 		'rm -rf "$U"',
+		"printf '@@pi_cli=%s\\n' \"$PI_CLI\"",
 		"printf '@@install=ok\\n'",
 	);
 	return `${lines.join("\n")}\n`;
@@ -328,20 +461,47 @@ export function installScript(params: InstallParams): string {
 // uninstall / misc
 // ---------------------------------------------------------------------------
 
+/**
+ * Stops nothing (the deployer shut the daemon down) and removes the install root: only the
+ * entries pi-web created, then R itself when empty, and only when R carries the install marker
+ * (or the layout of an install that predates it). What is kept — the sessions and the sync
+ * backups of the user's own files — goes into ~/pi-web-backups (0700): session files were
+ * protected only by R's 0700 mode, and may be world-readable themselves.
+ */
 export function uninstallScript(params: { remoteRoot: string; keepSessions: boolean; timestamp: string }): string {
 	return `set -eu
+umask 077
 ${remoteRootSnippet(params.remoteRoot)}
-case "$R" in
-  ""|/|"$HOME"|"$HOME/") echo "refusing to remove $R" >&2; exit 3 ;;
-esac
+${rootGuardSnippet('echo "refusing to remove $R" >&2; exit 3')}
+if [ ! -e "$R" ]; then
+  printf '@@uninstall=ok\\n'
+  exit 0
+fi
+if [ ! -f "$R/${ROOT_MARKER}" ] && [ ! -f "$R/daemon/VERSION" ]; then
+  echo "refusing to remove $R: not a Pi-Web install directory" >&2
+  exit 3
+fi
 KEEP=${params.keepSessions ? 1 : 0}
 TS=${shellQuote(params.timestamp)}
+BK="$HOME/${BACKUP_CONTAINER}"
+keep() {
+  mkdir -p "$BK"
+  chmod 700 "$BK"
+  chmod -R go-rwx "$1" 2>/dev/null || true
+  mv "$1" "$BK/$2"
+}
 if [ "$KEEP" = 1 ] && [ -d "$R/agent/sessions" ]; then
-  B="$HOME/pi-web-sessions-backup-$TS"
-  mv "$R/agent/sessions" "$B"
-  printf '@@backup=%s\\n' "$B"
+  keep "$R/agent/sessions" "sessions-$TS"
+  printf '@@backup=%s\\n' "$BK/sessions-$TS"
 fi
-rm -rf "$R"
+if [ -d "$R/state/backup" ] && [ -n "$(ls -A "$R/state/backup" 2>/dev/null)" ]; then
+  keep "$R/state/backup" "sync-backup-$TS"
+  printf '@@sync_backup=%s\\n' "$BK/sync-backup-$TS"
+fi
+for e in ${ROOT_ENTRIES.map((e) => shellQuote(e)).join(" ")}; do
+  rm -rf "$R/$e"
+done
+rmdir "$R" 2>/dev/null || printf '@@kept_root=%s\\n' "$R"
 printf '@@uninstall=ok\\n'
 `;
 }

@@ -2,13 +2,22 @@
  * TunnelProxy: serves the proxy streams the remote agent opens over the Link. Enforces the
  * per-server domain allowlist, connects out (directly or through the host's upstream proxy),
  * pipes bytes both ways and keeps per-server statistics.
+ *
+ * The remote side is untrusted (any process there can read the proxy token), so besides the
+ * name allowlist every target is resolved on the host and refused when it lands on the host
+ * itself (loopback, own interfaces) or on a private/link-local network, unless the user allowed
+ * that exact target (a provider base URL host:port, or an exact entry in extraDomains). The
+ * vetted address is dialled directly, so a second DNS answer cannot redirect the connection.
+ * Pi-Web's own listen port on the host is never reachable.
  */
+import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { Duplex } from "node:stream";
 import { isPlainObject, matchDomain, type ProxyStats, type ServerConfig } from "@pi-web/shared";
 import type { LinkStream, StreamOpenControl } from "@pi-web/shared/link";
 import { type AgentClient, ApiError, type AppContext, type TunnelProxy } from "../core/types.js";
-import { collectProviderDomains, DYNAMIC_PROVIDER_DOMAINS } from "./domains.js";
+import { hostAddresses, isHostLocalAddress, isInternalAddress, isNumericHostShorthand, normalizeIp } from "./address.js";
+import { collectProviderEndpoints, dynamicProviderEndpoints, formatEndpoint, matchProviderEndpoint, type ProviderEndpoint } from "./domains.js";
 import { dialUpstream, formatAuthority, selectUpstreamProxy } from "./upstream.js";
 
 export type TunnelProxyContext = Pick<AppContext, "log" | "store" | "hub" | "connections" | "hostPi">;
@@ -23,8 +32,12 @@ export interface TunnelProxyOptions {
 	connectTimeoutMs?: number;
 	/** Close the other half this long after one side of a tunnel closed (default 60s). */
 	lingerMs?: number;
-	/** Test hook: replaces the outbound dialer. */
+	/** Test hook: replaces the outbound dialer (direct connections receive the vetted IP). */
 	dial?: (host: string, port: number, proxy: URL | undefined) => Promise<Duplex>;
+	/** Test hook: resolves a host name to its addresses (default dns.lookup, all families). */
+	lookup?: (host: string) => Promise<string[]>;
+	/** Test hook: this machine's own addresses (default: every interface address). */
+	ownAddresses?: () => ReadonlySet<string>;
 }
 
 interface HostStat {
@@ -50,10 +63,9 @@ function errorMessage(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
 }
 
-function isLoopback(host: string): boolean {
-	const h = host.toLowerCase();
-	if (h === "localhost" || h.endsWith(".localhost") || h === "0.0.0.0" || h === "::" || h === "::1") return true;
-	return isIP(h) === 4 && h.startsWith("127.");
+/** Names that always mean this machine, whatever DNS says. */
+function isLocalName(host: string): boolean {
+	return host === "localhost" || host.endsWith(".localhost");
 }
 
 function normalizeTargetHost(value: unknown): string | undefined {
@@ -61,7 +73,21 @@ function normalizeTargetHost(value: unknown): string | undefined {
 	const host = value.trim().toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
 	if (!host || host.length > 253) return undefined;
 	if (isIP(host)) return host;
+	// "127.1", "2130706433", "0x7f.1": resolvers turn these into loopback addresses.
+	if (isNumericHostShorthand(host)) return undefined;
 	return DOMAIN_RE.test(host) && !host.startsWith("*") ? host : undefined;
+}
+
+async function defaultLookup(host: string): Promise<string[]> {
+	const results = await dnsLookup(host, { all: true, verbatim: true });
+	return results.map((r) => r.address);
+}
+
+/** Why the allowlist admits a target. */
+interface Admission {
+	allowed: boolean;
+	/** The user named this exact target: it may resolve to loopback/private addresses. */
+	exact: boolean;
 }
 
 /** Normalizes user input for the allowlist: host name, "*.domain", IP, or a URL (its host is used). */
@@ -101,8 +127,11 @@ class TunnelProxyImpl implements TunnelProxy {
 	private readonly lingerMs: number;
 	private readonly clients = new Map<string, AgentClient>();
 	private readonly states = new Map<string, ServerProxyState>();
-	private domainCache: { runtime: unknown; at: number; domains: string[] } | undefined;
-	private domainsInflight: Promise<string[]> | undefined;
+	private endpointCache: { runtime: unknown; at: number; endpoints: ProviderEndpoint[] } | undefined;
+	private endpointsInflight: Promise<ProviderEndpoint[]> | undefined;
+	private readonly localPorts = new Set<number>();
+	private readonly lookup: (host: string) => Promise<string[]>;
+	private readonly ownAddresses: () => ReadonlySet<string>;
 
 	constructor(
 		private readonly ctx: TunnelProxyContext,
@@ -113,6 +142,8 @@ class TunnelProxyImpl implements TunnelProxy {
 		this.domainsTtlMs = options.domainsTtlMs ?? 60_000;
 		this.connectTimeoutMs = options.connectTimeoutMs ?? 15_000;
 		this.lingerMs = options.lingerMs ?? 60_000;
+		this.lookup = options.lookup ?? defaultLookup;
+		this.ownAddresses = options.ownAddresses ?? hostAddresses;
 	}
 
 	attach(serverId: string, client: AgentClient): void {
@@ -166,15 +197,23 @@ class TunnelProxyImpl implements TunnelProxy {
 		return updated;
 	}
 
-	providerDomains(): Promise<string[]> {
-		if (this.domainsInflight) return this.domainsInflight;
-		this.domainsInflight = this.loadProviderDomains().finally(() => {
-			this.domainsInflight = undefined;
-		});
-		return this.domainsInflight;
+	async providerDomains(): Promise<string[]> {
+		return (await this.providerEndpoints()).map(formatEndpoint);
 	}
 
-	private async loadProviderDomains(): Promise<string[]> {
+	protectLocalPort(port: number): void {
+		if (Number.isInteger(port) && port > 0) this.localPorts.add(port);
+	}
+
+	private providerEndpoints(): Promise<ProviderEndpoint[]> {
+		if (this.endpointsInflight) return this.endpointsInflight;
+		this.endpointsInflight = this.loadProviderEndpoints().finally(() => {
+			this.endpointsInflight = undefined;
+		});
+		return this.endpointsInflight;
+	}
+
+	private async loadProviderEndpoints(): Promise<ProviderEndpoint[]> {
 		let runtime: Awaited<ReturnType<TunnelProxyContext["hostPi"]["modelRuntime"]>> | undefined;
 		try {
 			runtime = await this.ctx.hostPi.modelRuntime();
@@ -182,19 +221,45 @@ class TunnelProxyImpl implements TunnelProxy {
 			this.ctx.log.warn("provider domains: host pi model runtime unavailable", { error: errorMessage(err) });
 		}
 		const now = Date.now();
-		const cache = this.domainCache;
-		if (cache && cache.runtime === runtime && now - cache.at < this.domainsTtlMs) return cache.domains;
-		const domains = runtime ? await collectProviderDomains(runtime) : [...DYNAMIC_PROVIDER_DOMAINS];
+		const cache = this.endpointCache;
+		if (cache && cache.runtime === runtime && now - cache.at < this.domainsTtlMs) return cache.endpoints;
+		const endpoints = runtime ? await collectProviderEndpoints(runtime) : dynamicProviderEndpoints();
 		// Without a runtime, retry soon instead of caching the fallback for the full TTL.
-		this.domainCache = { runtime, at: runtime ? now : now - this.domainsTtlMs + 5000, domains };
-		return domains;
+		this.endpointCache = { runtime, at: runtime ? now : now - this.domainsTtlMs + 5000, endpoints };
+		return endpoints;
 	}
 
-	private async isAllowed(server: ServerConfig, host: string): Promise<boolean> {
+	private async admission(server: ServerConfig, host: string, port: number): Promise<Admission> {
 		const { proxy } = server;
-		if (matchDomain(host, proxy.extraDomains)) return true;
-		if (proxy.scope === "tools" && proxy.toolsPolicy === "all") return !isLoopback(host);
-		return matchDomain(host, await this.providerDomains());
+		const exactExtra = proxy.extraDomains.some((pattern) => normalizeDomainPattern(pattern) === host);
+		const provider = matchProviderEndpoint(host, port, await this.providerEndpoints());
+		const exact = exactExtra || provider?.exact === true;
+		if (exact || provider || matchDomain(host, proxy.extraDomains)) return { allowed: true, exact };
+		return { allowed: proxy.scope === "tools" && proxy.toolsPolicy === "all", exact: false };
+	}
+
+	/** Ports of this Pi-Web on the host: never reachable through a tunnel. */
+	private protectedPorts(): Set<number> {
+		const ports = new Set(this.localPorts);
+		ports.add(this.ctx.store.getSettings().listenPort ?? 7878);
+		return ports;
+	}
+
+	/**
+	 * Refusal reason for the resolved addresses of a target, or undefined when they may be used.
+	 * Host-local targets (loopback, own interfaces) and private/link-local networks need an exact
+	 * user entry; Pi-Web's own port on this machine is refused even then.
+	 */
+	private addressRefusal(host: string, port: number, addresses: readonly string[], admission: Admission): string | undefined {
+		const own = this.ownAddresses();
+		for (const address of addresses) {
+			const local = isHostLocalAddress(address, own);
+			if (local && this.protectedPorts().has(port)) return `不允许访问 Pi-Web 自身：${formatAuthority(host, port)}`;
+			if ((local || isInternalAddress(address)) && !admission.exact) {
+				return `目标解析到本机或内网地址（${normalizeIp(address)}），需在白名单中精确添加：${host}`;
+			}
+		}
+		return undefined;
 	}
 
 	private async onStreamOpen(serverId: string, client: AgentClient, meta: unknown, control: StreamOpenControl): Promise<void> {
@@ -217,18 +282,37 @@ class TunnelProxyImpl implements TunnelProxy {
 			control.reject("该服务器未启用隧道代理", 403);
 			return;
 		}
-		if (!(await this.isAllowed(server, host))) {
+		const admission = await this.admission(server, host, port);
+		if (!admission.allowed) {
 			this.recordDenied(serverId, host);
 			control.reject(`目标不在白名单：${host}`, 403);
 			return;
 		}
 		const authority = formatAuthority(host, port);
 		const upstream = selectUpstreamProxy(host, port, { configured: this.ctx.store.getSettings().upstreamProxy, env: this.env });
+		let addresses: string[] = [];
+		if (isIP(host)) addresses = [host];
+		else if (isLocalName(host)) addresses = ["127.0.0.1"];
+		else {
+			try {
+				addresses = await this.lookup(host);
+			} catch (err) {
+				// Through an upstream proxy the proxy resolves the name (the host may have no DNS).
+				if (!upstream) {
+					control.reject(`无法解析 ${host}：${errorMessage(err)}`, 502);
+					return;
+				}
+			}
+		}
+		const refusal = this.addressRefusal(host, port, addresses, admission);
+		if (refusal) {
+			this.recordDenied(serverId, host);
+			control.reject(refusal, 403);
+			return;
+		}
 		let socket: Duplex;
 		try {
-			socket = this.options.dial
-				? await this.options.dial(host, port, upstream)
-				: await dialUpstream(host, port, upstream, this.connectTimeoutMs);
+			socket = upstream ? await this.dial(host, port, upstream) : await this.dialFirst(addresses, port);
 		} catch (err) {
 			this.ctx.log.debug("proxy connect failed", { serverId, target: authority, error: errorMessage(err) });
 			control.reject(`连接 ${authority} 失败：${errorMessage(err)}`, 502);
@@ -247,6 +331,23 @@ class TunnelProxyImpl implements TunnelProxy {
 			return;
 		}
 		this.pipe(serverId, host, stream, socket);
+	}
+
+	private dial(host: string, port: number, upstream: URL | undefined): Promise<Duplex> {
+		return this.options.dial ? this.options.dial(host, port, upstream) : dialUpstream(host, port, upstream, this.connectTimeoutMs);
+	}
+
+	/** Connects directly to the vetted addresses, in resolver order. */
+	private async dialFirst(addresses: readonly string[], port: number): Promise<Duplex> {
+		let lastError: unknown = new Error("没有可用的地址");
+		for (const address of addresses) {
+			try {
+				return await this.dial(normalizeIp(address), port, undefined);
+			} catch (err) {
+				lastError = err;
+			}
+		}
+		throw lastError;
 	}
 
 	private pipe(serverId: string, host: string, stream: LinkStream, socket: Duplex): void {

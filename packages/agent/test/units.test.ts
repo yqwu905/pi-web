@@ -27,6 +27,26 @@ describe("JsonlLineDecoder", () => {
 		expect(d.push("tail")).toEqual([]);
 		expect(d.end()).toEqual(["tail"]);
 	});
+
+	it("decodes a very long line in linear time", () => {
+		const d = new JsonlLineDecoder();
+		const chunk = Buffer.alloc(64 * 1024, "a");
+		const started = Date.now();
+		let lines: string[] = [];
+		for (let i = 0; i < 512; i++) lines = lines.concat(d.push(chunk)); // 32 MiB in one line
+		lines = lines.concat(d.push(Buffer.from("\r\nnext\n")));
+		expect(Date.now() - started).toBeLessThan(3000);
+		expect(lines).toHaveLength(2);
+		expect(lines[0].length).toBe(32 * 1024 * 1024);
+		expect(lines[1]).toBe("next");
+	});
+
+	it("keeps multi-byte characters split across chunks", () => {
+		const d = new JsonlLineDecoder();
+		const bytes = Buffer.from("名字\n", "utf8");
+		expect(d.push(bytes.subarray(0, 2))).toEqual([]);
+		expect(d.push(bytes.subarray(2))).toEqual(["名字"]);
+	});
 });
 
 describe("RingBuffer", () => {
@@ -83,7 +103,7 @@ describe("config", () => {
 		).toThrow(/端口/);
 	});
 
-	it("writes proxy.env with shell-quoted values and removes it when disabled", async () => {
+	it("writes proxy.env with shell-quoted values, only on request, and removes it", async () => {
 		const root = await tempDir();
 		const paths = remotePaths(root);
 		await ensureRemoteDirs(paths);
@@ -95,12 +115,33 @@ describe("config", () => {
 		const store = new ConfigStore(paths);
 		const config = makeConfig(root, { proxy: { enabled: true, port: 31000, token: "0123456789abcdef", scope: "tools", noProxy: [] } });
 		await store.save(config);
-		expect((await stat(paths.proxyEnv)).mode & 0o777).toBe(0o600);
+		// Saving the config does not publish proxy.env: the daemon does that once the port is bound.
+		await expect(stat(paths.proxyEnv)).rejects.toThrow();
 		expect(JSON.parse(await readFile(paths.configFile, "utf8")).proxy.port).toBe(31000);
 		const reloaded = new ConfigStore(paths);
 		expect((await reloaded.load())?.proxy.scope).toBe("tools");
-		await store.save({ ...config, proxy: { ...config.proxy, enabled: false } });
+		await store.writeProxyEnv(config.proxy, { pid: process.pid, commandMatch: "node" });
+		expect((await stat(paths.proxyEnv)).mode & 0o777).toBe(0o600);
+		await store.removeProxyEnv();
 		await expect(stat(paths.proxyEnv)).rejects.toThrow();
+	});
+
+	it("exports the proxy variables only while the owning daemon runs", async () => {
+		const proxy = { enabled: true, port: 31000, token: "0123456789abcdef", scope: "llm" as const, noProxy: [] };
+		const run = async (pid: number, match: string) => {
+			const script = `${proxyEnvFile(proxy, { pid, commandMatch: match })}\nprintf '%s' "\${HTTPS_PROXY:-none}"`;
+			const child = spawn("sh", ["-c", script], { env: { PATH: process.env.PATH ?? "" } });
+			let out = "";
+			child.stdout.on("data", (d: Buffer) => (out += d.toString()));
+			await once(child, "exit");
+			return out;
+		};
+		expect(await run(process.pid, process.argv[1] ?? "node")).toBe("http://pw:0123456789abcdef@127.0.0.1:31000");
+		// A dead daemon (another user may hold the port now) or a different process: no proxy.
+		const dead = spawn(process.execPath, ["-e", ""]);
+		await once(dead, "exit");
+		expect(await run(dead.pid!, "node")).toBe("none");
+		expect(await run(process.pid, "definitely-not-in-the-command-line")).toBe("none");
 	});
 });
 

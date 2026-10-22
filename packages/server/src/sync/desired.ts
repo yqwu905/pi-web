@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { isPlainObject, type ServerConfig, type SyncItemKey } from "@pi-web/shared";
 import { type HashCache, type NativeKind, sha256 } from "./hash-cache.js";
-import { AGENTS_SKILLS_REMOTE, itemDefinition, rootsForItems } from "./items.js";
+import { AGENTS_SKILLS_REMOTE, EXTERNAL_ROOT, itemDefinition, rootsForItems } from "./items.js";
 import { type ExternalRef, toJsonFile, transformAuth, transformSettings } from "./transform.js";
 import { walkHostTree, type WalkedEntry } from "./walk.js";
 import { authWarnings, mcpWarnings, modelsWarnings, nativeWarnings } from "./warnings.js";
@@ -27,6 +27,11 @@ export interface DesiredTree {
 	entries: Map<string, DesiredEntry>;
 	/** Roots for sync.manifest. */
 	roots: string[];
+	/**
+	 * Roots whose host source could not be read this time (unparsable settings.json/auth.json,
+	 * missing host agent dir): nothing under them is deleted on the server.
+	 */
+	protectedRoots: string[];
 	warnings: string[];
 	/** Host paths outside the agent dir that feed this tree (for the watcher). */
 	externalPaths: string[];
@@ -100,6 +105,13 @@ export async function buildDesiredTree(options: DesiredTreeOptions): Promise<Des
 		addWalked(await walkHostTree(abs, remote, hashCache), item);
 	};
 
+	const roots = rootsForItems(items);
+	if (!(await dirExists(hostAgentDir))) {
+		// A missing (mistyped, unmounted) host agent dir must not read as "everything was deleted".
+		warnings.push(`Host 的 agent 目录不存在或不可读：${hostAgentDir}，本次不同步任何文件`);
+		return { entries, roots, protectedRoots: roots, warnings, externalPaths };
+	}
+	const protectedRoots: string[] = [];
 	const agentsSkillsEnabled = items.includes("agentsSkills") && (await dirExists(options.agentsSkillsDir));
 
 	for (const item of items) {
@@ -108,6 +120,8 @@ export async function buildDesiredTree(options: DesiredTreeOptions): Promise<Des
 				const file = await readJsonObject(join(hostAgentDir, "settings.json"));
 				if (file.error) {
 					warnings.push(`Host 的 settings.json 无法解析（${file.error}），本次未同步 settings.json`);
+					// Keep the server's copies (and the externals it references) until the file parses again.
+					protectedRoots.push("settings.json", EXTERNAL_ROOT);
 					break;
 				}
 				const result = transformSettings(file.value ?? {}, {
@@ -127,6 +141,7 @@ export async function buildDesiredTree(options: DesiredTreeOptions): Promise<Des
 				const file = await readJsonObject(join(hostAgentDir, "auth.json"));
 				if (file.error) {
 					warnings.push(`Host 的 auth.json 无法解析（${file.error}），本次未同步凭据`);
+					protectedRoots.push("auth.json");
 					break;
 				}
 				if (file.missing || !file.value) break;
@@ -158,7 +173,7 @@ export async function buildDesiredTree(options: DesiredTreeOptions): Promise<Des
 	}
 
 	warnings.push(...nativeWarnings(natives, options.arch));
-	return { entries, roots: rootsForItems(items), warnings, externalPaths };
+	return { entries, roots, protectedRoots, warnings, externalPaths };
 }
 
 async function addExternals(

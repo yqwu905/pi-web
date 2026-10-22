@@ -1,6 +1,6 @@
 import { type AgentMessage, type AssistantMessage, createConversationState, ZERO_USAGE } from "@pi-web/shared";
 import { describe, expect, it } from "vitest";
-import { assistantGroupText, assistantViewsEqual, buildDisplayItems, hasRunningTool, resolveTool, toolViewEqual } from "./messages";
+import { assistantGroupText, assistantViewsEqual, buildDisplayItems, hasRunningTool, parseStreamedArgs, resolveTool, toolViewEqual } from "./messages";
 
 function assistant(ts: number, content: AssistantMessage["content"], extra: Partial<AssistantMessage> = {}): AssistantMessage {
 	return { role: "assistant", content, api: "x", provider: "p", model: "m", usage: ZERO_USAGE, stopReason: "toolUse", timestamp: ts, ...extra };
@@ -143,5 +143,22 @@ describe("memo helpers", () => {
 		if (pa.kind !== "tool" || pb.kind !== "tool") throw new Error("expected tools");
 		expect(toolViewEqual(pa.tool, pb.tool)).toBe(true);
 		expect(toolViewEqual(pa.tool, { ...pb.tool, status: "error" })).toBe(false);
+	});
+});
+
+describe("parseStreamedArgs", () => {
+	it("re-parses large streaming arguments only after they grew noticeably", () => {
+		const body = "x".repeat(20_000);
+		const first = parseStreamedArgs("call-1", `{"path":"a.ts","content":"${body}`);
+		expect(first).toEqual({ path: "a.ts", content: body });
+		// A few more characters: the previous result is reused as is (stable identity, no re-parse).
+		const next = parseStreamedArgs("call-1", `{"path":"a.ts","content":"${body}yyyy`);
+		expect(next).toBe(first);
+		const grown = parseStreamedArgs("call-1", `{"path":"a.ts","content":"${body}${"z".repeat(5000)}`);
+		expect(grown).not.toBe(first);
+		expect((grown?.content as string).length).toBe(25_000);
+		// Small arguments are always current.
+		expect(parseStreamedArgs("call-2", '{"command":"ls')).toEqual({ command: "ls" });
+		expect(parseStreamedArgs("call-2", '{"command":"ls -la')).toEqual({ command: "ls -la" });
 	});
 });

@@ -10,13 +10,26 @@ export type ListenOutcome = "listening" | "already-running";
  * Unix-socket server: one LinkPeer per connected bridge (host). Events are broadcast to
  * every connected peer. Emits "peer" (peer) and "peer-closed" (peer).
  */
+/** The host pings every 15s: a peer silent for this long is gone (e.g. its laptop slept). */
+export const PEER_IDLE_TIMEOUT_MS = 60_000;
+
+export interface LinkServerOptions {
+	/** Destroy a peer that sent nothing for this long (default PEER_IDLE_TIMEOUT_MS). */
+	idleTimeoutMs?: number;
+	/** Destroy a peer whose unsent bytes exceed this (default: LinkPeer's default cap). */
+	maxBufferedBytes?: number;
+}
+
 export class LinkServer extends EventEmitter {
 	private server: Server | null = null;
 	private closing: Promise<void> = Promise.resolve();
 	/** Connected peers in connection order (newest last). */
 	private readonly peers: LinkPeer[] = [];
 
-	constructor(private readonly setupPeer: (peer: LinkPeer) => void) {
+	constructor(
+		private readonly setupPeer: (peer: LinkPeer) => void,
+		private readonly options: LinkServerOptions = {},
+	) {
 		super();
 	}
 
@@ -87,7 +100,15 @@ export class LinkServer extends EventEmitter {
 
 	private onConnection(socket: Socket): void {
 		socket.on("error", () => {});
-		const peer = new LinkPeer(socket, { side: "agent", requestTimeoutMs: 60_000 });
+		// Events are broadcast without backpressure: a peer that stopped reading (dead SSH session
+		// lingering in TCP retransmits) is dropped by the idle timeout or the write-buffer cap
+		// instead of buffering every event in memory. The host reconnects and resyncs.
+		const peer = new LinkPeer(socket, {
+			side: "agent",
+			requestTimeoutMs: 60_000,
+			idleTimeoutMs: this.options.idleTimeoutMs ?? PEER_IDLE_TIMEOUT_MS,
+			maxBufferedBytes: this.options.maxBufferedBytes,
+		});
 		this.peers.push(peer);
 		peer.once("close", () => {
 			const index = this.peers.indexOf(peer);

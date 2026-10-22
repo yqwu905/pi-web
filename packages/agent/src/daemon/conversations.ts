@@ -84,6 +84,11 @@ export interface ConversationManagerOptions {
 	stopGraceMs?: number;
 	/** Delay between SIGTERM and SIGKILL. Default 3s. */
 	killGraceMs?: number;
+	/**
+	 * Force stop: delay between SIGTERM and SIGKILL. Default 1s. pi's SIGTERM handler kills the
+	 * detached process groups of its bash tool; SIGKILL alone would leave them running.
+	 */
+	forceKillGraceMs?: number;
 	/** Timeout of the initial get_state. Default 60s (must stay below CONV_START_TIMEOUT_MS). */
 	startTimeoutMs?: number;
 	/** Total budget of start() when it attaches to an existing process. Default CONV_START_TIMEOUT_MS. */
@@ -106,6 +111,8 @@ interface RpcOutcome {
 
 interface PendingRpc {
 	command: string;
+	/** An extension slash command: pi answers only after its handler finished. */
+	slash: boolean;
 	resolve: (outcome: RpcOutcome) => void;
 	reject: (err: Error) => void;
 	timer: NodeJS.Timeout;
@@ -117,6 +124,18 @@ interface CompanionWaiter {
 	timer: NodeJS.Timeout;
 }
 
+/** Context of a pending extension dialog, used to drop dialogs pi stopped waiting for. */
+interface DialogContext {
+	/** Run (agent_start count) during which it was requested; null when no run was active. */
+	runId: number | null;
+	/** Pending slash-command RPCs at request time. */
+	slashRpcIds: Set<string>;
+	/** pi resolves timed dialogs itself (our timer mirrors it). */
+	hasTimeout: boolean;
+	timeoutMs?: number;
+	requestedAt: number;
+}
+
 class Conversation {
 	readonly info: ConvInfo;
 	readonly ring: RingBuffer<ConvEvent>;
@@ -124,6 +143,9 @@ class Conversation {
 	readonly pending = new Map<string, PendingRpc>();
 	readonly companions = new Map<string, CompanionWaiter>();
 	readonly uiTimers = new Map<string, NodeJS.Timeout>();
+	readonly dialogs = new Map<string, DialogContext>();
+	/** Number of agent_start events seen (identifies the current run). */
+	runId = 0;
 	readonly stdoutDecoder = new JsonlLineDecoder();
 	readonly stderrDecoder = new StringDecoder("utf8");
 	stderrTail = "";
@@ -267,6 +289,7 @@ export class ConversationManager {
 	private readonly retentionMs: number;
 	private readonly stopGraceMs: number;
 	private readonly killGraceMs: number;
+	private readonly forceKillGraceMs: number;
 	private readonly startTimeoutMs: number;
 	private readonly attachTimeoutMs: number;
 	private readonly snapshotTimeoutMs: number;
@@ -277,6 +300,7 @@ export class ConversationManager {
 		this.retentionMs = options.retentionMs ?? 10 * MINUTE;
 		this.stopGraceMs = options.stopGraceMs ?? 5000;
 		this.killGraceMs = options.killGraceMs ?? 3000;
+		this.forceKillGraceMs = options.forceKillGraceMs ?? 1000;
 		this.startTimeoutMs = options.startTimeoutMs ?? 60_000;
 		this.attachTimeoutMs = options.attachTimeoutMs ?? CONV_START_TIMEOUT_MS;
 		this.snapshotTimeoutMs = options.snapshotTimeoutMs ?? CONV_SNAPSHOT_TIMEOUT_MS;
@@ -414,6 +438,12 @@ export class ConversationManager {
 			// stats are optional
 		}
 		const t = messagesOutcome.tracker;
+		const uiRemainingMs: Record<string, number> = {};
+		const now = Date.now();
+		for (const request of t.ui.pending) {
+			const dialog = conv.dialogs.get(request.id);
+			if (dialog?.timeoutMs) uiRemainingMs[request.id] = Math.max(0, dialog.timeoutMs - (now - dialog.requestedAt));
+		}
 		return {
 			info: copyInfo(conv.info),
 			state,
@@ -427,6 +457,7 @@ export class ConversationManager {
 			isCompacting: t.isCompacting,
 			stats,
 			seq: messagesOutcome.seq,
+			uiRemainingMs,
 		};
 	}
 
@@ -520,7 +551,8 @@ export class ConversationManager {
 		if (this.reaper) clearInterval(this.reaper);
 		for (const conv of this.convs.values()) {
 			if (conv.removalTimer) clearTimeout(conv.removalTimer);
-			if (!conv.exited) conv.child.kill("SIGKILL");
+			// SIGTERM first: pi's handler kills its bash tool's process groups.
+			if (!conv.exited) this.killNow(conv);
 		}
 	}
 
@@ -645,6 +677,7 @@ export class ConversationManager {
 		for (const timer of conv.stopTimers) clearTimeout(timer);
 		for (const timer of conv.uiTimers.values()) clearTimeout(timer);
 		conv.uiTimers.clear();
+		conv.dialogs.clear();
 		const { code, signal } = conv.exitInfo ?? { code: null, signal: null };
 		conv.info.exitCode = code;
 		conv.info.exitSignal = signal;
@@ -676,10 +709,20 @@ export class ConversationManager {
 		if (this.convs.get(conv.info.convId) === conv) this.convs.delete(conv.info.convId);
 	}
 
+	/** SIGTERM now (pi kills the detached process groups of its bash tool), SIGKILL shortly after. */
+	private killNow(conv: Conversation): void {
+		conv.child.kill("SIGTERM");
+		const kill = setTimeout(() => {
+			if (!conv.exited) conv.child.kill("SIGKILL");
+		}, this.forceKillGraceMs);
+		kill.unref();
+		conv.stopTimers.push(kill);
+	}
+
 	private async terminate(conv: Conversation, force: boolean): Promise<void> {
 		if (conv.exited) return;
 		if (force) {
-			conv.child.kill("SIGKILL");
+			this.killNow(conv);
 		} else if (conv.stopTimers.length === 0) {
 			conv.child.stdin?.end();
 			const term = setTimeout(() => conv.child.kill("SIGTERM"), this.stopGraceMs);
@@ -708,7 +751,8 @@ export class ConversationManager {
 				conv.pending.delete(id);
 				reject(new AgentError("TIMEOUT", `pi 命令 ${command.type} 超时（${Math.round(timeoutMs / 1000)} 秒）`));
 			}, timeoutMs);
-			conv.pending.set(id, { command: command.type, resolve: resolvePromise, reject, timer });
+			const slash = command.type === "prompt" && typeof command.message === "string" && command.message.startsWith("/");
+			conv.pending.set(id, { command: command.type, slash, resolve: resolvePromise, reject, timer });
 			try {
 				this.write(conv, { ...command, id }, !QUERY_COMMANDS.has(command.type));
 			} catch (err) {
@@ -739,12 +783,28 @@ export class ConversationManager {
 			return;
 		}
 		const event = record as unknown as ConvRecord;
+		if (event.type === "agent_start") conv.runId++;
 		this.emitRecord(conv, event, line.length);
 		if (event.type === "session_info_changed") {
 			conv.info.sessionName = event.name;
 			this.emitInfo(conv);
 		}
+		if (event.type === "agent_settled") this.dropStaleDialogs(conv, (d) => d.runId === conv.runId);
 		if (event.type === "agent_start" || event.type === "agent_settled") this.updateStatus(conv);
+	}
+
+	/**
+	 * pi resolves a dialog silently (nothing on stdout) when its AbortSignal fires, e.g. when the
+	 * user aborts the run while a confirm of a tool_call hook is shown. Such a dialog would stay
+	 * pending forever (status waiting_ui, never idle-reaped). Once pi provably stopped waiting —
+	 * the run that raised it settled, or the slash command that raised it was answered — dialogs
+	 * without a timeout (timed ones are handled by their timer) are resolved.
+	 */
+	private dropStaleDialogs(conv: Conversation, stale: (dialog: DialogContext) => boolean): void {
+		for (const request of [...conv.info.pendingUi]) {
+			const dialog = conv.dialogs.get(request.id);
+			if (dialog && !dialog.hasTimeout && stale(dialog)) this.resolveUi(conv, request.id);
+		}
 	}
 
 	private onResponse(conv: Conversation, response: RpcResponse): void {
@@ -758,12 +818,22 @@ export class ConversationManager {
 		conv.pending.delete(response.id as string);
 		clearTimeout(pending.timer);
 		pending.resolve({ response, seq: conv.info.lastSeq, tracker: conv.tracker });
+		// pi answers a slash command after its handler returned: it no longer awaits dialogs it raised outside a run.
+		if (pending.slash) this.dropStaleDialogs(conv, (d) => d.runId === null && d.slashRpcIds.has(response.id as string));
 	}
 
 	private onUiRequest(conv: Conversation, request: ExtensionUIRequest, size: number): void {
 		if (EXTENSION_UI_DIALOG_METHODS.includes(request.method)) {
 			if (!conv.info.pendingUi.some((r) => r.id === request.id)) conv.info.pendingUi.push(request);
 			const timeout = (request as { timeout?: unknown }).timeout;
+			const timed = typeof timeout === "number" && timeout > 0;
+			conv.dialogs.set(request.id, {
+				runId: conv.tracker.isRunning ? conv.runId : null,
+				slashRpcIds: new Set([...conv.pending].filter(([, p]) => p.slash).map(([id]) => id)),
+				hasTimeout: timed,
+				...(timed ? { timeoutMs: timeout } : {}),
+				requestedAt: Date.now(),
+			});
 			if (typeof timeout === "number" && timeout > 0) {
 				const timer = setTimeout(() => {
 					conv.uiTimers.delete(request.id);
@@ -817,6 +887,7 @@ export class ConversationManager {
 
 	private resolveUi(conv: Conversation, id: string): void {
 		conv.info.pendingUi = conv.info.pendingUi.filter((r) => r.id !== id);
+		conv.dialogs.delete(id);
 		const timer = conv.uiTimers.get(id);
 		if (timer) {
 			clearTimeout(timer);

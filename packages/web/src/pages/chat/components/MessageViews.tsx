@@ -13,7 +13,7 @@ import { Markdown } from "../../../components/Markdown";
 import { Badge, Callout, Spinner } from "../../../components/ui";
 import { cn } from "../../../lib/cn";
 import { formatDuration, formatDurationZh, formatTokens } from "../../../lib/format";
-import { thinkingSpans, useNow } from "../hooks";
+import { thinkingSpans, useNow, useThrottledValue } from "../hooks";
 import { type AssistantPart, type AssistantView, assistantViewsEqual } from "../logic/messages";
 import { trackSpan } from "../logic/usage";
 import { ImageThumbs } from "./ImageThumbs";
@@ -67,6 +67,16 @@ function ThinkingBlock({ part }: { part: Extract<AssistantPart, { kind: "thinkin
 	);
 }
 
+/** The reply that is still streaming: its Markdown is re-parsed at most every 120ms, not on every token. */
+function StreamingText({ text, active }: { text: string; active: boolean }) {
+	const shown = useThrottledValue(text, 120, active);
+	return (
+		<Markdown className={cn(active && CARET)} streaming={active}>
+			{shown}
+		</Markdown>
+	);
+}
+
 const CARET = "[&>*:last-child]:after:ml-0.5 [&>*:last-child]:after:inline-block [&>*:last-child]:after:animate-pulse-dot [&>*:last-child]:after:text-accent [&>*:last-child]:after:content-['▍']";
 
 function AssistantMessageView({ view, workspaceId }: { view: AssistantView; workspaceId?: string }) {
@@ -79,7 +89,11 @@ function AssistantMessageView({ view, workspaceId }: { view: AssistantView; work
 					case "thinking":
 						return <ThinkingBlock key={part.key} part={part} />;
 					case "text":
-						return <Markdown key={part.key} className={cn(streaming && part === lastPart && CARET)}>{part.text}</Markdown>;
+						return streaming ? (
+							<StreamingText key={part.key} text={part.text} active={part === lastPart} />
+						) : (
+							<Markdown key={part.key}>{part.text}</Markdown>
+						);
 					case "tool":
 						return <ToolCard key={part.key} tool={part.tool} workspaceId={workspaceId} />;
 					default:

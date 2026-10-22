@@ -2,6 +2,8 @@
 // Minimal stand-in for `pi --mode rpc`, speaking the JSONL protocol on stdin/stdout.
 // Behaviour is driven by prompt text and env flags so tests can exercise every path:
 //   prompt "ask" / "ask-timeout"  → confirm dialog (answered via extension_ui_response)
+//   prompt "ask-abortable"        → confirm with an AbortSignal: "abort" drops it silently, like pi
+//   prompt "/signal-dialog"       → slash command whose confirm is aborted after 100ms (no run)
 //   prompt "crash"                → stderr output and exit(3)
 //   prompt "flood"                → 60 stderr lines at once
 //   prompt "slow"                 → never answers
@@ -130,6 +132,17 @@ function handle(cmd) {
 			state.sessionName = cmd.name;
 			write({ type: "session_info_changed", name: cmd.name });
 			return respond(id, type);
+		case "abort": {
+			// pi resolves signal-bound dialogs without writing anything, then the run settles.
+			for (const [uiId, entry] of pendingUi) {
+				if (entry.abortable) pendingUi.delete(uiId);
+			}
+			if (state.isStreaming) {
+				state.isStreaming = false;
+				write({ type: "agent_settled", aborted: true });
+			}
+			return respond(id, type);
+		}
 		case "new_session":
 			state.sessionFile = `/tmp/fake-pi-sessions/${randomUUID()}.jsonl`;
 			state.sessionId = randomUUID();
@@ -148,6 +161,30 @@ function handle(cmd) {
 			if (message === "flood") {
 				for (let i = 0; i < 60; i++) process.stderr.write(`line ${i}\n`);
 				return respond(id, type, { disposition: "handled" });
+			}
+			if (message === "ask-abortable") {
+				respond(id, type, { disposition: "started" });
+				state.isStreaming = true;
+				write({ type: "agent_start" });
+				const uiId = randomUUID();
+				const done = () => {
+					state.isStreaming = false;
+					write({ type: "agent_settled", aborted: false });
+				};
+				done.abortable = true;
+				pendingUi.set(uiId, done);
+				write({ type: "extension_ui_request", id: uiId, method: "confirm", title: "Dangerous?", message: "rm -rf build" });
+				return;
+			}
+			if (message === "/signal-dialog") {
+				const uiId = randomUUID();
+				pendingUi.set(uiId, () => {});
+				write({ type: "extension_ui_request", id: uiId, method: "confirm", title: "Timed by signal", message: "x" });
+				setTimeout(() => {
+					pendingUi.delete(uiId);
+					respond(id, type, { disposition: "handled" });
+				}, 100);
+				return;
 			}
 			if (message === "ask" || message === "ask-timeout") {
 				respond(id, type, { disposition: "started" });

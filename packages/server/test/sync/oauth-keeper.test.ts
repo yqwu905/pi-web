@@ -149,4 +149,23 @@ describe("OAuthKeeper", () => {
 		expect(error).toBeInstanceOf(ApiError);
 		expect((error as ApiError).status).toBe(502);
 	});
+
+	it("never pushes an unparsable auth.json or the auth.json of a missing host agent dir", async () => {
+		const env = await setup();
+		await env.keeper.start();
+		const tick = () => (env.keeper as unknown as { tick(): Promise<void> }).tick();
+		expect(env.pushAuth).toHaveBeenCalledTimes(1);
+		const valid = await readFile(env.authPath, "utf8");
+		await writeFile(env.authPath, `${valid.slice(0, -1)},}`); // hand-saved with a trailing comma
+		await tick();
+		expect(env.pushAuth).toHaveBeenCalledTimes(1);
+		await writeFile(env.authPath, valid.replace("c-1", "c-2"));
+		await tick();
+		expect(env.pushAuth).toHaveBeenCalledTimes(2);
+
+		// A mistyped hostAgentDir reads as "no auth.json": that is not a deletion to push.
+		env.paths.hostAgentDir = join(env.dir, "agnet");
+		await tick();
+		expect(env.pushAuth).toHaveBeenCalledTimes(2);
+	});
 });

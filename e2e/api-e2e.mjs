@@ -1004,7 +1004,7 @@ async function main() {
 		const res =await api.post(`/servers/${serverId}/uninstall`, { keepSessions: true });
 		assert(res.ok === true, "uninstall", res);
 		assert(runAsTestUser(`test -e ${fixture.home}/.pi-web && echo yes || echo no`).stdout.trim() === "no", "~/.pi-web removed");
-		const backups = runAsTestUser(`ls -d ${fixture.home}/pi-web-sessions-backup-*`).stdout.trim().split("\n").filter(Boolean);
+		const backups = runAsTestUser(`ls -d ${fixture.home}/pi-web-backups/sessions-*`).stdout.trim().split("\n").filter(Boolean);
 		assert(backups.length === 1, "one sessions backup", backups);
 		const files = runAsTestUser(`find ${backups[0]} -name '*.jsonl'`).stdout.trim().split("\n").filter(Boolean);
 		assert(files.length >= 2, `backed up session files: ${files.length}`, files);

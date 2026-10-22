@@ -148,4 +148,31 @@ describe("LinkPeer", () => {
 		await expect(pending).rejects.toMatchObject({ code: "LINK_CLOSED" });
 		expect(host.closed).toBe(true);
 	});
+
+	it("drops a peer that stopped reading once its write buffer exceeds the cap", () => {
+		// A writable that never drains: like a socket to a dead SSH session.
+		const stuck = new Duplex({ read() {}, write(_chunk, _enc, _cb) {}, highWaterMark: 1024 });
+		const peer = new LinkPeer(stuck, { side: "agent", maxBufferedBytes: 64 * 1024 });
+		const closed = new Promise<Error | undefined>((resolve) => peer.once("close", resolve));
+		const event = { output: "x".repeat(10 * 1024) };
+		let sent = 0;
+		while (peer.emitEvent("conv.event", event) && sent < 1000) sent++;
+		expect(peer.closed).toBe(true);
+		expect(sent).toBeLessThan(10);
+		return expect(closed).resolves.toMatchObject({ message: expect.stringContaining("write buffer overflow") });
+	});
+
+	it("drops a peer that sent nothing within the idle timeout and tracks liveness", async () => {
+		const [a, b] = socketPair();
+		const host = new LinkPeer(a, { side: "host" });
+		const agent = new LinkPeer(b, { side: "agent", idleTimeoutMs: 150 });
+		const before = agent.lastReceivedAt;
+		await new Promise((r) => setTimeout(r, 60));
+		await host.request("link.ping");
+		expect(agent.lastReceivedAt).toBeGreaterThan(before);
+		expect(agent.closed).toBe(false);
+		const closed = new Promise<Error | undefined>((resolve) => agent.once("close", resolve));
+		await expect(closed).resolves.toMatchObject({ message: expect.stringContaining("idle") });
+		host.destroy();
+	});
 });

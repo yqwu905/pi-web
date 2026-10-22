@@ -40,7 +40,11 @@ import {
 	installScript,
 	parseKeyValues,
 	parseProbeOutput,
+	compareVersions,
+	isSafeCliPath,
+	MIN_PI_VERSION,
 	piCliRelative,
+	wrapperUpdateScript,
 	probeScript,
 	proxyCheckCommand,
 	toProbeResult,
@@ -116,6 +120,11 @@ function compactTimestamp(date = new Date()): string {
 
 function lastLine(text: string): string {
 	return text.trim().split(/\r?\n/).filter(Boolean).pop() ?? "";
+}
+
+/** Remote agent dir for a mode: R/agent, or the user's own ~/.pi/agent when shared. */
+function agentDirFor(mode: ServerConfig["agentDirMode"], home: string, remoteRoot: string): string {
+	return mode === "shared" ? posix.join(home, ".pi/agent") : `${remoteRoot}/agent`;
 }
 
 /** Finds the installed @earendil-works/pi-coding-agent package.json by walking up node_modules. */
@@ -338,7 +347,12 @@ export class PiWebDeployer extends EventEmitter implements Deployer {
 			const prepared = await this.step(job, "prepare", async (step) => {
 				const settings = this.ctx.store.getSettings();
 				const nodeVersion = await this.bundles.resolveNodeVersion(settings.nodeVersion, arch, signal);
-				let piVersion = request.piVersion?.trim() || (await this.targetPiVersion());
+				let piVersion = request.piVersion?.trim();
+				if (!piVersion) {
+					const target = await this.resolveTargetPiVersion();
+					if (target.warning) this.appendLog(job, `警告：${target.warning}`);
+					piVersion = target.version;
+				}
 				if (!/^[\w.+-]+$/.test(piVersion)) throw badRequest(`无效的 pi 版本：${piVersion}`);
 				const nodeDir = `node-v${nodeVersion}-linux-${arch}`;
 				const log = (line: string) => this.appendLog(job, line);
@@ -377,7 +391,7 @@ export class PiWebDeployer extends EventEmitter implements Deployer {
 			const agentUpload = await upload("upload_agent", prepared.agent, "");
 
 			const server = this.server(serverId);
-			const agentDir = server.agentDirMode === "shared" ? posix.join(home, ".pi/agent") : `${R}/agent`;
+			const agentDir = agentDirFor(server.agentDirMode, home, R);
 			const deployed: DeployedInfo = {
 				nodeVersion: prepared.nodeVersion,
 				piVersion: prepared.piVersion,
@@ -406,6 +420,7 @@ export class PiWebDeployer extends EventEmitter implements Deployer {
 				if (kv.install !== "ok") {
 					throw new ApiError(502, "INSTALL_FAILED", `远程安装失败：${kv.error || lastLine(result.stderr) || `退出码 ${result.code}`}`);
 				}
+				if (kv.pi_cli && isSafeCliPath(kv.pi_cli)) deployed.piCli = kv.pi_cli;
 				// The installation exists from here on; agent() needs `deployed` to find it.
 				await this.saveDeployed(serverId, deployed);
 				step.detail = R;
@@ -447,7 +462,11 @@ export class PiWebDeployer extends EventEmitter implements Deployer {
 				const status = await client.call("agent.status", {});
 				details.push(`agent 运行 ${status.uptimeSec}s`);
 				const current = this.server(serverId);
-				if (current.proxy.mode === "tunnel") {
+				if (current.proxy.mode === "tunnel" && !status.proxy.listening) {
+					// Never send the token to the port when the agent does not hold it (another user might).
+					details.push("代理未监听");
+					this.appendLog(job, `警告：agent 未能监听代理端口 ${current.proxy.port}（可能被占用），请在 agent 日志中查看原因`);
+				} else if (current.proxy.mode === "tunnel") {
 					const check = await this.checkProxy(serverId, R, current.proxy.port);
 					if (check.ok) details.push("代理连通");
 					else {
@@ -597,6 +616,8 @@ export class PiWebDeployer extends EventEmitter implements Deployer {
 			throw new ApiError(502, "UNINSTALL_FAILED", `卸载失败：${lastLine(result.stderr) || `退出码 ${result.code}`}`);
 		}
 		if (kv.backup) this.log.info("sessions backed up before uninstall", { serverId, backup: kv.backup });
+		if (kv.sync_backup) this.log.info("sync backups kept after uninstall", { serverId, backup: kv.sync_backup });
+		if (kv.kept_root) this.log.info("install root kept: it holds files pi-web did not create", { serverId, root: kv.kept_root });
 		const fresh = this.server(serverId);
 		delete fresh.deployed;
 		fresh.updatedAt = Date.now();
@@ -628,9 +649,9 @@ export class PiWebDeployer extends EventEmitter implements Deployer {
 		const piPackageDir = `${R}/pi/current/node_modules/${PI_PACKAGE}`;
 		return {
 			remoteRoot: R,
-			agentDir: server.agentDirMode === "shared" ? posix.join(deployed.home, ".pi/agent") : `${R}/agent`,
+			agentDir: agentDirFor(server.agentDirMode, deployed.home, R),
 			nodePath: `${R}/runtime/current/bin/node`,
-			piCliPath: `${R}/pi/current/${piCliRelative()}`,
+			piCliPath: `${R}/pi/current/${deployed.piCli ?? piCliRelative()}`,
 			piPackageDir,
 			piVersion: deployed.piVersion,
 			companionExtPath: `${R}/daemon/pi-web-ext.mjs`,
@@ -647,16 +668,58 @@ export class PiWebDeployer extends EventEmitter implements Deployer {
 	}
 
 	async targetPiVersion(): Promise<string> {
+		return (await this.resolveTargetPiVersion()).version;
+	}
+
+	/**
+	 * Policy "host" follows `pi --version` on the host PATH, but only for supported releases: an
+	 * older pi (or the deprecated @mariozechner package) cannot be installed or lacks what pi-web
+	 * needs, so the version bundled with pi-web is deployed instead, with a warning.
+	 */
+	private async resolveTargetPiVersion(): Promise<{ version: string; warning?: string }> {
 		const settings = this.ctx.store.getSettings();
 		if (settings.piVersionPolicy === "pinned") {
 			const pinned = settings.piPinnedVersion?.trim();
 			if (!pinned) throw badRequest("全局设置选择了指定 pi 版本，但未填写版本号");
-			return pinned;
+			return { version: pinned };
 		}
 		const fromHost = this.ctx.hostPi ? await this.ctx.hostPi.version().catch(() => null) : null;
 		const version = fromHost ?? (await detectHostPiVersion());
 		if (!version) throw new ApiError(500, "PI_VERSION_UNKNOWN", "无法确定 Host 上的 pi 版本，请在全局设置中指定版本");
-		return version;
+		if (compareVersions(version, MIN_PI_VERSION) >= 0) return { version };
+		const bundled = bundledPiVersion();
+		if (!bundled || compareVersions(bundled, MIN_PI_VERSION) < 0) {
+			throw new ApiError(
+				409,
+				"PI_VERSION_UNSUPPORTED",
+				`Host 上的 pi ${version} 低于 Pi-Web 支持的最低版本 ${MIN_PI_VERSION}，请升级 Host 上的 pi 或在全局设置中指定版本`,
+			);
+		}
+		return {
+			version: bundled,
+			warning: `Host 上的 pi ${version} 低于 Pi-Web 支持的最低版本 ${MIN_PI_VERSION}，改为部署 Pi-Web 自带的 pi ${bundled}`,
+		};
+	}
+
+	async syncAgentDir(serverId: string): Promise<void> {
+		const server = this.server(serverId);
+		const deployed = server.deployed;
+		if (!deployed) return;
+		const agentDir = agentDirFor(server.agentDirMode, deployed.home, deployed.remoteRoot);
+		if (deployed.agentDir === agentDir) return;
+		const conn = this.conn(serverId);
+		if (conn.state !== "connected") return;
+		const result = await conn.exec("sh -s", {
+			stdin: wrapperUpdateScript({ remoteRoot: deployed.remoteRoot, agentDir, piCli: deployed.piCli }),
+			timeoutMs: 60_000,
+		});
+		if (parseKeyValues(result.stdout).wrapper !== "ok") {
+			throw new ApiError(502, "WRAPPER_UPDATE_FAILED", `更新 ${deployed.remoteRoot}/bin/pi 失败：${lastLine(result.stderr) || `退出码 ${result.code}`}`);
+		}
+		const fresh = this.server(serverId);
+		if (!fresh.deployed) return;
+		await this.saveDeployed(serverId, { ...fresh.deployed, agentDir });
+		this.log.info("agent dir switched; bin/pi rewritten", { serverId, agentDir });
 	}
 
 	// ---------------------------------------------------------------------

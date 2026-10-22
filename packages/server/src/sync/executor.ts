@@ -81,6 +81,7 @@ export async function executePlan(options: ExecuteOptions): Promise<SyncApplyRes
 			await options.connection.upload(archive, archivePath, { mode: 0o600, signal: options.signal });
 		}
 		const params: SyncApplyParams = { archivePath, writes, deletes: computed.deletes, backupLabel: options.backupLabel };
+		if (computed.adopt.length > 0) params.adopt = computed.adopt;
 		return await options.client.call("sync.apply", params, { timeoutMs: SYNC_APPLY_TIMEOUT_MS });
 	} finally {
 		await rm(stageDir, { recursive: true, force: true }).catch(() => {});

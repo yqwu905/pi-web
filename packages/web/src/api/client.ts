@@ -56,6 +56,7 @@ import type {
 	UpdateWorkspaceRequest,
 	WorkspaceView,
 } from "@pi-web/shared";
+import { authHeaders, getAccessToken, setAccessToken } from "./auth-token";
 
 export const API_BASE = "/api";
 
@@ -130,7 +131,7 @@ async function toApiError(res: Response): Promise<ApiError> {
 
 /** Low-level fetch returning the raw Response (throws ApiError on non-2xx). */
 export async function requestRaw(method: string, path: string, options: RequestOptions = {}): Promise<Response> {
-	const headers: Record<string, string> = { accept: "application/json", ...options.headers };
+	const headers: Record<string, string> = { accept: "application/json", ...authHeaders(), ...options.headers };
 	let body: BodyInit | undefined;
 	if (options.body !== undefined) {
 		if (options.body instanceof Blob || options.body instanceof ArrayBuffer || ArrayBuffer.isView(options.body)) {
@@ -181,9 +182,32 @@ type Ok = { ok: true };
 
 export const getMeta = (signal?: AbortSignal) => get<MetaResponse>("/meta", undefined, signal);
 export const getSettings = () => get<SettingsResponse>("/settings");
-export const updateSettings = (req: UpdateSettingsRequest) => put<SettingsResponse>("/settings", req);
+export const updateSettings = async (req: UpdateSettingsRequest): Promise<SettingsResponse> => {
+	const { issuedAccessToken, ...settings } = await put<SettingsResponse>("/settings", req);
+	// Enabling the token: this browser stays signed in with the token the host just created.
+	if (issuedAccessToken) setAccessToken(issuedAccessToken);
+	return settings;
+};
 export const getSshConfig = () => get<{ hosts: SshConfigHost[] }>("/ssh-config");
-export const login = (token: string) => post<Ok>("/auth/login", { token });
+/** Verifies the token and keeps it in this browser. */
+export const login = async (token: string): Promise<Ok> => {
+	const result = await post<Ok>("/auth/login", { token });
+	setAccessToken(token);
+	return result;
+};
+/** Replaces the access token; this browser keeps working with the new one. */
+export const rotateAccessToken = async (): Promise<{ token: string }> => {
+	const result = await post<{ token: string }>("/auth/rotate");
+	setAccessToken(result.token);
+	return result;
+};
+/** URL for a plain browser GET (download link): carries a single-use ticket when a token is in use. */
+export async function authorizedUrl(url: string): Promise<string> {
+	if (!getAccessToken()) return url;
+	const path = url.split("?")[0];
+	const { ticket } = await post<{ ticket: string }>("/auth/ticket", { path });
+	return `${url}${url.includes("?") ? "&" : "?"}ticket=${encodeURIComponent(ticket)}`;
+}
 
 // ---------- servers ----------
 

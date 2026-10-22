@@ -18,14 +18,16 @@ import { errorMessage } from "../../../api/client";
 import { Button, IconButton, Spinner, toast } from "../../../components/ui";
 import { cn } from "../../../lib/cn";
 import { formatBytes, formatTokens } from "../../../lib/format";
+import { requestNotificationPermission } from "../../../stores/attention";
 import type { ConversationHandle } from "../../../stores/conversation";
-import { applyCommand, COMMAND_SOURCE_LABELS, classifyInput, matchCommands, restoreQueuedText, slashToken, visibleCommands } from "../logic/composer";
-import { imageSrc } from "./ImageThumbs";
+import { applyCommand, COMMAND_SOURCE_LABELS, classifyInput, insertAt, matchCommands, restoreQueuedText, slashToken, visibleCommands } from "../logic/composer";
 import { Picker, type PickerOption } from "./Picker";
 
 export interface ComposerHandle {
-	/** Replaces the draft (set_editor_text, prefill, fork, tree navigation). */
+	/** Replaces the draft (set_editor_text, fork, tree navigation). */
 	setText(text: string): void;
+	/** Adds text to the draft at the cursor ("在对话中引用" / "发给 pi 审阅" prefill). */
+	insert(text: string): void;
 	/** Puts text back in front of the current draft (cleared queue). */
 	restore(texts: readonly string[]): void;
 	focus(): void;
@@ -36,7 +38,48 @@ interface PendingImage {
 	name: string;
 	size: number;
 	image: ImageContent;
+	/** Object URL of the file for the thumbnail (not the multi-MB data URL on every render). */
+	url: string;
 }
+
+interface Draft {
+	text: string;
+	images: PendingImage[];
+}
+
+/**
+ * Unsent drafts per (workspace, session): the composer unmounts with the chat page (Files /
+ * Terminal / Git tabs, another session) and must give the draft back. Text also goes to
+ * sessionStorage so it survives a reload; pasted images stay in memory.
+ */
+const drafts = new Map<string, Draft>();
+const DRAFT_STORAGE_PREFIX = "pi-web:draft:";
+
+function loadDraft(key: string): Draft {
+	const kept = drafts.get(key);
+	if (kept) return kept;
+	try {
+		return { text: sessionStorage.getItem(DRAFT_STORAGE_PREFIX + key) ?? "", images: [] };
+	} catch {
+		return { text: "", images: [] };
+	}
+}
+
+function saveDraft(key: string, draft: Draft): void {
+	if (draft.text || draft.images.length > 0) drafts.set(key, draft);
+	else drafts.delete(key);
+	try {
+		if (draft.text) sessionStorage.setItem(DRAFT_STORAGE_PREFIX + key, draft.text);
+		else sessionStorage.removeItem(DRAFT_STORAGE_PREFIX + key);
+	} catch {
+		// storage unavailable: the in-memory draft still works
+	}
+}
+
+function releaseImages(images: readonly PendingImage[]): void {
+	for (const image of images) URL.revokeObjectURL(image.url);
+}
+
 
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const commandCache = new Map<string, RpcSlashCommand[]>();
@@ -59,6 +102,7 @@ function readImage(file: File): Promise<PendingImage> {
 				name: file.name || "图片",
 				size: file.size,
 				image: { type: "image", data: comma >= 0 ? url.slice(comma + 1) : "", mimeType },
+				url: URL.createObjectURL(file),
 			});
 		};
 		reader.readAsDataURL(file);
@@ -94,6 +138,8 @@ function useSlashCommands(conv: ConversationHandle, wanted: boolean) {
 
 export interface ComposerProps {
 	conv: ConversationHandle;
+	/** Identifies the draft kept while the composer is unmounted (workspace + session). */
+	draftKey: string;
 	ref?: Ref<ComposerHandle>;
 	/** Runs "!cmd" / "!!cmd". */
 	onBash: (command: string, excludeFromContext: boolean) => void;
@@ -106,11 +152,18 @@ export interface ComposerProps {
  * Enter = send/steer, Alt+Enter = follow-up, Shift+Enter = newline, Esc = take back the
  * queue and abort; model and thinking selectors; queued messages with 撤回.
  */
-export function Composer({ conv, ref, onBash, bashRunning, onAbortBash }: ComposerProps) {
+export function Composer({ conv, draftKey, ref, onBash, bashRunning, onAbortBash }: ComposerProps) {
 	const id = useId();
-	const [text, setText] = useState("");
+	const [text, setText] = useState(() => loadDraft(draftKey).text);
 	const [cursor, setCursor] = useState(0);
-	const [images, setImages] = useState<PendingImage[]>([]);
+	const [images, setImages] = useState<PendingImage[]>(() => loadDraft(draftKey).images);
+	const savedKey = useRef(draftKey);
+	useEffect(() => {
+		// The view followed its conversation to a new session id: the draft moves with it.
+		if (savedKey.current !== draftKey) saveDraft(savedKey.current, { text: "", images: [] });
+		savedKey.current = draftKey;
+		saveDraft(draftKey, { text, images });
+	}, [draftKey, text, images]);
 	const [dragging, setDragging] = useState(false);
 	const [sending, setSending] = useState(false);
 	const [aborting, setAborting] = useState(false);
@@ -138,6 +191,20 @@ export function Composer({ conv, ref, onBash, bashRunning, onAbortBash }: Compos
 					el.focus();
 					el.setSelectionRange(value.length, value.length);
 					setCursor(value.length);
+				});
+			},
+			insert: (value: string) => {
+				const el = textareaRef.current;
+				setText((current) => {
+					const next = insertAt(current, el ? el.selectionStart : current.length, value);
+					requestAnimationFrame(() => {
+						const area = textareaRef.current;
+						if (!area) return;
+						area.focus();
+						area.setSelectionRange(next.cursor, next.cursor);
+						setCursor(next.cursor);
+					});
+					return next.text;
 				});
 			},
 			restore: (texts) => setText((current) => restoreQueuedText(current, texts)),
@@ -213,6 +280,8 @@ export function Composer({ conv, ref, onBash, bashRunning, onAbortBash }: Compos
 			setText("");
 			return;
 		}
+		// First send (a user gesture): ask once whether runs may notify when they finish or need input.
+		requestNotificationPermission();
 		const draft = text;
 		const pending = images;
 		const inputs = rpcState?.model?.input;
@@ -224,6 +293,7 @@ export function Composer({ conv, ref, onBash, bashRunning, onAbortBash }: Compos
 			const streamingBehavior = running ? (mode === "followUp" ? "followUp" : "steer") : undefined;
 			const res = await conv.prompt(input.message, { images: pending.map((p) => p.image), streamingBehavior });
 			if (!res.success) throw new Error(res.error || "发送失败");
+			releaseImages(pending);
 			if ((res.data as { disposition?: string } | undefined)?.disposition === "started") setJustStarted(true);
 		} catch (e) {
 			setText((current) => (current.trim() ? `${draft}\n\n${current}` : draft));
@@ -442,13 +512,16 @@ export function Composer({ conv, ref, onBash, bashRunning, onAbortBash }: Compos
 					<div className="flex flex-wrap gap-2 px-3 pt-3">
 						{images.map((img) => (
 							<div key={img.id} className="group relative overflow-hidden rounded-md border border-border bg-code">
-								<img src={imageSrc(img.image)} alt={img.name} title={`${img.name} · ${formatBytes(img.size)}`} className="block size-16 object-cover" />
+								<img src={img.url} alt={img.name} title={`${img.name} · ${formatBytes(img.size)}`} className="block size-16 object-cover" />
 								<IconButton
 									aria-label={`移除图片 ${img.name}`}
 									size="xs"
 									variant="secondary"
 									className="absolute top-1 right-1"
-									onClick={() => setImages((prev) => prev.filter((p) => p.id !== img.id))}
+									onClick={() => {
+										releaseImages([img]);
+										setImages((prev) => prev.filter((p) => p.id !== img.id));
+									}}
 								>
 									<X size={11} strokeWidth={2.2} />
 								</IconButton>

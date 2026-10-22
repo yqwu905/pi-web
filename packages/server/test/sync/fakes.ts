@@ -155,6 +155,8 @@ export class FakeRemote {
 	readonly agentDir: string;
 	calls: Array<{ method: string; params: unknown }> = [];
 	applyDelayMs = 0;
+	/** Number of upcoming sync.apply calls that fail (e.g. a full remote disk). */
+	failApplies = 0;
 
 	constructor(readonly root: string) {
 		this.agentDir = join(root, "agent");
@@ -235,6 +237,10 @@ export class FakeRemote {
 
 	async apply(params: SyncApplyParams): Promise<SyncApplyResult> {
 		if (this.applyDelayMs) await new Promise((r) => setTimeout(r, this.applyDelayMs));
+		if (this.failApplies > 0) {
+			this.failApplies--;
+			throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+		}
 		const managed = await this.managed();
 		const staging = join(this.root, "state", "incoming", params.backupLabel);
 		const backupDir = join(this.root, "state", "backup", params.backupLabel);
@@ -292,6 +298,9 @@ export class FakeRemote {
 				}
 				dir = dirname(dir);
 			}
+		}
+		for (const entry of params.adopt ?? []) {
+			if ((await this.currentSha(resolve(this.agentDir, entry.path))) === entry.sha256) managed[entry.path] = entry.sha256;
 		}
 		await writeFile(this.managedPath, JSON.stringify(managed, null, 2));
 		await rm(staging, { recursive: true, force: true });

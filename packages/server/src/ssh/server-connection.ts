@@ -16,7 +16,7 @@ import {
 } from "@pi-web/shared";
 import { LINK_PREAMBLE, LinkPeer } from "@pi-web/shared/link";
 import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper } from "ssh2";
-import { ApiError, errorCode, errorMessage, serverNotFound } from "../core/errors.js";
+import { ApiError, connectCancelled, connectionRemoved, errorCode, errorMessage, serverNotFound } from "../core/errors.js";
 import { expandHome } from "../core/paths.js";
 import { secretKeys } from "../core/secrets.js";
 import type { ExecOptions, ExecResult, Logger, Secrets, ServerConnection, Store, UploadOptions } from "../core/types.js";
@@ -424,6 +424,13 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 	private autoReconnect = false;
 	private agentWanted = false;
 	private closing = false;
+	/**
+	 * Bumped by disconnect()/dispose() (SSH) and disconnectAgent() (link): an attempt that was in
+	 * flight when the user cancelled must not bring the session or the link back afterwards.
+	 */
+	private sshEpoch = 0;
+	private agentEpoch = 0;
+	private disposed = false;
 	private reconnectTimer?: NodeJS.Timeout;
 	private reconnectAttempt = 0;
 	private linkTimer?: NodeJS.Timeout;
@@ -473,10 +480,14 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 	}
 
 	ensureSsh(): Promise<void> {
+		if (this.disposed) return Promise.reject(connectionRemoved());
 		if (this.sshConnected) return Promise.resolve();
-		this.sshPromise ??= this.connectSsh().finally(() => {
-			this.sshPromise = undefined;
-		});
+		if (!this.sshPromise) {
+			const promise: Promise<void> = this.connectSsh().finally(() => {
+				if (this.sshPromise === promise) this.sshPromise = undefined;
+			});
+			this.sshPromise = promise;
+		}
 		return this.sshPromise;
 	}
 
@@ -485,12 +496,25 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 			clearTimeout(this.reconnectTimer);
 			this.reconnectTimer = undefined;
 		}
+		const epoch = this.sshEpoch;
 		this.setState("connecting");
 		try {
 			const server = this.deps.store.getServer(this.serverId);
 			if (!server) throw serverNotFound(this.serverId);
 			const hops = await resolveHops(server, this.deps.store, this.deps.secrets);
+			if (epoch !== this.sshEpoch) throw connectCancelled();
 			const clients = await connectChain(hops, { timings: this.options.timings, log: this.log });
+			if (epoch !== this.sshEpoch) {
+				// Disconnected (or removed) while the chain was connecting: do not resurrect the session.
+				for (const client of [...clients].reverse()) {
+					try {
+						client.end();
+					} catch {
+						// ignore
+					}
+				}
+				throw connectCancelled();
+			}
 			const generation = ++this.generation;
 			this.clients = clients;
 			this.connectedKey = hopsKey(hops);
@@ -503,6 +527,12 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 			this.log.info("ssh connected", { host: server.host, port: server.port, hops: hops.length });
 			this.setState("connected");
 		} catch (err) {
+			if (errorCode(err) === "CANCELLED") {
+				this.log.info("ssh connect cancelled");
+				// Unless a newer attempt is already under way, the session is down.
+				if (!this.sshPromise && !this.sshConnected && this.state !== "disconnected") this.setState("disconnected");
+				throw err;
+			}
 			this.lastError = errorMessage(err);
 			this.log.warn("ssh connect failed", { error: this.lastError, code: errorCode(err) });
 			this.setState("error");
@@ -952,25 +982,36 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 	// ---- agent link ----
 
 	agent(): Promise<LinkAgentClient> {
+		if (this.disposed) return Promise.reject(connectionRemoved());
 		if (this.agentClient && !this.agentClient.isClosed) return Promise.resolve(this.agentClient);
 		this.agentWanted = true;
 		if (this.linkTimer) {
 			clearTimeout(this.linkTimer);
 			this.linkTimer = undefined;
 		}
-		this.agentPromise ??= this.connectAgent().finally(() => {
-			this.agentPromise = undefined;
-		});
+		if (!this.agentPromise) {
+			const promise: Promise<LinkAgentClient> = this.connectAgent().finally(() => {
+				if (this.agentPromise === promise) this.agentPromise = undefined;
+			});
+			this.agentPromise = promise;
+		}
 		return this.agentPromise;
 	}
 
 	private async connectAgent(): Promise<LinkAgentClient> {
+		const epoch = this.agentEpoch;
 		const server = this.deps.store.getServer(this.serverId);
 		if (!server) throw serverNotFound(this.serverId);
 		if (!server.deployed) throw new ApiError(409, "NOT_DEPLOYED", "服务器尚未部署 Pi-Web");
 		await this.ensureSsh();
+		// disconnectAgent() (stop/uninstall) while SSH was coming up: do not start a bridge (and daemon).
+		if (epoch !== this.agentEpoch) throw connectCancelled();
 		try {
-			const client = await this.openLink(server.deployed.remoteRoot);
+			const client = await this.openLink(server.deployed.remoteRoot, true, () => epoch !== this.agentEpoch);
+			if (epoch !== this.agentEpoch) {
+				client.close();
+				throw connectCancelled();
+			}
 			this.agentError = undefined;
 			this.linkAttempt = 0;
 			this.agentClient = client;
@@ -981,6 +1022,10 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 			this.emit("change");
 			return client;
 		} catch (err) {
+			if (errorCode(err) === "CANCELLED") {
+				this.log.info("agent link cancelled");
+				throw err;
+			}
 			this.agentError = errorMessage(err);
 			this.log.warn("agent link failed", { error: this.agentError });
 			this.emit("change");
@@ -1001,7 +1046,7 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 		return this.openLink(server.deployed.remoteRoot, false);
 	}
 
-	private async openLink(remoteRoot: string, publish = true): Promise<LinkAgentClient> {
+	private async openLink(remoteRoot: string, publish = true, cancelled: () => boolean = () => false): Promise<LinkAgentClient> {
 		const node = `${remoteRoot}/runtime/current/bin/node`;
 		const bridge = `${remoteRoot}/daemon/bridge.mjs`;
 		const command = `${shellQuote(node)} ${shellQuote(bridge)} --root ${shellQuote(remoteRoot)}`;
@@ -1057,6 +1102,10 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 		channel.stderr.on("data", (chunk: Buffer) => {
 			this.log.debug("bridge stderr", { text: tailText(chunk.toString("utf8"), 1000) });
 		});
+		if (cancelled()) {
+			client.close();
+			throw connectCancelled();
+		}
 		try {
 			if (publish) await this.deps.onAgentLink?.(client);
 		} catch (err) {
@@ -1103,6 +1152,12 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 				this.latencyMs = Date.now() - started;
 				this.emit("change");
 			} catch {
+				// The reply may sit behind a large message on the single ordered stream: bytes that
+				// kept arriving during the ping window prove the link is alive.
+				if (client.peer.lastReceivedAt >= started) {
+					failures = 0;
+					return;
+				}
 				failures++;
 				if (failures >= 3 && !client.isClosed) client.peer.destroy(new Error("link ping timeout"));
 			}
@@ -1118,13 +1173,24 @@ export class SshServerConnection extends EventEmitter implements ServerConnectio
 	}
 
 	disconnectAgent(): void {
+		this.agentEpoch++;
+		// An attempt in flight is cancelled; the next agent() call starts a fresh one.
+		this.agentPromise = undefined;
 		this.agentWanted = false;
 		if (this.linkTimer) clearTimeout(this.linkTimer);
 		this.linkTimer = undefined;
 		this.agentClient?.close();
 	}
 
+	/** The connection was removed from the manager: disconnect and refuse any later use. */
+	dispose(): Promise<void> {
+		this.disposed = true;
+		return this.disconnect();
+	}
+
 	async disconnect(): Promise<void> {
+		this.sshEpoch++;
+		this.sshPromise = undefined;
 		this.autoReconnect = false;
 		this.clearTimers();
 		this.disconnectAgent();

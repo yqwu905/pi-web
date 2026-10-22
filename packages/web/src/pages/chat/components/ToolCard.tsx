@@ -69,9 +69,10 @@ function ToolCardImpl({ tool, workspaceId }: ToolCardProps) {
 	const text = payloadText(tool.output);
 	const target = toolTarget(tool.name, tool.args);
 
+	// While the arguments stream, every delta would re-diff the whole edit: diff once they are complete.
 	const diffFiles = useMemo(
-		() => (tool.name === "edit" ? parseUnifiedDiff(editDiff(tool.args, tool.output?.details)) : []),
-		[tool.name, tool.args, tool.output?.details],
+		() => (tool.name === "edit" && !tool.argsStreaming ? parseUnifiedDiff(editDiff(tool.args, tool.output?.details)) : []),
+		[tool.name, tool.args, tool.output?.details, tool.argsStreaming],
 	);
 
 	let meta: ReactNode = null;
@@ -185,8 +186,21 @@ function OutputPre({ text, follow, empty = "（无输出）", maxHeight = 360 }:
 	);
 }
 
+/** Characters of a streaming write/edit shown as plain text (highlighting waits for the final arguments). */
+const STREAMING_TAIL = 4000;
+
+function streamingText(tool: ToolView): string {
+	if (tool.name === "write") return str(tool.args.content);
+	const edits = Array.isArray(tool.args.edits) ? (tool.args.edits as Array<{ newText?: unknown }>) : [{ newText: tool.args.newText }];
+	return edits.map((e) => str(e?.newText)).join("\n…\n");
+}
+
 function ToolBody({ tool, text, diffFiles }: { tool: ToolView; text: string; diffFiles: ReturnType<typeof parseUnifiedDiff> }) {
 	const path = toolPath(tool.args);
+	if (tool.argsStreaming && (tool.name === "write" || tool.name === "edit")) {
+		const content = streamingText(tool);
+		return <OutputPre text={content.length > STREAMING_TAIL ? `…${content.slice(-STREAMING_TAIL)}` : content} follow empty="生成中…" />;
+	}
 	const details = tool.output?.details as { truncation?: { truncated?: boolean }; fullOutputPath?: string } | undefined;
 	switch (tool.name) {
 		case "bash": {

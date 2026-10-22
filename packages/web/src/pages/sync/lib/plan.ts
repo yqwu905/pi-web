@@ -35,7 +35,7 @@ export function isPlanEmpty(plan: Pick<SyncPlan, "entries">): boolean {
 /** Default explanation for an entry without a host-provided note. */
 export function entryNote(entry: SyncPlanEntry): string | undefined {
 	if (entry.note) return entry.note;
-	if (entry.conflict) return entry.action === "delete" ? "服务器上被修改过，将备份后删除" : "服务器上被修改过，将备份到 state/backup/ 后覆盖";
+	if (entry.conflict) return entry.action === "delete" ? "服务器上被修改过，将备份后删除" : "服务器上被修改过，将备份后覆盖";
 	if (entry.action === "delete") return "已在 Host 删除，且由同步写入";
 	return undefined;
 }

@@ -137,6 +137,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
 	const address = app.server.address();
 	const actualPort = typeof address === "object" && address ? address.port : port;
+	ctx.proxy.protectLocalPort(actualPort);
 	const url = displayUrl(host, actualPort);
 	ctx.log.info("listening", { host, port: actualPort, version: ctx.version, dev: options.dev });
 	process.stdout.write(`\nPi-Web ${ctx.version} is running at ${url}\n`);

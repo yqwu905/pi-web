@@ -82,6 +82,13 @@ describe("host and origin checks", () => {
 		expect(res.headers["x-frame-options"]).toBe("DENY");
 		expect(res.headers["x-content-type-options"]).toBe("nosniff");
 		expect(res.headers["referrer-policy"]).toBe("no-referrer");
+		const csp = String(res.headers["content-security-policy"]);
+		expect(csp).toContain("default-src 'self'");
+		expect(csp).toContain("img-src 'self' data: blob:");
+		expect(csp).toContain(`connect-src 'self' ws://${HOST} wss://${HOST}`);
+		expect(csp).toContain("frame-ancestors 'none'");
+		const odd = await t.request("GET", "/api/meta", undefined, { host: "127.0.0.1:7878;script-src *" });
+		expect(String(odd.headers["content-security-policy"])).not.toContain("script-src *");
 	});
 });
 
@@ -106,14 +113,32 @@ describe("access token", () => {
 		});
 	});
 
-	it("requires the cookie or a bearer token for /api", async () => {
+	it("requires a bearer token for /api and clears the legacy cookie", async () => {
 		t = await withToken();
 		const denied = await t.request("GET", "/api/servers");
 		expect(denied.statusCode).toBe(401);
 		expect(denied.json()).toEqual({ error: { code: "UNAUTHORIZED", message: "需要访问令牌" } });
-		expect((await t.request("GET", "/api/servers", undefined, { cookie: "a=b; pi_web_token=tok-123" })).statusCode).toBe(200);
+		// The old cookie carried the raw token to every port of the host: ignored and deleted.
+		const cookie = await t.request("GET", "/api/servers", undefined, { cookie: "a=b; pi_web_token=tok-123" });
+		expect(cookie.statusCode).toBe(401);
+		expect(String(cookie.headers["set-cookie"])).toContain("pi_web_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
 		expect((await t.request("GET", "/api/servers", undefined, { authorization: "Bearer tok-123" })).statusCode).toBe(200);
 		expect((await t.request("GET", "/api/servers", undefined, { authorization: "Bearer wrong" })).statusCode).toBe(401);
+	});
+
+	it("decides auth by the matched route, not by the raw URL", async () => {
+		t = await withToken();
+		for (const url of ["/%61pi/servers", "/%61pi/settings", "/api/%73ervers", "/a%70i/meta"]) {
+			const res = await t.request("GET", url);
+			expect(res.statusCode, url).toBe(400);
+			expect(res.json().error.code).toBe("BAD_PATH");
+		}
+		const put = await t.request("PUT", "/%61pi/settings", { npmRegistry: "https://evil.example/" });
+		expect(put.statusCode).toBe(400);
+		expect(t.store.settings.npmRegistry).not.toBe("https://evil.example/");
+		// Encoded reserved characters (e.g. in ids) are still fine.
+		expect((await t.request("GET", "/api/servers/a%2Fb", undefined, { authorization: "Bearer tok-123" })).statusCode).toBe(404);
+		expect((await t.request("GET", "/api/servers/a%2Fb")).statusCode).toBe(401);
 	});
 
 	it("keeps /api/meta public but reveals nothing without a token", async () => {
@@ -130,7 +155,7 @@ describe("access token", () => {
 		});
 	});
 
-	it("logs in with POST /api/auth/login", async () => {
+	it("logs in with POST /api/auth/login without setting a cookie", async () => {
 		t = await withToken();
 		const bad = await t.request("POST", "/api/auth/login", { token: "nope" });
 		expect(bad.statusCode).toBe(401);
@@ -138,34 +163,44 @@ describe("access token", () => {
 		const ok = await t.request("POST", "/api/auth/login", { token: "tok-123" });
 		expect(ok.statusCode).toBe(200);
 		expect(ok.json()).toEqual({ ok: true });
-		const cookie = String(ok.headers["set-cookie"]);
-		expect(cookie).toContain("pi_web_token=tok-123");
-		expect(cookie).toContain("HttpOnly");
-		expect(cookie).toContain("SameSite=Strict");
+		expect(ok.headers["set-cookie"]).toBeUndefined();
 	});
 
-	it("bootstraps the cookie from /?token= and strips it from the URL", async () => {
+	it("authenticates one download with a single-use ticket bound to its path", async () => {
 		t = await withToken();
-		const res = await t.request("GET", "/w/abc/chat?x=1&token=tok-123");
-		expect(res.statusCode).toBe(302);
-		expect(res.headers.location).toBe("/w/abc/chat?x=1");
-		expect(String(res.headers["set-cookie"])).toContain("pi_web_token=tok-123");
-		const wrong = await t.request("GET", "/?token=bad");
-		expect(wrong.statusCode).toBe(302);
-		expect(wrong.headers.location).toBe("/");
-		expect(wrong.headers["set-cookie"]).toBeUndefined();
+		expect((await t.request("POST", "/api/auth/ticket", { path: "/api/servers" })).statusCode).toBe(401);
+		const issued = await t.request("POST", "/api/auth/ticket", { path: "/api/servers" }, { authorization: "Bearer tok-123" });
+		expect(issued.statusCode).toBe(200);
+		const { ticket } = issued.json() as { ticket: string };
+		expect((await t.request("GET", `/api/settings?ticket=${ticket}`)).statusCode).toBe(401);
+		const other = (await t.request("POST", "/api/auth/ticket", { path: "/api/servers" }, { authorization: "Bearer tok-123" })).json().ticket;
+		expect((await t.request("GET", `/api/servers?ticket=${other}`)).statusCode).toBe(200);
+		expect((await t.request("GET", `/api/servers?ticket=${other}`)).statusCode).toBe(401);
 	});
 
-	it("generates a token and keeps the current browser signed in when enabling it", async () => {
+	it("rotates the token", async () => {
+		t = await withToken();
+		const res = await t.request("POST", "/api/auth/rotate", {}, { authorization: "Bearer tok-123" });
+		expect(res.statusCode).toBe(200);
+		const { token } = res.json() as { token: string };
+		expect(token).not.toBe("tok-123");
+		expect((await t.request("GET", "/api/servers", undefined, { authorization: "Bearer tok-123" })).statusCode).toBe(401);
+		expect((await t.request("GET", "/api/servers", undefined, { authorization: `Bearer ${token}` })).statusCode).toBe(200);
+	});
+
+	it("generates a token and hands it to the browser that enabled it", async () => {
 		t = await createTestApp();
 		const res = await t.request("PUT", "/api/settings", { accessTokenEnabled: true });
 		expect(res.statusCode).toBe(200);
 		expect(res.json().accessTokenEnabled).toBe(true);
 		const token = await t.secrets.get("accessToken");
 		expect(token).toMatch(/^[A-Za-z0-9_-]{20,}$/);
-		expect(String(res.headers["set-cookie"])).toContain(`pi_web_token=${token}`);
+		expect(res.json().issuedAccessToken).toBe(token);
+		expect(res.headers["set-cookie"]).toBeUndefined();
 		expect((await t.request("GET", "/api/servers")).statusCode).toBe(401);
 		expect((await t.request("GET", "/api/servers", undefined, { authorization: `Bearer ${token}` })).statusCode).toBe(200);
+		const again = await t.request("PUT", "/api/settings", { prunePrebuilds: false }, { authorization: `Bearer ${token}` });
+		expect(again.json().issuedAccessToken).toBeUndefined();
 	});
 });
 

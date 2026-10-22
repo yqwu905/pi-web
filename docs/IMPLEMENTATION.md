@@ -76,7 +76,8 @@ R/trash/sessions/
   - SIGTERM 或 `agent.shutdown` 时，优雅关闭所有会话（关闭 stdin，等待 5s 后 SIGTERM），然后退出。
   - 单实例：listen socket 遇到 EADDRINUSE 时先尝试连接；能连上说明已有实例，直接退出 0；连不上就 unlink 旧 socket 后重新 listen。
 - 每个 socket 连接创建一个 `new LinkPeer(socket, { side: "agent" })` 并注册所有方法。事件广播给所有已连接的 peer。
-- 配置：`agent.configure` 时把 AgentConfig 持久化到 `state/config.json`，再 (重新) 启动代理监听，并写入 `run/proxy.env`。`proxy.env` 的内容是 `export HTTPS_PROXY=…` 等 6 个变量加 NO_PROXY；代理关闭时删除该文件。启动时加载已有配置。
+- 配置：`agent.configure` 时把 AgentConfig 持久化到 `state/config.json`，再 (重新) 启动代理监听；**监听成功后**才写入 `run/proxy.env`。`proxy.env` 的内容是 `export HTTPS_PROXY=…` 等 6 个变量加 NO_PROXY，外面包一层“只有写入它的 daemon 进程仍在运行时才导出”的判断（`kill -0 <pid>` 且 `/proc/<pid>/cmdline` 含 daemon 脚本路径），因为端口固定，daemon 不在时可能被同机其他用户占用。代理关闭、监听失败、stopAccepting/关闭时删除该文件；启动时先删除遗留的文件，加载已有配置并监听后再写。
+- 代理令牌：交给 pi 进程（环境变量、proxy.env）的是 daemon 每次启动随机生成的令牌，不是 Host 下发的令牌；Host 令牌只用于部署自检，仍被接受。部署自检只在 agent 报告代理已监听时才向端口发送令牌。
 - `hello` 返回版本、pid、home、platform、arch、nodeVersion、remoteRoot 和当前 config。
 - 日志：写 `logs/agent.log`；info 及以上级别同时以 `agent.log` 事件推送。
 
@@ -102,7 +103,7 @@ R/trash/sessions/
   - 每条转发的记录分配递增的 seq，存入环形缓冲（3000 条），并 `emitEvent("conv.event", {convId, seq, ts, record})`。状态变化时额外发送 `pi_web_status` 记录和 `conv.info` 事件。
   - 同时把每条记录喂给 shared 的 `applyConvRecord` 维护 tracker 状态（为节省内存，每次应用后把 `messages` 清空），供 `conv.snapshot` 使用。
 - `conv.send`：
-  - 给命令分配 id `pw-<n>`，写入 stdin，等待 response。默认超时 60s；compact、export_html、abort、bash、fork、clone、new_session、switch_session 以及以 `/` 开头的 prompt（扩展命令，pi 在命令处理完、包括等待对话框之后才回复）的超时为 10 分钟。超时从收到请求开始计算，包括等待仍在启动的进程。
+  - 给命令分配 id `pw-<n>`，写入 stdin，等待 response。默认超时 60s；prompt、compact、export_html、abort、bash、fork、clone、new_session、switch_session 的超时为 10 分钟（pi 在准备好运行之后才回复 prompt：之前可能先自动压缩会话（一次完整的 LLM 摘要）、运行 before_agent_start 钩子；扩展斜杠命令在处理完、包括等待对话框之后才回复）。超时从收到请求开始计算，包括等待仍在启动的进程。
   - 超时常量和 `defaultCommandTimeout` 在 `@pi-web/shared` 的 `timeouts.ts` 中，agent 和 host 共用；host 在 link 上多等 10s，保证先收到 agent 的精确错误。
   - 返回 `{...response, seq: 读到 response 时的 lastSeq}`。
   - new_session、switch_session、fork、clone 成功后：重新 `get_state`，更新 sessionFile 索引，并转发一条 `pi_web_session_changed` 记录。
@@ -111,7 +112,8 @@ R/trash/sessions/
 - `conv.companion`：
   - 生成 reqId，发送 prompt `/pi-web-<action> <JSON.stringify({reqId,...args})>`。扩展命令在 streaming 期间也会立即执行。
   - 等待 setStatus(`pi-web:result`) 中 reqId 匹配的 JSON；navigate 和 reload（先等待 pi 空闲）的总超时为 10 分钟，label 为 60s（`companionActionTimeout`，包括首次的 get_commands 检查）。
-- `conv.stop`：关闭 stdin，5s 后发 SIGTERM，再过 3s 发 SIGKILL；`force` 时直接 SIGKILL。
+- `conv.stop`：关闭 stdin，5s 后发 SIGTERM，再过 3s 发 SIGKILL；`force` 时立即 SIGTERM，1s 后 SIGKILL（pi 的 SIGTERM 处理会结束 bash 工具的独立进程组，直接 SIGKILL 会留下孤儿进程）。
+- 对话框清理：pi 在 AbortSignal 触发时静默 resolve 对话框（stdout 不输出任何内容）。没有 timeout 的对话框，如果是在某次运行中发起的，该运行 agent_settled 时视为已失效；如果是在斜杠命令执行期间（无运行）发起的，该命令收到 response 时视为已失效；两者都发 `pi_web_ui_resolved`。
 - 进程退出时：
   - 状态改为 exited，发送 `pi_web_exit`（附带 stderr 末尾 4KB）和 `conv.info`；
   - reject 所有挂起的请求；
@@ -165,10 +167,12 @@ R/trash/sessions/
 - `sync.apply`：
   1. archivePath 非空时，把它解压到 `state/incoming/<label>/`（使用系统 `tar -xzf`）；
   2. 校验每个 write 的 sha256（link 则校验 readlink）；
-  3. 对每个目标路径：若存在且（不在 managed 中，或当前 sha256 ≠ managed[path]），先复制到 `state/backup/<label>/<path>`（保持相对路径），再 mkdir -p 父目录并 rename 到位（link 用 symlink 创建）；
-  4. deletes 先做同样的冲突备份，再 unlink，并清理空目录；
-  5. 更新 managed（writes 写入新的 sha256，deletes 移除），删除 staging 和 archive；
-  6. 返回统计。所有路径都必须校验在 agentDir 内（防止 `..`）。
+  3. **先处理 deletes**：做冲突备份，再 unlink，并清理空目录；父路径（agentDir 以下的任一层）已是符号链接时，只移除 managed 记录、不动文件（否则会删掉链接目标里的文件）；
+  4. 再处理 writes：对每个目标路径，若存在且（不在 managed 中，或当前 sha256 ≠ managed[path]），先复制到备份目录 `<label>/<path>`（保持相对路径），再 mkdir -p 父目录并 rename 到位（link 用 symlink 创建）；父路径中有符号链接时拒绝写入（不经由链接写到别处）；
+  5. adopt：当前 sha256 与给定值相同的文件直接记入 managed（不写入），使以后 Host 端的删除能同步过去；
+  6. 更新 managed（writes 写入新的 sha256，deletes 移除），处理过程中每秒及结束时（finally）都会落盘；删除 staging 和 archive；
+  - 备份目录：agentDir 位于 R 内时为 `R/state/backup/`；共享 agent 目录（`~/.pi/agent`）时为 `<agentDir>/.pi-web-backup/`，卸载删除 R 时不会一并删除用户原有文件的备份；
+  7. 返回统计。所有路径都必须校验在 agentDir 内（防止 `..`）。
 - `agent.status`：返回会话列表、代理状态、`df` 得到的可用空间（`fs.statfs`）和 loadavg。
 
 ### 2.9 测试
@@ -225,8 +229,10 @@ logs/pi-web.log
   - 用 `new LinkPeer(channel, {side:"host", preamble: LINK_PREAMBLE})` 建立 link，`await peer.ready`，超时 20s。失败时的错误需包含 stderr 和 preambleJunk；
   - 调用 `hello`；
   - 收到的 hello.agentVersion 与 Deployer.agentVersion 不同时，更新 deployState 为 outdated，但仍可使用；
-  - 每 15s 执行一次 `link.ping` 测量延迟；
+  - 每 15s 执行一次 `link.ping` 测量延迟；连续 3 次超时（10s）才断开 link，但只要 ping 窗口内收到过任何字节就不算失败（回复可能排在一条大消息后面）；
+  - LinkPeer 的写缓冲超过上限（默认 64MB + 32MB）时销毁该 peer（消息不受背压控制，停读的对端会让缓冲无限增长）；agent 端的 peer 60s 内没有收到任何数据即视为对端已失效并销毁，Host 重连后重放或重新同步；
   - link 断开后，若 SSH 仍在，则退避重连 link。
+  - disconnect()/remove() 与 disconnectAgent() 会使正在进行的 SSH 连接 / link 建立作废：迟到的 SSH 客户端被关闭、迟到的 link 被关闭，并以 CANCELLED 失败；被 remove 的连接对象之后拒绝任何使用。
   - 发出 `agent-connected` 和 `agent-disconnected` 事件。
 - 状态：ServerRuntimeStatus 聚合 connection 和 agent 信息，以及其他服务通过 updateStatus 写入的字段；每次变化都 emit `status`。
 
@@ -284,26 +290,31 @@ logs/pi-web.log
   - proxy 字段来自 server.proxy，token 来自 secrets（缺失时生成 32 字节 hex 并保存）；
   - noProxy 为 `settings.defaultNoProxy ∪ server.proxy.noProxy`；
   - idleTimeoutMin 取自 server 配置。
-- uninstall：先 `agent.shutdown`，再执行 `rm -rf R`。keepSessions 为真时，先把 `R/agent/sessions` 移到 `~/pi-web-sessions-backup-<ts>`。
+- uninstall：先 `agent.shutdown`，再删除 R。只删除带安装标记 `R/.pi-web-root`（或旧版安装布局 `R/daemon/VERSION`）的目录，且只删除 pi-web 自己创建的条目，R 为空时再删除 R 本身；拒绝 `/`、`$HOME` 及其上级目录。脚本使用 `umask 077`；keepSessions 为真时，先把 `R/agent/sessions`（chmod -R go-rwx）移到 `~/pi-web-backups/sessions-<ts>`（目录 0700）；旧版留在 `R/state/backup` 的同步备份同样移到 `~/pi-web-backups/sync-backup-<ts>`。
+- 安装目录：保存前先规范化（去掉末尾斜杠、`.`、重复斜杠），不允许 `..`、家目录本身和 `/`；探测时若安装目录是家目录或其上级、已存在且不是 Pi-Web 安装目录（非空且无标记），列为问题；安装脚本也会再次检查。
+- 探测还检查用户空间：`getconf LONG_BIT` 为 32，或缺少对应架构的动态链接器（x64：`/lib64/ld-linux-x86-64.so.2`，arm64：`/lib/ld-linux-aarch64.so.1`）时列为问题；安装时先运行一次 `node -v`。
+- pi 版本：策略为 host 时，Host 上的 pi 低于 `MIN_PI_VERSION`（与 server 包依赖的下限一致）则改为部署 Pi-Web 自带的版本并在部署日志中警告。pi 的 CLI 路径取已安装包 package.json 的 `bin.pi`，记录到 `deployed.piCli`，bin/pi 和 AgentConfig.piCliPath 都用它（旧安装没有该字段时用 `dist/bundle/cli.js`）。
+- 修改 agentDirMode 后，重写 `R/bin/pi`（其中写死了默认的 PI_CODING_AGENT_DIR）并更新 deployed.agentDir；服务器离线时在下次建立 Link 后补做。
 - restartAgent：先 `agent.shutdown`，再重连 agent。
 
 ### 3.5 TunnelProxy
 - attach 时调用 `client.peer.onStreamOpen(handler)`，按以下规则处理每个流：
   - `server.proxy.mode !== "tunnel"` 时，reject(403)；
-  - 放行判断：scope 为 tools 且 toolsPolicy 为 all 时全部放行；否则用 `matchDomain(host, providerDomains ∪ extraDomains)` 判断；
-  - 拒绝时记录 denied 统计，并 reject(403, "目标不在白名单：host")。
+  - 目标主机名：`127.1`、`2130706433`、`0x7f.1` 这类数字简写不是主机名，reject(400)；
+  - 名单判断：provider 端点按 `host:port` 精确匹配（动态端点为 443 端口的服务级模式）；`extraDomains` 用 `matchDomain`；scope 为 tools 且 toolsPolicy 为 all 时放行任意名字；
+  - 地址判断（所有 scope）：在 Host 上解析目标（`dns.lookup` all），任何一个地址是回环、未指定、本机网卡地址、私有网段（RFC1918、CGNAT）、链路本地（169.254/16、fe80::/10）、ULA、组播，或映射/内嵌到这些地址的 IPv6 时，只有“用户精确指定”的目标（provider baseUrl 的 host:port，或 extraDomains 中的精确条目，通配不算）才放行；Pi-Web 自己的监听端口在本机地址上永远拒绝；
+  - 拒绝时记录 denied 统计，并 reject(403, 原因)。
 - 出站：
-  - settings.upstreamProxy 或 Host 环境变量 HTTPS_PROXY（遵循 NO_PROXY）存在时，向上游发送 HTTP CONNECT；
-  - 否则直接 `net.connect`；
+  - settings.upstreamProxy 或 Host 环境变量 HTTPS_PROXY（遵循 NO_PROXY）存在时，向上游发送 HTTP CONNECT（按名字；Host 能解析时先做上面的地址判断）；
+  - 否则直接连接已检查过的 IP（不再二次解析，防 DNS rebinding）；
   - 连接成功后 `control.accept()` 并双向 pipe，失败则 reject(502, 原因)。
 - providerDomains 的来源：
-  - `hostPi.modelRuntime().getProviders()` 中各 provider 及其 models 的 baseUrl 主机名；
-  - 加上动态端点的通配：
-    - `*.githubcopilot.com`
-    - `chatgpt.com`、`*.chatgpt.com`
-    - `*.openai.azure.com`、`*.cognitiveservices.azure.com`
-    - `*.googleapis.com`（仅在配置了对应 provider 时）
-    - `*.amazonaws.com`
+  - `hostPi.modelRuntime().getProviders()` 中各 provider 及其 models 的 baseUrl 的 `host:port`（端口缺省 443/80）；
+  - 加上动态端点（443），只用服务级模式，不用 `*.amazonaws.com`、`*.googleapis.com` 这种任何人都能在其下架设服务器的通配：
+    - `*.githubcopilot.com`、`chatgpt.com`、`*.chatgpt.com`
+    - `*.openai.azure.com`、`*.cognitiveservices.azure.com`、`*.ai.azure.com`
+    - `bedrock(-runtime)(-fips).{aws-region}.amazonaws.com(.cn)`、`sts`/`portal.sso`/`oidc` 的区域端点
+    - `{gcp-region}-aiplatform.googleapis.com`、`aiplatform.googleapis.com`、`oauth2`/`sts`/`iamcredentials.googleapis.com`
   - 缓存 60s，HostPi invalidate 时清空。
 - stats：统计 active、byHost（requests、bytesUp/Down、lastAt）和 denied；变化时节流（1/s）发布 `proxy:<serverId>`，并通过 `connections.updateStatus` 写入 status.proxy。
 
@@ -311,7 +322,7 @@ logs/pi-web.log
 - **期望文件树（desired）**，从 Host agentDir 按启用的同步项生成：
   - 跳过 `SYNC_EXCLUDES` 和 `.DS_Store`。
   - symlink：目标在同一根目录内时保留为 link；目标在外部时，取消引用并复制内容。
-  - 指向 agentDir 外部的本地路径（settings 中的 packages、extensions、skills、prompts、themes 里的本地路径，即非 `npm:`/`git:`/`http(s):`/`ssh:` 开头的条目）：如果存在，按 `external/<sha1(abs)前12位>-<basename>` 放入期望树，并改写 settings 中的引用。agentDir 内的绝对路径改写为相对路径。
+  - 指向 agentDir 外部的本地路径（settings 中的 packages、extensions、skills、prompts、themes 里的本地路径，即非 `npm:`/`git:`/`http(s):`/`ssh:` 开头的条目）：如果存在，按 `external/<sha1(abs)前12位>-<basename>` 放入期望树，并改写 settings 中的引用。agentDir 内、属于已启用同步项的路径保留（绝对路径改写为相对路径）；agentDir 内但不属于任何同步项的路径（如 `./local/my-pkg`）按外部路径处理；属于未启用同步项或被排除的路径保留原样并给出警告。
   - agentsSkills：Host 的 `~/.agents/skills` 映射到远端 agentDir 下的 `agents-skills/`，并把 `"agents-skills"` 追加到 settings 的 `skills` 数组。
   - settings.json 变换：
     - 删除 `npmCommand`、`shellPath`、`httpProxy`；`sessionDir` 是绝对路径时删除；
@@ -328,7 +339,9 @@ logs/pi-web.log
 - **计划**：roots 为启用同步项的顶层名，加上 external（若有）和 agents-skills（若启用）。调用 `sync.manifest(roots)` 后：
   - desired 中的每个路径，与远端 sha 不同时，按远端是否存在记为 add 或 update；`conflict = 远端存在 && managed[p] !== 远端sha`。
   - managed 中位于 roots 内、但不在 desired 中的路径：远端仍存在时记为 delete，conflict 判断同上。
+  - desired 与远端 sha 相同、但 managed 中没有记录（或记录不同）的路径放入 `adopt`。
   - **禁用的同步项不删除远端文件**（roots 不包含它们）。
+  - **读不到来源时不删除**：Host 的 settings.json / auth.json 无法解析时，`settings.json`+`external` / `auth.json` 列入 protectedRoots，其下不产生 delete；Host agent 目录不存在时，所有 roots 都受保护，计划为空并给出警告。只有文件确实不存在（目录存在）才视为删除。
 - **执行**：
   - 把待写文件复制或硬链接到 `cache/tmp/sync-<id>/`，生成的内容直接写入，用 npm `tar` 包 `tar.c({gzip:true,cwd,portable:true})` 打包；
   - 上传到 `R/state/incoming/<id>.tar.gz`，调用 `sync.apply`，然后写入 SyncRecord；
@@ -337,7 +350,8 @@ logs/pi-web.log
 - **自动同步**：
   - 用 chokidar 监听 Host agentDir（忽略 sessions、日志、trust.json）、启用 agentsSkills 时的 `~/.agents/skills`，以及外部路径；设置 `ignoreInitial`，awaitWriteFinish 为 500ms。
   - 变化后防抖 2s，对 `auto && 已连接` 的服务器执行 run("auto")。
-  - 离线服务器记为 pendingSync，下次 `onAgentConnected` 时以 "connect" 触发补同步。
+  - 离线服务器记为 pendingSync，下次 `onAgentConnected` 时以 "connect" 触发补同步：auto 服务器做完整同步；手动同步的服务器只补 pendingItems（例如失败的 OAuth 推送只补 auth），不做未经确认的完整同步。
+  - 非手动触发（oauth、auto、connect、deploy）的同步失败（异常或部分文件失败）时，把失败的同步项记入 pendingItems；服务器仍在线时按 30s 起、翻倍、最长 10 分钟的退避重试，成功后清除。这样 OAuth 推送失败后不必等到重连，access token 也不会在服务器上过期。
 - **status**：
   - 每台服务器每个同步项的状态，由最近一次计划（preview 或 run 后缓存）得出：disabled、synced、pending（有条目）、conflict（有冲突条目）、unknown（从未计算）。
   - Host 文件变化后，在后台为已连接的服务器重新计算计划，随后 emit `status`。
@@ -346,7 +360,7 @@ logs/pi-web.log
 ### 3.7 OAuthKeeper
 - 使用 `ModelRuntime.create({ authPath: <hostAgentDir>/auth.json, modelsPath: <hostAgentDir>/models.json, refreshOnCreate: false })`，即 HostPi.modelRuntime()。
 - 每 60s 读取 Host auth.json。对每个 `type:"oauth"` 的条目，当 `expires - now < 20min` 时，调用 `runtime.getAuth(provider, { minOAuthValidityMs: 20*60_000 })` 触发 pi 自身的刷新，结果会在文件锁下写回 Host 的 auth.json。
-- Host auth.json 发生变化时（无论刷新来自本服务还是 Host 上的 pi），执行 `syncer.pushAuth()`，并记录各服务器的推送结果。
+- Host auth.json 发生变化时（无论刷新来自本服务还是 Host 上的 pi），执行 `syncer.pushAuth()`，并记录各服务器的推送结果。auth.json 无法解析（例如手写时多了逗号、或读到写了一半的文件）或 Host agent 目录不存在时不推送，也不更新已见的哈希，等文件恢复有效后再推送。推送失败的重试由 Syncer 的失败重试负责。
 - pi-ai 的刷新请求用的是全局 `fetch`，而 pi 只在自己的 CLI 入口里安装代理 dispatcher。因此 `cli.ts` 启动时用 `installHostHttpDispatcher`（`src/core/http.ts`）安装全局 undici dispatcher：优先 settings.upstreamProxy（运行时修改即生效），否则 HTTP(S)_PROXY，两种情况都遵循 NO_PROXY。BundleCache 的下载复用同一种 dispatcher。
 - settings.hostAgentDir 修改后，Syncer 和 OAuthKeeper 通过 `rewatch()` 改为监视新目录（Syncer 把新目录的全部内容视为已变化）。
 - status 返回每个 OAuth provider 的 expiresAt、lastRefreshAt、refreshAt（= expiresAt − 20min）和 pushed。
@@ -357,6 +371,7 @@ logs/pi-web.log
   - 监听 `conv.event`：更新 lastSeq，发布 `conv:<id>`；
   - 监听 `conv.info`：更新映射，发布 `convs`，并通过 updateStatus 更新 conversationsRunning/Waiting；
   - 调用 `conv.list`：对已知会话执行 `conv.replay(lastSeq)` 补发事件；`complete=false` 时发布一条合成的 `pi_web_session_changed`。
+  - 写入 ConvInfo（conv.list、conv.info 事件、snapshot、open 的结果）时，同一进程（pid 与 startedAt 相同）的 lastSeq 比已存的小则忽略：在 replay 往返期间到达的较新 conv.info 不会被较旧的 conv.list 覆盖。
   - workspaceId 用 cwd 与该服务器各 workspace.path 匹配，匹配不到为 null。
 - `open`：
   - 未连接时先 connect；
@@ -372,10 +387,14 @@ logs/pi-web.log
 - 安全：
   - Host 头只接受 `127.0.0.1`、`localhost`、`[::1]` 和 settings.listenHost（防 DNS rebinding）；
   - 非 GET 请求必须带 Origin 头，且 Origin 必须与 Host 一致（开发模式额外放行 Vite 端口）；
+  - 带有不必要转义（`%61` 之类的字母/数字/`-._~`）的路径一律 400；
+  - 每个响应带 Content-Security-Policy（图片只允许同源与 data:/blob:）；
   - 开启 accessToken 时：
-    - 启动时打印 `http://host:port/?token=…`；
-    - 访问 `/?token=` 时设置 HttpOnly、SameSite=Strict 的 cookie `pi_web_token`；
-    - `/api` 和 `/ws` 必须带 cookie 或 `Authorization: Bearer`。
+    - 启动时打印 `http://host:port/?token=…`，前端读取后存入本源（含端口）的 localStorage 并从地址栏移除；
+    - 不使用 cookie（cookie 不按端口隔离，会发给同一主机的其他端口）；旧版本的 `pi_web_token` cookie 收到即清除；
+    - 鉴权按路由匹配结果决定（默认拒绝）：只有 `/api/meta`、`/api/auth/login`、SPA 静态文件和 404 处理公开；
+    - REST 带 `Authorization: Bearer`；WebSocket 握手在 `Sec-WebSocket-Protocol` 中带 `pi-web, pi-web.token.<token>`（服务端只回 `pi-web`）；
+    - 浏览器直接下载（`<a href>`）先 `POST /auth/ticket` 换一次性票据（60s，绑定路径），以 `?ticket=` 访问。
 - `/ws`：
   - 连接后先发 hello；
   - 按客户端的 subscribe/unsubscribe 维护订阅，publish 只发给订阅者；
@@ -437,7 +456,8 @@ logs/pi-web.log
   - 输入框：
     - `/` 补全来自 get_commands，过滤掉 `pi-web-` 开头的命令；
     - `!cmd` 发送 RPC bash，`!!cmd` 带 excludeFromContext；
-    - 支持图片粘贴和拖拽（base64）；
+    - 支持图片粘贴和拖拽（base64 发送；缩略图用 object URL）；
+    - 草稿（文本和图片）按 (工作区, 会话) 保存在内存中（文本另存 sessionStorage），切换标签页或会话后恢复；`?prefill=` 插入到光标处而不是替换草稿；
     - 运行中 Enter 为 steer，Alt+Enter 为 follow_up；
     - Esc 先 clear_queue，把返回的文本放回输入框，再 abort；
     - 显示队列。
@@ -447,8 +467,15 @@ logs/pi-web.log
     - 操作：树视图、Fork（get_fork_messages + fork）、Clone、压缩（可附带指令）、导出 HTML、重命名、自动压缩和自动重试开关；
     - configStale 时显示“配置已更新”卡片，提供“重新加载”（companion reload）。
   - 扩展 UI：
-    - pending 对话框以模态呈现，有 timeout 时显示倒计时；
+    - pending 对话框以模态呈现，有 timeout 时显示倒计时：截止时间从 pi 发出请求时算起（实时事件到达时记录；快照带 agent 计算的 `uiRemainingMs`），到 0 后禁用回答按钮；
+    - confirm 默认聚焦“拒绝”，对话框出现后 400ms 内的确认操作被忽略（防止原本给输入框的 Enter 误点“允许”）；
+    - 回答请求失败时把对话框放回并重新同步（pi 仍在等待）；
     - notify 显示为 toast；
+  - 流式渲染：message_update / tool_execution_update 立即应用到状态，但每帧最多通知一次；正在生成的回复的 Markdown 最多每 120ms 重新解析；write/edit 参数生成期间只显示纯文本尾部，参数完整后才高亮和计算 diff；大参数的部分 JSON 在增长超过 1/16 后才重新解析；
+  - 只读 ↔ 实时切换时保留消息：进程退出后在会话文件加载完成前显示最后的实时状态，恢复会话时在快照到达前显示会话文件内容；
+  - Fork/Clone 后视图跟随新会话；用户经由侧栏或后退回到原会话时换一个新的视图（不再被固定在已切到新会话的进程上）；
+  - 未读与通知：不在查看的对话运行结束或开始等待对话框时，侧栏显示“未读”；获准后（首次发送消息时请求权限）在标签页隐藏或在看别的对话时发浏览器通知；
+  - Markdown：外部图片不自动加载，显示为链接；```mermaid 代码块在消息完成后用打包的 mermaid（按需加载，securityLevel strict）渲染为图表，可切换源码；
     - statuses 和 widgets 显示在输入框上方；
     - set_editor_text 时填充输入框。
   - 会话树模态：
@@ -478,7 +505,9 @@ GET    /meta                                   → MetaResponse
 GET    /settings                               → HostSettings
 PUT    /settings            UpdateSettingsRequest → HostSettings
 GET    /ssh-config                             → { hosts: SshConfigHost[] }
-POST   /auth/login          { token }          → { ok: true }   (设置 cookie)
+POST   /auth/login          { token }          → { ok: true }   (只校验；前端自行保存令牌)
+POST   /auth/ticket         { path }           → { ticket, expiresAt }   (一次性下载票据)
+POST   /auth/rotate                            → { token }   (更换令牌)
 
 GET    /servers                                → { servers: ServerView[] }
 POST   /servers             CreateServerRequest → ServerView

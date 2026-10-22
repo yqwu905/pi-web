@@ -68,6 +68,10 @@ describe("server CRUD", () => {
 			[{ name: "n", host: "h", username: "u", port: 70000, auth: { method: "agent" } }, "字段 port 必须是 1 到 65535 之间的整数"],
 			[{ name: "n", host: "h", username: "u", auth: { method: "agent" }, jumpServerIds: ["nope"] }, "跳板机不存在：nope"],
 			[{ name: "n", host: "h", username: "u", auth: { method: "agent" }, remoteRoot: "rel/path" }, "远端安装目录必须是绝对路径或以 ~/ 开头"],
+			// Normalized before validation: "~/" is the home directory itself.
+			[{ name: "n", host: "h", username: "u", auth: { method: "agent" }, remoteRoot: "~/" }, "远端安装目录不能是家目录本身"],
+			[{ name: "n", host: "h", username: "u", auth: { method: "agent" }, remoteRoot: "//" }, "远端安装目录不能是 /"],
+			[{ name: "n", host: "h", username: "u", auth: { method: "agent" }, remoteRoot: "~/x/../.." }, "远端安装目录不能包含 .."],
 			[{ name: "n", host: "h", username: "u", auth: { method: "agent" }, proxy: { extraDomains: ["bad domain"] } }, "域名格式无效：bad domain"],
 			[{ name: "n", host: "h", username: "u", auth: { method: "agent" }, sync: { items: { bogus: true } } }, "未知的同步项：bogus"],
 			[[1, 2], "请求体必须是 JSON 对象"],
@@ -112,9 +116,15 @@ describe("server CRUD", () => {
 		agent.handle("agent.configure", () => ({ ok: true }));
 		await t.request("PUT", "/api/servers/srv1", { idleTimeoutMin: 5 });
 		expect(t.deployer.calls.map((c) => c.method)).toContain("buildAgentConfig");
-		expect(agent.callsOf("agent.configure")).toHaveLength(1);
+		expect(t.deployer.calls.map((c) => c.method)).not.toContain("syncAgentDir");
+		// The agent dir is baked into R/bin/pi as well.
+		await t.request("PUT", "/api/servers/srv1", { agentDirMode: "shared" });
+		expect(t.deployer.calls.filter((c) => c.method === "syncAgentDir")).toHaveLength(1);
+		expect(agent.callsOf("agent.configure")).toHaveLength(2);
+		await t.request("PUT", "/api/servers/srv1", { remoteRoot: "~/.pi-web-2/" });
+		expect(t.store.getServer("srv1")!.remoteRoot).toBe("~/.pi-web-2");
 		await t.request("PUT", "/api/servers/srv1", { name: "just a rename" });
-		expect(agent.callsOf("agent.configure")).toHaveLength(1);
+		expect(agent.callsOf("agent.configure")).toHaveLength(3);
 	});
 
 	it("deletes a server with its workspaces and secrets, unless it is used as a jump host", async () => {

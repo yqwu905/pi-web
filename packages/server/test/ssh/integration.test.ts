@@ -107,6 +107,29 @@ describe.skipIf(!!skipReason)("ssh integration (local sshd)", () => {
 		await manager.remove("pw");
 	}, 60_000);
 
+	it("does not come back after disconnect() or remove() overtook a connect in flight", async () => {
+		const trusted = store.getServer("local")!.hostKey!;
+		const race = createServerConfig({ name: "race", ...base(), auth: { method: "key", keyPath: fx.keyPath } }, { id: "race" });
+		race.hostKey = trusted;
+		await store.saveServer(race);
+		const connecting = manager.connect("race");
+		const conn = manager.get("race");
+		expect(conn.state).toBe("connecting");
+		await manager.disconnect("race");
+		await expect(connecting).rejects.toMatchObject({ code: "CANCELLED" });
+		await new Promise((r) => setTimeout(r, 300));
+		expect(conn.state).toBe("disconnected");
+		expect(conn.sshConnected).toBe(false);
+
+		// remove(): the late SSH clients are ended, the orphaned connection refuses further use.
+		const again = manager.connect("race");
+		await manager.remove("race");
+		await expect(again).rejects.toMatchObject({ code: "CANCELLED" });
+		expect(conn.sshConnected).toBe(false);
+		await expect(conn.ensureSsh()).rejects.toMatchObject({ code: "SERVER_NOT_FOUND" });
+		await store.deleteServer("race");
+	}, 60_000);
+
 	it("re-opens the session once when the saved settings or the stored secret change", async () => {
 		const until = async (cond: () => boolean, timeoutMs = 15_000) => {
 			const start = Date.now();

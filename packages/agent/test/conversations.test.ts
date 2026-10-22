@@ -35,6 +35,7 @@ async function setup(options: Partial<ConversationManagerOptions> & { config?: P
 		reapIntervalMs: 0,
 		stopGraceMs: 300,
 		killGraceMs: 300,
+		forceKillGraceMs: 100,
 		...options,
 	});
 	managers.push(manager);
@@ -203,6 +204,32 @@ describe("ConversationManager with fake pi", () => {
 		expect(h.manager.get("u")?.pendingUi).toEqual([]);
 	});
 
+	it("drops dialogs pi resolved silently through their AbortSignal", async () => {
+		const h = await setup({ config: { idleTimeoutMin: 1 } });
+		await h.manager.start({ convId: "ab", cwd: h.cwd, trust: "no-approve" });
+		await h.manager.send({ convId: "ab", command: { type: "prompt", message: "ask-abortable" } });
+		const request = await waitFor(() => h.events.find((e) => e.record.type === "extension_ui_request"));
+		const uiId = (request.record as { id: string }).id;
+		expect(h.manager.get("ab")?.status).toBe("waiting_ui");
+		// The user aborts the run while the confirm is shown: pi writes nothing for the dialog.
+		await h.manager.send({ convId: "ab", command: { type: "abort" } });
+		await waitFor(() => h.events.find((e) => e.record.type === "pi_web_ui_resolved" && (e.record as { id: string }).id === uiId));
+		expect(h.manager.get("ab")?.pendingUi).toEqual([]);
+		await waitFor(() => h.manager.get("ab")?.status === "idle");
+		// ...so the idle reaper can stop it again.
+		h.manager.reapIdle(Date.now() + 2 * 60_000);
+		await waitFor(() => h.manager.get("ab")?.status === "exited", 3000);
+
+		// A slash command's signal-bound dialog: stale once pi answered the command.
+		const s = await setup();
+		await s.manager.start({ convId: "sl", cwd: s.cwd, trust: "no-approve" });
+		const sent = s.manager.send({ convId: "sl", command: { type: "prompt", message: "/signal-dialog" } });
+		await waitFor(() => s.manager.get("sl")?.status === "waiting_ui");
+		await sent;
+		await waitFor(() => s.manager.get("sl")?.status === "idle");
+		expect(s.manager.get("sl")?.pendingUi).toEqual([]);
+	});
+
 	it("forwards statuses and widgets but swallows companion results", async () => {
 		const h = await setup();
 		await h.manager.start({ convId: "c", cwd: h.cwd, trust: "no-approve" });
@@ -267,7 +294,7 @@ describe("ConversationManager with fake pi", () => {
 	});
 
 	it("bounds attaching to a process that is still starting", async () => {
-		const h = await setup({ startTimeoutMs: 1500, attachTimeoutMs: 200, baseEnv: { ...process.env, FAKE_PI_HANG: "get_state" } });
+		const h = await setup({ startTimeoutMs: 4000, attachTimeoutMs: 200, baseEnv: { ...process.env, FAKE_PI_HANG: "get_state" } });
 		const first = h.manager.start({ convId: "a", cwd: h.cwd, trust: "no-approve" });
 		first.catch(() => {});
 		const started = Date.now();
@@ -349,6 +376,13 @@ describe("ConversationManager with fake pi", () => {
 		expect(Date.now() - t0).toBeGreaterThanOrEqual(550);
 		expect(stubborn.manager.get("k")?.exitSignal).toBe("SIGKILL");
 
+		// Force stop of a process that ignores SIGTERM escalates to SIGKILL after a short grace.
+		await stubborn.manager.start({ convId: "f", cwd: stubborn.cwd, trust: "no-approve" });
+		const t1 = Date.now();
+		await stubborn.manager.stop({ convId: "f", force: true });
+		expect(Date.now() - t1).toBeGreaterThanOrEqual(90);
+		expect(stubborn.manager.get("f")?.exitSignal).toBe("SIGKILL");
+
 		const idle = await setup({ config: { idleTimeoutMin: 1 } });
 		await idle.manager.start({ convId: "i", cwd: idle.cwd, trust: "no-approve" });
 		idle.manager.reapIdle(Date.now());
@@ -360,8 +394,9 @@ describe("ConversationManager with fake pi", () => {
 	it("restarts a conversation id whose process exited", async () => {
 		const h = await setup({ retentionMs: 60_000 });
 		const first = await h.manager.start({ convId: "re", cwd: h.cwd, trust: "no-approve" });
+		// Force stop sends SIGTERM first (pi kills its bash tool's process groups in that handler).
 		await h.manager.stop({ convId: "re", force: true });
-		expect(h.manager.get("re")?.exitSignal).toBe("SIGKILL");
+		expect(h.manager.get("re")?.exitCode).toBe(143);
 		const second = await h.manager.start({ convId: "re", cwd: h.cwd, trust: "no-approve" });
 		expect(second.attached).toBe(false);
 		expect(second.conv.pid).not.toBe(first.conv.pid);

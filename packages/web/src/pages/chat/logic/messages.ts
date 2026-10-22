@@ -73,15 +73,42 @@ function resultPayload(result: ToolResultMessage): ToolResultPayload {
 	return payload;
 }
 
+const streamedArgsCache = new Map<string, { input: string; parsed: Record<string, unknown> | undefined }>();
+/** Below this size the partial arguments are re-parsed on every delta. */
+const ALWAYS_PARSE_BELOW = 4096;
+
+/**
+ * Partial tool-call arguments while they stream. Re-parsing the whole accumulated JSON on every
+ * delta is quadratic for large write/edit calls, so a large input is parsed again only after it
+ * grew by a sixteenth (the previous result, with a stable identity, is reused in between).
+ * The final arguments arrive with toolcall_end and replace this view.
+ */
+export function parseStreamedArgs(key: string, input: string): Record<string, unknown> | undefined {
+	const cached = streamedArgsCache.get(key);
+	if (cached) {
+		if (cached.input === input) return cached.parsed;
+		const grown = input.length - cached.input.length;
+		if (input.length > ALWAYS_PARSE_BELOW && grown > 0 && grown < Math.max(1024, cached.input.length / 16) && input.startsWith(cached.input.slice(0, 256))) {
+			return cached.parsed;
+		}
+	}
+	const parsed = parsePartialJson(input);
+	streamedArgsCache.delete(key);
+	streamedArgsCache.set(key, { input, parsed });
+	if (streamedArgsCache.size > 64) streamedArgsCache.delete(streamedArgsCache.keys().next().value as string);
+	return parsed;
+}
+
 /** Resolves the display state of one tool call. */
 export function resolveTool(
 	call: ToolCall,
 	result: ToolResultMessage | undefined,
 	live: ToolExecutionState | undefined,
-	context: { messageStreaming: boolean; isRunning: boolean; partialArgs?: string },
+	context: { messageStreaming: boolean; isRunning: boolean; partialArgs?: string; partKey?: string },
 ): ToolView {
 	const hasArgs = call.arguments && Object.keys(call.arguments).length > 0;
-	const streamedArgs = context.partialArgs !== undefined ? parsePartialJson(context.partialArgs) : undefined;
+	const streamedArgs =
+		context.partialArgs !== undefined && !hasArgs ? parseStreamedArgs(call.id || context.partKey || "", context.partialArgs) : undefined;
 	const args = (hasArgs ? call.arguments : (streamedArgs ?? live?.args ?? call.arguments)) ?? {};
 	const base = { id: call.id, name: call.name || live?.toolName || "tool", args, argsStreaming: context.partialArgs !== undefined };
 	if (result) {
@@ -132,6 +159,7 @@ function assistantParts(
 				messageStreaming: streaming,
 				isRunning: state.isRunning,
 				partialArgs: streaming ? state.streamingToolArgs[index] : undefined,
+				partKey,
 			});
 			parts.push({ kind: "tool", key: block.id ? `tool:${block.id}` : partKey, tool });
 		}

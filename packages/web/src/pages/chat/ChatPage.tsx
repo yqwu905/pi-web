@@ -8,6 +8,7 @@ import { ButtonLink, Callout, EmptyState, IconButton, LoadingBlock, toast } from
 import { paths } from "../../lib/routes";
 import { sessionTitle } from "../../lib/sessions";
 import { useConversation } from "../../stores/conversation";
+import { setViewing } from "../../stores/attention";
 import { useConversationView } from "../../stores/convs";
 import { useServer } from "../../stores/servers";
 import { ConnectButton } from "../workspace/WorkspaceGate";
@@ -35,13 +36,24 @@ const shownNotifications = new Map<string, Set<string>>();
 export default function ChatPage() {
 	const { workspaceId = "", sessionId } = useParams();
 	const [newCount, setNewCount] = useState(0);
+	/** Bumped when the user navigates a view away from the session it follows: forces a fresh view. */
+	const [epoch, setEpoch] = useState(0);
 	const [prevSessionId, setPrevSessionId] = useState(sessionId);
 	if (prevSessionId !== sessionId) {
 		setPrevSessionId(sessionId);
 		if (sessionId === undefined) setNewCount((n) => n + 1);
 	}
 	const viewKey = sessionId === undefined ? `new-${newCount}` : (sessionAliases.get(sessionId) ?? sessionId);
-	return <ChatView key={`${workspaceId}:${viewKey}`} workspaceId={workspaceId} routeSessionId={sessionId} viewKey={viewKey} />;
+	const detach = useCallback(() => setEpoch((n) => n + 1), []);
+	return (
+		<ChatView
+			key={`${workspaceId}:${viewKey}:${epoch}`}
+			workspaceId={workspaceId}
+			routeSessionId={sessionId}
+			viewKey={viewKey}
+			onDetach={detach}
+		/>
+	);
 }
 
 interface LocalBashRun {
@@ -58,10 +70,29 @@ interface LocalBashRun {
 	syncing?: boolean;
 }
 
-function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: string; routeSessionId?: string; viewKey: string }) {
+function ChatView({
+	workspaceId,
+	routeSessionId,
+	viewKey,
+	onDetach,
+}: {
+	workspaceId: string;
+	routeSessionId?: string;
+	viewKey: string;
+	/** The route moved to a session this view did not follow to (sidebar link, browser Back). */
+	onDetach: () => void;
+}) {
 	const navigate = useNavigate();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [pin, setPin] = useState<string | null>(null);
+	// The session id this view itself navigated to (a new conversation got its id, fork, clone).
+	const followed = useRef(routeSessionId);
+	useEffect(() => {
+		// Any other route change (e.g. Back to the session that was forked) must not reuse this
+		// view: it is pinned to the conversation that now serves the other session and would
+		// bounce straight back to it.
+		if (routeSessionId !== followed.current) onDetach();
+	}, [routeSessionId, onDetach]);
 	const pinView = useConversationView(pin);
 	const pinnedConvId = pin && pinView && pinView.info.status !== "exited" ? pin : null;
 	const conv = useConversation({ workspaceId, sessionId: routeSessionId, convId: pinnedConvId });
@@ -83,22 +114,31 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 
 	const composerRef = useRef<ComposerHandle>(null);
 	const pendingText = useRef<string | null>(null);
+	const pendingInsert = useRef<string | null>(null);
 	const fillComposer = useCallback((text: string) => {
 		if (composerRef.current) composerRef.current.setText(text);
 		else pendingText.current = text;
+	}, []);
+	const insertIntoComposer = useCallback((text: string) => {
+		if (composerRef.current) composerRef.current.insert(text);
+		else pendingInsert.current = text;
 	}, []);
 	useEffect(() => {
 		if (pendingText.current !== null && composerRef.current) {
 			composerRef.current.setText(pendingText.current);
 			pendingText.current = null;
 		}
+		if (pendingInsert.current !== null && composerRef.current) {
+			composerRef.current.insert(pendingInsert.current);
+			pendingInsert.current = null;
+		}
 	});
 
-	// ?prefill= (Files "在对话中引用", Git "发给 pi 审阅") fills the composer once.
+	// ?prefill= (Files "在对话中引用", Git "发给 pi 审阅") adds to the composer's draft once.
 	const prefill = searchParams.get("prefill");
 	useEffect(() => {
 		if (prefill === null) return;
-		fillComposer(prefill);
+		insertIntoComposer(prefill);
 		setSearchParams(
 			(prev) => {
 				const next = new URLSearchParams(prev);
@@ -107,7 +147,7 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 			},
 			{ replace: true },
 		);
-	}, [prefill, fillComposer, setSearchParams]);
+	}, [prefill, insertIntoComposer, setSearchParams]);
 
 	// Follow the live session: a new conversation gets its id, fork/clone switch the session.
 	useEffect(() => {
@@ -115,10 +155,18 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 		if (!conv.rpcState?.sessionId && !conv.info?.sessionId) return;
 		sessionAliases.set(conv.sessionId, viewKey);
 		if (conv.convId) setPin(conv.convId);
+		followed.current = conv.sessionId;
 		navigate(paths.chat(workspaceId, conv.sessionId), { replace: routeSessionId === undefined });
 	}, [conv.mode, conv.sessionId, conv.convId, conv.rpcState?.sessionId, conv.info?.sessionId, routeSessionId, viewKey, workspaceId, navigate]);
 
 	const ready = conv.mode === "live" && !conv.loading && conv.convId !== null;
+
+	// The open conversation is "read": no unread marker or notification for it.
+	const viewedKey = conv.sessionId ?? conv.convId;
+	useEffect(() => {
+		if (!conv.convId || !viewedKey) return;
+		return setViewing(conv.convId, viewedKey);
+	}, [conv.convId, viewedKey]);
 
 	// set_editor_text from extensions (ignore the value already present when the view loads).
 	const editorText = state.ui.editorText;
@@ -228,17 +276,23 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 	const items = useMemo(() => buildDisplayItems(state), [state.messages, state.streaming, state.streamingToolArgs, state.tools, state.isRunning]);
 	const waiting = conv.isLive && state.isRunning && !state.streaming && !state.isCompacting && !hasRunningTool(state);
 
-	const [dismissedError, setDismissedError] = useState<string | undefined>(undefined);
-	const syncError = !offline && conv.error && items.length > 0 && conv.error !== dismissedError ? conv.error : undefined;
+	// Each banner remembers its own dismissal (one shared slot brought the other back).
+	const [dismissedErrors, setDismissedErrors] = useState<ReadonlySet<string>>(() => new Set());
+	const dismissError = useCallback((message: string) => setDismissedErrors((prev) => new Set(prev).add(message)), []);
+	const syncError = !offline && conv.error && items.length > 0 && !dismissedErrors.has(`sync:${conv.error}`) ? conv.error : undefined;
 	const lastMessage = state.messages[state.messages.length - 1] as { role: string; errorMessage?: string } | undefined;
 	const lastError =
-		state.lastError && state.lastError !== dismissedError && !(lastMessage?.role === "assistant" && lastMessage.errorMessage === state.lastError) ? state.lastError : undefined;
+		state.lastError && !dismissedErrors.has(`turn:${state.lastError}`) && !(lastMessage?.role === "assistant" && lastMessage.errorMessage === state.lastError)
+			? state.lastError
+			: undefined;
 
-	const [exitInfo, setExitInfo] = useState<typeof state.exited>(undefined);
+	// The crash banner belongs to the process that crashed: a new process (sending resumes the session) hides it.
+	const [exitInfo, setExitInfo] = useState<{ convId: string | null; exited: NonNullable<typeof state.exited> } | undefined>(undefined);
 	useEffect(() => {
 		const exited = state.exited;
-		if (exited && (exited.signal || (exited.code !== null && exited.code !== 0))) setExitInfo(exited);
+		if (exited && (exited.signal || (exited.code !== null && exited.code !== 0))) setExitInfo({ convId: conv.convId, exited });
 	}, [state.exited]);
+	const showExit = exitInfo && !(conv.isLive && conv.convId !== exitInfo.convId) ? exitInfo.exited : undefined;
 
 	// ---------- side panel & dialogs ----------
 
@@ -270,7 +324,7 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 				actions={<ConnectButton serverId={server.config.id} />}
 			/>
 		);
-	else if (conv.loading) placeholder = <LoadingBlock text="正在加载会话…" />;
+	else if (conv.loading && items.length === 0) placeholder = <LoadingBlock text="正在加载会话…" />;
 	else if (conv.mode === "new" && routeSessionId && conv.error)
 		placeholder = (
 			<EmptyState
@@ -342,12 +396,19 @@ function ChatView({ workspaceId, routeSessionId, viewKey }: { workspaceId: strin
 								重新连接后才能发送消息。
 							</Callout>
 						)}
-						{lastError && <ErrorBanner message={lastError} onDismiss={() => setDismissedError(lastError)} />}
-						{syncError && <ErrorBanner message={`同步会话失败：${syncError}`} onDismiss={() => setDismissedError(syncError)} />}
-						{exitInfo && <ExitedBanner exited={exitInfo} onDismiss={() => setExitInfo(undefined)} />}
+						{lastError && <ErrorBanner message={lastError} onDismiss={() => dismissError(`turn:${lastError}`)} />}
+						{syncError && <ErrorBanner message={`同步会话失败：${syncError}`} onDismiss={() => dismissError(`sync:${syncError}`)} />}
+						{showExit && <ExitedBanner exited={showExit} onDismiss={() => setExitInfo(undefined)} />}
 						{conv.isLive && <ExtensionStatuses statuses={state.ui.statuses} />}
 						{conv.isLive && <ExtensionWidgets widgets={state.ui.widgets} placement="aboveEditor" />}
-						<Composer ref={composerRef} conv={conv} onBash={runBash} bashRunning={bashRunning} onAbortBash={abortBash} />
+						<Composer
+							ref={composerRef}
+							conv={conv}
+							draftKey={`${workspaceId}:${routeSessionId ?? "new"}`}
+							onBash={runBash}
+							bashRunning={bashRunning}
+							onAbortBash={abortBash}
+						/>
 						{conv.isLive && <ExtensionWidgets widgets={state.ui.widgets} placement="belowEditor" />}
 					</div>
 				</div>

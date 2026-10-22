@@ -197,9 +197,18 @@ class ConversationRegistry implements ConversationService {
 		if (seq > (this.seqs.get(convId) ?? 0)) this.seqs.set(convId, seq);
 	}
 
+	/**
+	 * True when `info` is older than what the entry already holds for the same process: a
+	 * conv.list or command response computed before a conv.info that arrived meanwhile.
+	 */
+	private isOutdated(entry: ConvEntry, info: ConvInfo): boolean {
+		return entry.info.startedAt === info.startedAt && entry.info.pid === info.pid && info.lastSeq < entry.info.lastSeq;
+	}
+
 	private upsertInfo(serverId: string, info: ConvInfo, clockOffsetMs: number, workspaceHint?: string): ConvEntry {
 		const workspaceId = this.matchWorkspace(serverId, info.cwd) ?? workspaceHint ?? null;
 		let entry = this.convs.get(info.convId);
+		if (entry && this.isOutdated(entry, info)) return entry;
 		if (!entry) {
 			entry = { convId: info.convId, serverId, workspaceId, info, startedAtHost: info.startedAt - clockOffsetMs };
 			this.convs.set(info.convId, entry);
@@ -319,8 +328,10 @@ class ConversationRegistry implements ConversationService {
 		const client = this.requireClient(entry.serverId);
 		const snapshot = await client.call("conv.snapshot", { convId }, { timeoutMs: CONV_SNAPSHOT_TIMEOUT_MS + LINK_MARGIN_MS });
 		const offset = this.attachments.get(entry.serverId)?.clockOffsetMs ?? 0;
-		entry.info = snapshot.info;
-		entry.startedAtHost = snapshot.info.startedAt - offset;
+		if (!this.isOutdated(entry, snapshot.info)) {
+			entry.info = snapshot.info;
+			entry.startedAtHost = snapshot.info.startedAt - offset;
+		}
 		return {
 			convId,
 			serverId: entry.serverId,

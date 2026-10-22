@@ -17,6 +17,7 @@ import {
 	terminalTheme,
 	termSocketUrl,
 } from "./lib/terminal";
+import { wsProtocols } from "../../api/auth-token";
 import { patchTab, type TerminalTab, terminalSessions, useTerminalStore } from "./terminal-store";
 
 function cssVar(name: string): string {
@@ -143,7 +144,10 @@ class TerminalSession {
 		this.setStatus("connecting", { error: undefined, exitCode: undefined });
 		let ws: WebSocket;
 		try {
-			ws = new WebSocket(termSocketUrl(window.location, { serverId: this.serverId, cwd: this.cwd, cols: this.term.cols, rows: this.term.rows }));
+			ws = new WebSocket(
+				termSocketUrl(window.location, { serverId: this.serverId, cwd: this.cwd, cols: this.term.cols, rows: this.term.rows }),
+				wsProtocols(),
+			);
 		} catch (e) {
 			this.setStatus("error", { error: e instanceof Error ? e.message : String(e) });
 			return;

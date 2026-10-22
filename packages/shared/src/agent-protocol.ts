@@ -167,6 +167,11 @@ export interface ConvSnapshot {
 	isCompacting: boolean;
 	stats?: SessionStats;
 	seq: number;
+	/**
+	 * Time left (ms, measured on the agent when the snapshot was taken) of each pending dialog
+	 * that has a timeout: pi's own timer started when it asked, not when a viewer opened it.
+	 */
+	uiRemainingMs?: Record<string, number>;
 }
 
 export interface ConvUiResponseParams {
@@ -413,7 +418,12 @@ export interface SyncApplyParams {
 	/** Files contained in the archive with their expected sha256 (verified after extraction). */
 	writes: Array<{ path: string; sha256: string; mode?: number; link?: string }>;
 	deletes: string[];
-	/** Label for the backup folder: state/backup/<backupLabel>/ */
+	/**
+	 * Files already identical to the host: recorded as managed (when their current sha256 still
+	 * matches) without being written, so later host deletions reach them.
+	 */
+	adopt?: Array<{ path: string; sha256: string }>;
+	/** Label for the backup folder: state/backup/<backupLabel>/ (shared agent dir: <agentDir>/.pi-web-backup/<backupLabel>/). */
 	backupLabel: string;
 }
 export interface SyncApplyResult {

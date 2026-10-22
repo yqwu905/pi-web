@@ -13,6 +13,7 @@ import { liveConversationForSession, matchesSessionQuery, sessionRouteId, sessio
 import { NewWorkspaceDialog } from "../pages/workspace/NewWorkspaceDialog";
 import { WorkspaceSettingsDialog } from "../pages/workspace/WorkspaceSettingsDialog";
 import { convStatusDisplay, serverStatusDisplay } from "../lib/status";
+import { useAttentionStore } from "../stores/attention";
 import { useLiveConversations } from "../stores/convs";
 import { useServers, useServersStore } from "../stores/servers";
 import { useUiStore } from "../stores/ui";
@@ -43,6 +44,10 @@ function SessionRow({
 	const running = conv?.info.status === "running" || conv?.info.status === "starting";
 	const waiting = conv?.info.status === "waiting_ui";
 	const routeId = session ? sessionRouteId(session) : conv?.info.sessionId;
+	const unread = useAttentionStore((s) => {
+		const key = conv?.info.sessionId ?? session?.id ?? routeId;
+		return key ? s.unread[key] : undefined;
+	});
 	const title = session ? sessionTitle(session) : conv?.info.sessionName || "新对话";
 	const subtitle =
 		running || waiting
@@ -68,6 +73,14 @@ function SessionRow({
 					srLabel={live?.text}
 				/>
 				<span className="min-w-0 flex-1 truncate">{title}</span>
+				{unread && !active && (
+					<span
+						className="shrink-0 rounded-sm bg-selected px-1 text-2xs leading-4 text-accent"
+						title={unread === "waiting" ? "等待你的确认" : "有新的回复"}
+					>
+						未读
+					</span>
+				)}
 			</span>
 			{subtitle && (
 				<span className={cn("truncate pl-3.5 text-2xs", running ? "text-link" : waiting ? "text-warning" : "text-fg-3")}>{subtitle}</span>

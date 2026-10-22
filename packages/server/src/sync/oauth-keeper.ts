@@ -4,7 +4,7 @@
  * it changes, so servers only ever hold short-lived access tokens.
  */
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { type FSWatcher, watch } from "chokidar";
 import { isPlainObject, type OAuthProviderStatus, type OAuthStatusResponse } from "@pi-web/shared";
@@ -242,8 +242,14 @@ class OAuthKeeperImpl implements OAuthKeeper {
 	/** Pushes auth.json to the servers when its content differs from the last seen version. */
 	private checkChanged(): Promise<void> {
 		const next = this.checkChain.then(async () => {
-			const { hash, entries } = await this.readAuthFile();
+			const { hash, entries, usable } = await this.readAuthFile();
 			if (hash === this.lastHash) return;
+			if (!usable) {
+				// Half-written save, typo, or the host agent dir is gone (mistyped hostAgentDir): pushing
+				// would delete auth.json on every server. Keep lastHash so the push happens once it is valid.
+				this.ctx.log.warn("host auth.json is not readable as JSON (or its directory is missing); not pushing it");
+				return;
+			}
 			this.lastHash = hash;
 			let refreshed = false;
 			for (const entry of entries) {
@@ -301,18 +307,28 @@ class OAuthKeeperImpl implements OAuthKeeper {
 			.catch((err: unknown) => this.ctx.log.warn("failed to persist oauth state", { error: errorMessage(err) }));
 	}
 
-	/** Reads auth.json without resolving or exposing any secret. */
-	private async readAuthFile(): Promise<{ hash: string; entries: OAuthEntry[] }> {
+	/**
+	 * Reads auth.json without resolving or exposing any secret. `usable` is false when its content
+	 * must not be pushed: unparsable JSON, or a missing host agent dir (a missing file inside an
+	 * existing dir is a real deletion and is pushed).
+	 */
+	private async readAuthFile(): Promise<{ hash: string; entries: OAuthEntry[]; usable: boolean }> {
 		let text = "";
 		try {
 			text = await readFile(this.authPath, "utf8");
 		} catch {
-			return { hash: "", entries: [] };
+			const dirOk = await stat(this.ctx.paths.hostAgentDir).then(
+				(st) => st.isDirectory(),
+				() => false,
+			);
+			return { hash: "", entries: [], usable: dirOk };
 		}
 		const hash = createHash("sha256").update(text).digest("hex");
 		const entries: OAuthEntry[] = [];
+		let usable = false;
 		try {
 			const data = JSON.parse(text.replace(/^﻿/, "")) as unknown;
+			usable = isPlainObject(data);
 			if (isPlainObject(data)) {
 				for (const [provider, credential] of Object.entries(data)) {
 					if (!isPlainObject(credential) || credential.type !== "oauth" || typeof credential.expires !== "number") continue;
@@ -323,7 +339,7 @@ class OAuthKeeperImpl implements OAuthKeeper {
 			// invalid JSON: report no OAuth entries
 		}
 		entries.sort((a, b) => a.provider.localeCompare(b.provider));
-		return { hash, entries };
+		return { hash, entries, usable };
 	}
 }
 

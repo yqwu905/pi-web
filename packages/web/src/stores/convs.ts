@@ -10,6 +10,8 @@ import { create } from "zustand";
 import { errorMessage, listConversations } from "../api/client";
 import { queryClient, queryKeys } from "../api/queryClient";
 import { wsClient } from "../api/ws";
+import { paths } from "../lib/routes";
+import { noteConversationChange } from "./attention";
 
 interface ConvsState {
 	loaded: boolean;
@@ -100,6 +102,7 @@ export function useConvsLiveSync(): void {
 			if (!view || typeof view !== "object" || !view.convId) return;
 			const prev = useConvsStore.getState().byId[view.convId];
 			useConvsStore.getState().upsert(view);
+			noteConversationChange(prev, view, (v) => (v.workspaceId && v.info.sessionId ? paths.chat(v.workspaceId, v.info.sessionId) : null));
 			const changed =
 				!prev ||
 				prev.info.status !== view.info.status ||

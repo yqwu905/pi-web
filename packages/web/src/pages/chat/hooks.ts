@@ -7,6 +7,30 @@ export const firstSeen = new FirstSeen();
 /** Thinking block spans observed while streaming, keyed by `${messageTimestamp}:${contentIndex}`. */
 export const thinkingSpans = new Map<string, { start: number; end?: number }>();
 
+/**
+ * `value`, updated at most every `intervalMs` while `throttle` is on (always current otherwise).
+ * Used for the reply that is still streaming: parsing its Markdown on every token is costly.
+ */
+export function useThrottledValue<T>(value: T, intervalMs: number, throttle: boolean): T {
+	const [shown, setShown] = useState(value);
+	const lastAt = useRef(0);
+	useEffect(() => {
+		if (!throttle) return;
+		const wait = lastAt.current + intervalMs - Date.now();
+		if (wait <= 0) {
+			lastAt.current = Date.now();
+			setShown(value);
+			return;
+		}
+		const timer = setTimeout(() => {
+			lastAt.current = Date.now();
+			setShown(value);
+		}, wait);
+		return () => clearTimeout(timer);
+	}, [value, intervalMs, throttle]);
+	return throttle ? shown : value;
+}
+
 /** Current time, re-rendering every `intervalMs` while `enabled`. */
 export function useNow(intervalMs: number, enabled = true): number {
 	const [now, setNow] = useState(() => Date.now());

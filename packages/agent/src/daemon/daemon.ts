@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdir, statfs } from "node:fs/promises";
 import { homedir, loadavg } from "node:os";
 import {
@@ -54,6 +55,12 @@ export class Daemon {
 	readonly startedAt = Date.now();
 	private shuttingDown: Promise<void> | null = null;
 	private accepting = true;
+	/**
+	 * Proxy token handed to pi (process env, run/proxy.env): new for every daemon process, so a
+	 * token captured while the fixed proxy port was not ours stops working. The host's configured
+	 * token stays accepted for the deploy self-check but is never handed to processes.
+	 */
+	private readonly sessionProxyToken = randomBytes(24).toString("hex");
 
 	constructor(private readonly options: DaemonOptions) {
 		this.paths = remotePaths(options.root);
@@ -64,11 +71,11 @@ export class Daemon {
 		this.proxy = new ProxyListener({
 			getPeer: () => this.server.latestPeer(),
 			log: this.log,
-			extraTokens: () => this.conversations.liveProxyTokens(),
+			extraTokens: () => [...this.conversations.liveProxyTokens(), this.config.config?.proxy.token ?? ""],
 		});
 		this.conversations = new ConversationManager({
 			paths: this.paths,
-			getConfig: () => this.config.config,
+			getConfig: () => this.effectiveConfig(),
 			emit: (event, data) => this.emit(event, data),
 			log: this.log,
 			...options.conversation,
@@ -97,8 +104,20 @@ export class Daemon {
 		const outcome = await this.server.listen(this.paths.socket);
 		if (outcome === "already-running") return outcome;
 		this.log.info("pi-web-agent started", { version: AGENT_VERSION, pid: process.pid, root: this.paths.root });
-		if (config) await this.applyProxy(config).catch(() => {});
+		// A proxy.env left by an earlier daemon names a port that is not ours until we bind it.
+		await this.config.removeProxyEnv().catch(() => {});
+		if (config) {
+			// Already logged as an error by applyProxy; the host sees it in agent.status (not listening).
+			await this.applyProxy(config).catch(() => {});
+		}
 		return outcome;
+	}
+
+	/** The stored config with the proxy token pi processes use. */
+	private effectiveConfig(): AgentConfig | null {
+		const config = this.config.config;
+		if (!config?.proxy.enabled) return config;
+		return { ...config, proxy: { ...config.proxy, token: this.sessionProxyToken } };
 	}
 
 	emit<E extends keyof AgentEventMap>(event: E, data: AgentEventMap[E]): void {
@@ -115,6 +134,7 @@ export class Daemon {
 		this.server.stopListening();
 		this.options.onStopAccepting?.();
 		await this.proxy.stop().catch(() => {});
+		await this.config.removeProxyEnv().catch(() => {});
 	}
 
 	/** Graceful shutdown: stop accepting, stop conversations (stdin close → SIGTERM → SIGKILL), close peers. */
@@ -179,17 +199,26 @@ export class Daemon {
 		return { ok: true };
 	}
 
+	/**
+	 * Binds the proxy listener and only then publishes run/proxy.env (removed whenever the port is
+	 * not ours: disabled, bind failure, shutdown).
+	 */
 	private async applyProxy(config: AgentConfig): Promise<void> {
-		if (!config.proxy.enabled) {
+		if (!config.proxy.enabled || !this.accepting) {
 			await this.proxy.stop();
+			await this.config.removeProxyEnv();
 			return;
 		}
 		try {
-			await this.proxy.start(config.proxy.port, config.proxy.token);
+			await this.proxy.start(config.proxy.port, this.sessionProxyToken);
 		} catch (err) {
+			await this.config.removeProxyEnv().catch(() => {});
 			this.log.error("proxy listen failed", { port: config.proxy.port, error: errorMessage(err) });
 			throw new AgentError("PROXY_LISTEN_FAILED", `代理端口 ${config.proxy.port} 监听失败：${errorMessage(err)}`);
 		}
+		const effective = this.effectiveConfig();
+		if (!effective) return;
+		await this.config.writeProxyEnv(effective.proxy, { pid: process.pid, commandMatch: process.argv[1] });
 	}
 
 	private handlers(): Handlers {

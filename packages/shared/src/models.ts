@@ -93,6 +93,8 @@ export interface DeployedInfo {
 	home: string;
 	remoteRoot: string;
 	agentDir: string;
+	/** pi's CLI script relative to R/pi/current (bin.pi of the installed package); older installs: unset. */
+	piCli?: string;
 	at: number;
 }
 

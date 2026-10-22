@@ -20,6 +20,7 @@ import { secretKeys } from "../core/secrets.js";
 import { createServerConfig, mergeServerConfig, secretChange } from "../core/store.js";
 import { ApiError } from "../core/types.js";
 import type { AppContext } from "../core/types.js";
+import { normalizeRemoteRoot } from "../deploy/scripts.js";
 import { readSshConfig } from "../ssh/ssh-config.js";
 import {
 	badRequest,
@@ -139,10 +140,12 @@ export function parseServerRequest(body: Json, creating: boolean): UpdateServerR
 	if (jumps) request.jumpServerIds = jumps;
 	const remoteRoot = optString(body, "remoteRoot", { max: 1024 })?.trim();
 	if (remoteRoot !== undefined) {
-		if (!isRemoteAbsolute(remoteRoot) || remoteRoot === "/" || remoteRoot === "~") {
-			throw badRequest("远端安装目录必须是绝对路径或以 ~/ 开头");
+		// Normalize first ("~/" is the home directory itself, "/opt/./x/" is "/opt/x"), then validate.
+		try {
+			request.remoteRoot = normalizeRemoteRoot(remoteRoot);
+		} catch (err) {
+			throw badRequest(errorMessage(err));
 		}
-		request.remoteRoot = remoteRoot.replace(/\/+$/, "");
 	}
 	const agentDirMode = optEnum(body, "agentDirMode", ["isolated", "shared"] as const);
 	if (agentDirMode) request.agentDirMode = agentDirMode;
@@ -265,8 +268,14 @@ export function serverRoutes(app: FastifyInstance, ctx: AppContext, options: Ser
 			patch.idleTimeoutMin !== undefined ||
 			patch.agentDirMode !== undefined ||
 			patch.remoteRoot !== undefined;
+		if (patch.agentDirMode !== undefined && patch.agentDirMode !== current.agentDirMode) {
+			// R/bin/pi (web terminal, the user's shell) bakes in the agent dir.
+			await ctx.deployer.syncAgentDir(current.id).catch((err: unknown) =>
+				ctx.log.warn("failed to update bin/pi for the agent dir", { serverId: current.id, error: errorMessage(err) }),
+			);
+		}
 		if (agentRelevant) await reconfigureAgent(ctx, current.id);
-		return serverView(ctx, next);
+		return serverView(ctx, ctx.store.getServer(current.id) ?? next);
 	});
 
 	app.delete<IdParams>("/servers/:id", async (request) => {

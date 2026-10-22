@@ -236,6 +236,83 @@ describe("Syncer run", () => {
 	});
 });
 
+describe("Syncer safety", { timeout: 20_000 }, () => {
+	it("keeps the server's settings.json, externals and auth.json while the host copies do not parse", async () => {
+		const env = await setup();
+		await env.syncer.run("s1", "manual");
+		await writeFile(join(env.agentDir, "settings.json"), '{"theme":"dark",}');
+		await writeFile(join(env.agentDir, "auth.json"), '{"anthropic": {');
+		const plan = await env.syncer.preview("s1");
+		expect(plan.entries.filter((e) => e.action === "delete")).toEqual([]);
+		expect(plan.warnings.join("\n")).toContain("settings.json 无法解析");
+		const record = await env.syncer.run("s1", "manual");
+		expect(record.deleted).toBe(0);
+		expect(await env.remote.exists("settings.json")).toBe(true);
+		expect(await env.remote.exists("auth.json")).toBe(true);
+		// A real deletion still propagates once the file is gone (not just unreadable).
+		await unlink(join(env.agentDir, "auth.json"));
+		expect((await env.syncer.run("s1", "manual")).deleted).toBe(1);
+		expect(await env.remote.exists("auth.json")).toBe(false);
+	});
+
+	it("deletes nothing when the host agent dir is missing (e.g. a mistyped hostAgentDir)", async () => {
+		const env = await setup();
+		await env.syncer.run("s1", "manual");
+		env.paths.hostAgentDir = join(env.home, ".pi", "agnet");
+		const plan = await env.syncer.preview("s1");
+		expect(plan.entries).toEqual([]);
+		expect(plan.warnings.join("\n")).toContain("agent 目录不存在");
+		const record = await env.syncer.run("s1", "auto");
+		expect(record).toMatchObject({ status: "ok", deleted: 0, updated: 0 });
+		expect(await env.remote.exists("extensions/a.ts")).toBe(true);
+		expect(JSON.parse(await env.remote.read("settings.json")).defaultModel).toBe("m");
+	});
+
+	it("retries a failed OAuth push while the server stays connected", async () => {
+		const env = await setup({ retryBaseMs: 50 }, {});
+		env.store.getServer("s1")!.sync.auto = false;
+		await env.syncer.run("s1", "manual");
+		await writeFile(join(env.agentDir, "auth.json"), JSON.stringify({ anthropic: { type: "oauth", access: "acc-2", refresh: "r", expires: 2 } }));
+		await writeFile(join(env.agentDir, "prompts", "held-back.md"), "manual server: not synced");
+		env.remote.failApplies = 2;
+		expect(await env.syncer.pushAuth()).toEqual([{ serverId: "s1", ok: false, error: expect.stringContaining("ENOSPC") }]);
+		expect(env.store.getState<{ pendingItems: string[] }>("sync:s1")?.pendingItems).toEqual(["auth"]);
+		await waitFor(async () => JSON.parse(await env.remote.read("auth.json")).anthropic.access === "acc-2", 5000);
+		await waitFor(() => env.store.getState<{ pending: boolean }>("sync:s1")?.pending === false);
+		expect(await env.remote.exists("prompts/held-back.md")).toBe(false);
+		expect(env.events.some((e) => e.name === "auth-synced" && (e.data as { ok: boolean }).ok)).toBe(true);
+	});
+
+	it("reconnecting a manual-sync server retries only the pending items", async () => {
+		const env = await setup();
+		env.store.getServer("s1")!.sync.auto = false;
+		await env.syncer.run("s1", "manual");
+		await writeFile(join(env.agentDir, "auth.json"), JSON.stringify({ anthropic: { type: "oauth", access: "acc-3", refresh: "r", expires: 3 } }));
+		await unlink(join(env.agentDir, "prompts", "review.md")); // the user holds this deletion back
+		env.connection.setOnline(false);
+		expect((await env.syncer.pushAuth(["s1"]))[0].ok).toBe(false);
+		expect(env.store.getState<{ pendingItems: string[] }>("sync:s1")?.pendingItems).toEqual(["auth"]);
+		env.connection.setOnline(true);
+		env.syncer.onAgentConnected("s1");
+		await waitFor(() => env.store.records.some((r) => r.trigger === "connect"), 5000);
+		expect(JSON.parse(await env.remote.read("auth.json")).anthropic.access).toBe("acc-3");
+		expect(await env.remote.read("prompts/review.md")).toBe("Review this");
+		expect(env.store.getState<{ pending: boolean }>("sync:s1")?.pending).toBe(false);
+	});
+
+	it("adopts remote files that already match the host so later host deletions reach them", async () => {
+		const env = await setup();
+		// The server already has an identical copy that no sync recorded (e.g. after a redeploy in shared mode).
+		await put(join(env.remote.agentDir, "prompts", "review.md"), "Review this");
+		await env.syncer.run("s1", "manual");
+		expect((await env.remote.managed())["prompts/review.md"]).toBeDefined();
+		await unlink(join(env.agentDir, "prompts", "review.md"));
+		const record = await env.syncer.run("s1", "manual");
+		expect(record.deleted).toBe(1);
+		expect(await env.remote.exists("prompts/review.md")).toBe(false);
+	});
+});
+
 describe("Syncer auto-sync", { timeout: 20_000 }, () => {
 	it("debounces host changes into a single auto run", async () => {
 		const env = await setup();

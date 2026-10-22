@@ -56,6 +56,24 @@ describe("transformSettings", () => {
 		expect(o).not.toHaveProperty("shellCommandPrefix");
 	});
 
+	it("copies agent-dir paths that no enabled sync item covers, and warns about disabled items", () => {
+		const server = makeServer();
+		server.sync.items.prompts = false;
+		const { settings, externals, warnings } = settingsFor(
+			{
+				packages: ["./local/my-pkg", `${AGENT}/local/other`, "./extensions/kept"],
+				prompts: ["prompts/review.md"],
+			},
+			server,
+		);
+		const local = externalRemotePath(join(AGENT, "local/my-pkg"));
+		expect(settings.packages).toEqual([local, externalRemotePath(join(AGENT, "local/other")), "./extensions/kept"]);
+		expect(externals.map((e) => e.remote)).toEqual([local, externalRemotePath(join(AGENT, "local/other"))]);
+		// prompts is disabled for this server: the path stays, with a warning.
+		expect(settings.prompts).toEqual(["prompts/review.md"]);
+		expect(warnings.join("\n")).toContain("prompts/review.md 所属的同步项未启用");
+	});
+
 	it("merges the prefix idempotently", () => {
 		expect(mergeShellPrefix(undefined)).toBe(UNSET_PROXY_PREFIX);
 		expect(mergeShellPrefix(`${UNSET_PROXY_PREFIX}\nfoo`)).toBe(`${UNSET_PROXY_PREFIX}\nfoo`);

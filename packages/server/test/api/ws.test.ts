@@ -33,8 +33,8 @@ describe("/ws EventHub", () => {
 		return fake;
 	}
 
-	async function connect(headers: Record<string, string> = {}): Promise<Client> {
-		const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers });
+	async function connect(headers: Record<string, string> = {}, protocols?: string[], path = "/ws"): Promise<Client> {
+		const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`, protocols, { headers });
 		clients.push(ws);
 		const messages: WsServerMessage[] = [];
 		ws.on("message", (data) => messages.push(JSON.parse(String(data))));
@@ -137,8 +137,29 @@ describe("/ws EventHub", () => {
 		const anonStatus = await new Promise<number>((resolve) => anonymous.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0)));
 		expect(anonStatus).toBe(401);
 
-		const ok = await connect({ origin: `http://127.0.0.1:${port}`, cookie: "pi_web_token=secret-token" });
+		// The legacy cookie no longer authenticates (it leaks to every port of the host).
+		const cookie = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { cookie: "pi_web_token=secret-token" } });
+		clients.push(cookie);
+		const cookieStatus = await new Promise<number>((resolve) => cookie.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0)));
+		expect(cookieStatus).toBe(401);
+
+		const ok = await connect({ origin: `http://127.0.0.1:${port}` }, ["pi-web", "pi-web.token.secret-token"]);
 		expect(ok.messages[0]).toEqual({ type: "hello", version: "1.2.3" });
+		// The server selects the plain protocol and never echoes the token entry.
+		expect(ok.ws.protocol).toBe("pi-web");
+	});
+
+	it("does not route percent-encoded spellings of /ws and /ws/term around the token", async () => {
+		await start({ token: true });
+		for (const path of ["/%77s", "/%77s/term?serverId=srv1", "/w%73/term?serverId=srv1"]) {
+			const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`);
+			clients.push(ws);
+			const status = await new Promise<number>((resolve) => {
+				ws.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0));
+				ws.on("open", () => resolve(101));
+			});
+			expect(status, path).toBe(400);
+		}
 	});
 });
 

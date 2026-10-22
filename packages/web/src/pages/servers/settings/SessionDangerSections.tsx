@@ -83,10 +83,10 @@ export function DangerSection({ view }: Pick<SectionProps, "view">) {
 							<span className="text-sm leading-5 font-medium text-fg">卸载 Pi-Web</span>
 							<Hint>
 								{keepSessions
-									? `停止 daemon 并删除服务器上的 ${c.remoteRoot}；会话文件先移动到 ~/pi-web-sessions-backup。`
+									? `停止 daemon 并删除服务器上的 ${c.remoteRoot}；会话文件先移动到 ~/pi-web-backups（仅本人可读）。`
 									: `停止 daemon 并删除服务器上的 ${c.remoteRoot}，会话文件一并删除，无法恢复。`}
 							</Hint>
-							<Checkbox className="text-xs text-fg-2" checked={keepSessions} onChange={setKeepSessions} label={<span className="text-xs text-fg-2">保留会话文件（移动到 ~/pi-web-sessions-backup）</span>} />
+							<Checkbox className="text-xs text-fg-2" checked={keepSessions} onChange={setKeepSessions} label={<span className="text-xs text-fg-2">保留会话文件（移动到 ~/pi-web-backups）</span>} />
 						</div>
 						<Button variant="warning" icon={<TriangleAlert size={14} strokeWidth={2} />} disabled={!d && view.status.deployState !== "deployed"} onClick={() => setDialog("uninstall")}>
 							卸载 Pi-Web

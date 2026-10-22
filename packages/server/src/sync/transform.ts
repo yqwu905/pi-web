@@ -1,10 +1,10 @@
 /** Content transforms applied to host files before they are synced to a server. */
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { deepMerge, isPlainObject, type ServerConfig } from "@pi-web/shared";
-import { AGENTS_SKILLS_REMOTE, EXTERNAL_ROOT, MANAGED_REFRESH_PLACEHOLDER } from "./items.js";
+import { deepMerge, isPlainObject, SYNC_EXCLUDES, type ServerConfig } from "@pi-web/shared";
+import { AGENTS_SKILLS_REMOTE, EXTERNAL_ROOT, itemForPath, MANAGED_REFRESH_PLACEHOLDER } from "./items.js";
 import { isWithin } from "./walk.js";
 
 /** Removes proxy variables from every bash tool command when only LLM traffic may use the tunnel. */
@@ -84,8 +84,21 @@ class PathRewriter {
 		const { hostAgentDir, homeDir, agentsSkillsDir } = this.options;
 		const abs = expandPath(value, hostAgentDir, homeDir);
 		if (isWithin(hostAgentDir, abs)) {
-			if (!isAbsolute(value.trim()) && !value.trim().startsWith("~") && !value.trim().startsWith("file:")) return value;
-			return relative(hostAgentDir, abs) || ".";
+			const rel = relative(hostAgentDir, abs).split(sep).join("/");
+			const coverage = this.coverage(rel);
+			if (coverage === "synced") {
+				if (!isAbsolute(value.trim()) && !value.trim().startsWith("~") && !value.trim().startsWith("file:")) return value;
+				return rel || ".";
+			}
+			if (coverage !== "external") {
+				this.warnings.push(
+					coverage === "disabled"
+						? `settings.json 引用的 ${rel} 所属的同步项未启用，服务器上需要自行提供该路径`
+						: `settings.json 引用的 ${rel} 不会被同步（被同步规则排除），服务器上需要自行提供该路径`,
+				);
+				return value;
+			}
+			// Inside the agent dir but outside every sync item (e.g. "./local/my-pkg"): copy it like a path outside.
 		}
 		if (agentsSkillsDir && abs === agentsSkillsDir) return AGENTS_SKILLS_REMOTE;
 		if (hasGlob(value)) {
@@ -102,6 +115,16 @@ class PathRewriter {
 			this.externals.set(abs, ref);
 		}
 		return ref.remote;
+	}
+
+	/** Whether a path inside the host agent dir reaches the server through an enabled sync item. */
+	private coverage(rel: string): "synced" | "disabled" | "excluded" | "external" {
+		if (rel === "" || rel === ".") return "synced";
+		const top = rel.split("/")[0];
+		if (SYNC_EXCLUDES.some((pattern) => !pattern.startsWith("*.") && pattern === top)) return "excluded";
+		const item = itemForPath(rel);
+		if (!item || top === EXTERNAL_ROOT || top === AGENTS_SKILLS_REMOTE) return "external";
+		return this.options.server.sync.items?.[item] === true ? "synced" : "disabled";
 	}
 
 	/** Resource array entries may carry "+"/"-" (exact include/exclude) or "!" (glob exclusion) prefixes. */

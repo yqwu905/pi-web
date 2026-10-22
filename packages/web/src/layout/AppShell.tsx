@@ -1,6 +1,6 @@
 import { KeyRound } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
-import { Outlet, useLocation, useNavigation } from "react-router";
+import { Outlet, useLocation, useNavigate, useNavigation } from "react-router";
 import { errorMessage, isApiError, login } from "../api/client";
 import { useMeta } from "../api/hooks";
 import { Button } from "../components/ui/Button";
@@ -9,6 +9,7 @@ import { Input } from "../components/ui/Input";
 import { LoadingBlock } from "../components/ui/Spinner";
 import { ToastViewport } from "../components/ui/ToastViewport";
 import { cn } from "../lib/cn";
+import { setAttentionNavigator } from "../stores/attention";
 import { useConvsLiveSync } from "../stores/convs";
 import { useServersLiveSync } from "../stores/servers";
 import { useUiStore } from "../stores/ui";
@@ -19,6 +20,11 @@ import { Sidebar } from "./Sidebar";
 function LiveSync() {
 	useServersLiveSync();
 	useConvsLiveSync();
+	const navigate = useNavigate();
+	useEffect(() => {
+		setAttentionNavigator((path) => navigate(path));
+		return () => setAttentionNavigator(null);
+	}, [navigate]);
 	return null;
 }
 

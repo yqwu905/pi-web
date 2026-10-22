@@ -574,6 +574,9 @@ export class FakeDeployer extends EventEmitter implements Deployer {
 	async restartAgent(serverId: string): Promise<void> {
 		this.calls.push({ method: "restartAgent", args: [serverId] });
 	}
+	async syncAgentDir(serverId: string): Promise<void> {
+		this.calls.push({ method: "syncAgentDir", args: [serverId] });
+	}
 	async buildAgentConfig(serverId: string): Promise<AgentConfig> {
 		this.calls.push({ method: "buildAgentConfig", args: [serverId] });
 		return {
@@ -625,8 +628,9 @@ export class FakeProxy implements TunnelProxy {
 		return server;
 	}
 	async providerDomains(): Promise<string[]> {
-		return ["api.anthropic.com"];
+		return ["api.anthropic.com:443"];
 	}
+	protectLocalPort(): void {}
 }
 
 export class FakeSyncer extends EventEmitter implements Syncer {

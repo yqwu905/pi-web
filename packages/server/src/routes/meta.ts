@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import type { AppContext } from "../core/types.js";
 
 export function metaRoutes(app: FastifyInstance, ctx: AppContext): void {
-	app.get("/meta", async (request): Promise<MetaResponse> => {
+	app.get("/meta", { config: { public: true } }, async (request): Promise<MetaResponse> => {
 		if (!request.authenticated) {
 			// Reachable without a token (the UI needs `authenticated`); reveal nothing else.
 			return { version: ctx.version, hostname: "", hostAgentDir: "", hostPiVersion: null, dataDir: "", authenticated: false };

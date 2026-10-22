@@ -96,6 +96,38 @@ function fakeHostPi(providers: Array<{ id: string; baseUrl?: string; models?: Ar
 	return { agentDir: "/tmp/agent", version: async () => "1.4.0", modelRuntime: async () => runtime, invalidate() {} };
 }
 
+/** Resolver for tests (the sandbox has no DNS). */
+const DNS: Record<string, string[]> = {
+	"localtest.me": ["127.0.0.1"],
+	"rebind.example": ["93.184.216.34", "10.0.0.7"],
+	"public.example": ["93.184.216.34"],
+	"metadata.example": ["169.254.169.254"],
+	"bedrock-runtime.us-east-1.amazonaws.com": ["52.94.0.1"],
+	"evil-bucket.s3.amazonaws.com": ["52.216.0.1"],
+	"ec2-1-2-3-4.compute-1.amazonaws.com": ["1.2.3.4"],
+	"own.example": ["192.0.2.10"],
+};
+async function fakeLookup(host: string): Promise<string[]> {
+	const found = DNS[host];
+	if (!found) throw new Error(`getaddrinfo ENOTFOUND ${host}`);
+	return found;
+}
+
+/** A dialer that records targets and connects every direct dial to `echoPort`. */
+function recordingDial(echoPort: number) {
+	const dialed: Array<{ host: string; port: number; proxy?: string }> = [];
+	const dial = async (host: string, port: number, proxy: URL | undefined) => {
+		dialed.push({ host, port, proxy: proxy?.host });
+		const socket = connect(echoPort, "127.0.0.1");
+		await new Promise<void>((resolve, reject) => {
+			socket.once("connect", resolve);
+			socket.once("error", reject);
+		});
+		return socket;
+	};
+	return { dial, dialed };
+}
+
 interface Env {
 	proxy: TunnelProxy;
 	agent: LinkPeer;
@@ -111,7 +143,7 @@ async function setup(server: Partial<ServerConfig> = {}, options: TunnelProxyOpt
 	const connections = new FakeConnections();
 	const proxy = createTunnelProxy(
 		{ log: noopLogger, store, hub, connections: connections as unknown as ConnectionManager, hostPi },
-		{ env: {}, publishIntervalMs: 20, ...options },
+		{ env: {}, publishIntervalMs: 20, lookup: fakeLookup, ownAddresses: () => new Set(["127.0.0.1", "::1", "192.0.2.10"]), ...options },
 	);
 	const { host, agent } = await linkPair();
 	const client = fakeClient("s1", host);
@@ -156,23 +188,50 @@ describe("TunnelProxy", () => {
 		expect(env.connections.lastPatch("s1")?.proxy?.byHost[0].bytesDown).toBe(12);
 	});
 
-	it("allows provider domains of the host pi configuration", async () => {
+	it("allows provider endpoints of the host pi configuration by host and port", async () => {
 		const echoPort = await echoServer();
 		const hostPi = fakeHostPi([
 			{ id: "local", baseUrl: `http://127.0.0.1:${echoPort}/v1` },
+			{ id: "ollama", baseUrl: "http://localhost:11434/v1" },
 			{ id: "vertex", models: [{ baseUrl: "https://{location}-aiplatform.googleapis.com" }] },
 			{ id: "anthropic", baseUrl: "https://api.anthropic.com" },
 		]);
 		const env = await setup({}, {}, hostPi);
 		const domains = await env.proxy.providerDomains();
-		expect(domains).toEqual(expect.arrayContaining(["127.0.0.1", "api.anthropic.com", "*.githubcopilot.com", "chatgpt.com", "*.amazonaws.com"]));
-		expect(domains).not.toContain("*.googleapis.com");
-		expect(domains.some((d) => d.includes("{"))).toBe(false);
+		expect(domains).toEqual(
+			expect.arrayContaining([
+				`127.0.0.1:${echoPort}`,
+				"localhost:11434",
+				"api.anthropic.com:443",
+				"*.githubcopilot.com:443",
+				"chatgpt.com:443",
+				"bedrock-runtime.{aws-region}.amazonaws.com:443",
+				"{gcp-region}-aiplatform.googleapis.com:443",
+			]),
+		);
+		// No registrable-domain wildcards that anyone can host servers under.
+		expect(domains).not.toContain("*.amazonaws.com:443");
+		expect(domains).not.toContain("*.googleapis.com:443");
+		expect(domains.some((d) => d.includes("{location}"))).toBe(false);
 		const stream = await env.agent.openStream({ kind: "proxy", host: "127.0.0.1", port: echoPort, protocol: "connect" });
 		expect(await roundTrip(stream, "x")).toBe("x");
+		// A loopback provider is allowed on its own port only.
+		expect((await openRejected(env.agent, "localhost", 7878)).status).toBe(403);
+		expect((await openRejected(env.agent, "127.0.0.1", echoPort + 1 === 65536 ? 1 : echoPort + 1)).status).toBe(403);
+	});
 
-		const withVertex = await setup({}, {}, fakeHostPi([], ["google-vertex"]));
-		expect(await withVertex.proxy.providerDomains()).toContain("*.googleapis.com");
+	it("matches dynamic provider endpoints by service, not by registrable domain", async () => {
+		const echoPort = await echoServer();
+		const { dial, dialed } = recordingDial(echoPort);
+		const env = await setup({}, { dial }, fakeHostPi([]));
+		const ok = await env.agent.openStream({ kind: "proxy", host: "bedrock-runtime.us-east-1.amazonaws.com", port: 443, protocol: "connect" });
+		expect(await roundTrip(ok, "bedrock")).toBe("bedrock");
+		// The vetted address is dialled, not the name (no second DNS answer).
+		expect(dialed).toEqual([{ host: "52.94.0.1", port: 443, proxy: undefined }]);
+		for (const host of ["evil-bucket.s3.amazonaws.com", "ec2-1-2-3-4.compute-1.amazonaws.com", "bedrock-runtime.s3.amazonaws.com", "storage.googleapis.com"]) {
+			expect((await openRejected(env.agent, host, 443)).status, host).toBe(403);
+		}
+		expect((await openRejected(env.agent, "bedrock-runtime.us-east-1.amazonaws.com", 8443)).status).toBe(403);
 	});
 
 	it("rejects destinations outside the allowlist with 403 and counts them", async () => {
@@ -192,13 +251,81 @@ describe("TunnelProxy", () => {
 		expect(rejected.status).toBe(403);
 	});
 
-	it("allows any non-loopback destination for scope tools + policy all", async () => {
+	it("allows any public destination for scope tools + policy all", async () => {
 		const echoPort = await echoServer();
 		const upstream = await fakeUpstreamProxy(echoPort);
 		const env = await setup(proxyConfig({ scope: "tools", toolsPolicy: "all" }), { env: { HTTPS_PROXY: `http://127.0.0.1:${upstream.port}` } });
 		const stream = await env.agent.openStream({ kind: "proxy", host: "pypi.example.org", port: 443, protocol: "connect" });
 		expect(await roundTrip(stream, "pip")).toBe("pip");
 		expect((await openRejected(env.agent, "localhost", 7878)).status).toBe(403);
+		// Names resolving to loopback are refused even through the upstream proxy.
+		expect((await openRejected(env.agent, "localtest.me", 7878)).status).toBe(403);
+	});
+
+	it("never reaches the host's loopback, own addresses or private networks without an exact entry", async () => {
+		const echoPort = await echoServer();
+		const { dial, dialed } = recordingDial(echoPort);
+		const env = await setup(proxyConfig({ scope: "tools", toolsPolicy: "all" }), { dial });
+		// Numeric shorthands resolvers turn into 127.0.0.1 / 0.0.0.0 are not host names.
+		for (const host of ["127.1", "2130706433", "0177.0.0.1", "0x7f000001", "0x7f.1", "0"]) {
+			expect((await openRejected(env.agent, host, 7878)).status, host).toBe(400);
+		}
+		for (const host of [
+			"127.0.0.1",
+			"localhost",
+			"api.localhost",
+			"localtest.me",
+			"::1",
+			"::ffff:127.0.0.1",
+			"::ffff:7f00:1",
+			"0.0.0.0",
+			"::",
+			"10.1.2.3",
+			"172.16.0.1",
+			"192.168.1.1",
+			"100.64.0.1",
+			"169.254.169.254",
+			"metadata.example",
+			"fe80::1",
+			"fd00::1",
+			"rebind.example",
+			"own.example",
+			"192.0.2.10",
+		]) {
+			const rejected = await openRejected(env.agent, host, 8080);
+			expect(rejected.status, host).toBe(403);
+		}
+		expect(dialed).toEqual([]);
+		const ok = await env.agent.openStream({ kind: "proxy", host: "public.example", port: 443, protocol: "connect" });
+		expect(await roundTrip(ok, "pub")).toBe("pub");
+		expect(dialed).toEqual([{ host: "93.184.216.34", port: 443, proxy: undefined }]);
+	});
+
+	it("never tunnels to Pi-Web's own port, even for exact entries", async () => {
+		const echoPort = await echoServer();
+		const env = await setup(proxyConfig({ extraDomains: ["127.0.0.1", "localhost"] }));
+		const listen = env.store.settings.listenPort;
+		const own = await openRejected(env.agent, "127.0.0.1", listen);
+		expect(own.status).toBe(403);
+		expect(own.message).toContain("Pi-Web");
+		expect((await openRejected(env.agent, "localhost", listen)).status).toBe(403);
+		const stream = await env.agent.openStream({ kind: "proxy", host: "localhost", port: echoPort, protocol: "connect" });
+		expect(await roundTrip(stream, "ok")).toBe("ok");
+		// The port the CLI actually listens on (e.g. --port) is protected as well.
+		env.proxy.protectLocalPort(echoPort);
+		expect((await openRejected(env.agent, "127.0.0.1", echoPort)).status).toBe(403);
+	});
+
+	it("needs an exact entry for private targets: wildcards do not cover them", async () => {
+		const echoPort = await echoServer();
+		const { dial } = recordingDial(echoPort);
+		const env = await setup(proxyConfig({ extraDomains: ["*.example"] }), { dial });
+		expect((await openRejected(env.agent, "metadata.example", 80)).status).toBe(403);
+		const ok = await env.agent.openStream({ kind: "proxy", host: "public.example", port: 443, protocol: "connect" });
+		expect(await roundTrip(ok, "w")).toBe("w");
+		await env.proxy.allowDomain("s1", "metadata.example");
+		const exact = await env.agent.openStream({ kind: "proxy", host: "metadata.example", port: 80, protocol: "connect" });
+		expect(await roundTrip(exact, "e")).toBe("e");
 	});
 
 	it("goes through settings.upstreamProxy with credentials", async () => {

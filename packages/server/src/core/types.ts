@@ -240,6 +240,11 @@ export interface Deployer extends EventEmitter {
 	buildAgentConfig(serverId: string): Promise<AgentConfig>;
 	/** pi version the host would deploy right now (policy "host" → host pi version, else pinned). */
 	targetPiVersion(): Promise<string>;
+	/**
+	 * After agentDirMode changed: rewrite R/bin/pi (it bakes in the agent dir) and update
+	 * deployed.agentDir. No-op when already in sync or SSH is down (retried on the next link).
+	 */
+	syncAgentDir(serverId: string): Promise<void>;
 	listCache(): Promise<CacheResponse>;
 	deleteCache(name: string): Promise<void>;
 	/** Store a user-provided Node.js linux tarball (.tar.xz or .tar.gz) in the cache. */
@@ -257,8 +262,10 @@ export interface TunnelProxy {
 	stats(serverId: string): ProxyStats;
 	/** Add a domain to the server's proxy.extraDomains (persisted). */
 	allowDomain(serverId: string, domain: string): Promise<ServerConfig>;
-	/** Host names of every LLM provider known to the host pi configuration (cached, refreshed on change). */
+	/** Endpoints ("host:port" or a pattern on 443) of every LLM provider known to the host pi configuration (cached). */
 	providerDomains(): Promise<string[]>;
+	/** A port this Pi-Web listens on: never reachable through a tunnel to the host itself. */
+	protectLocalPort(port: number): void;
 }
 
 /** Emits "status" (SyncStatusResponse), "record" (SyncRecord), "running" ({serverId, running}), "configUpdated" ({serverId, at}). */

@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseSettingsPatch } from "../../src/routes/settings.js";
 import { makeServer } from "./fakes.js";
@@ -38,11 +41,16 @@ describe("settings", () => {
 	});
 
 	it("invalidates the host pi cache and moves the watchers when its agent dir changes", async () => {
-		await t.request("PUT", "/api/settings", { hostAgentDir: "/other/agent" });
+		const other = mkdtempSync(path.join(tmpdir(), "pi-web-agent-dir-"));
+		const missing = await t.request("PUT", "/api/settings", { hostAgentDir: path.join(other, "agnet") });
+		expect(missing.statusCode).toBe(400);
+		expect(missing.json().error.message).toContain("Host agent 目录不存在");
+		expect(t.syncer.calls.filter((c) => c.method === "rewatch")).toHaveLength(0);
+		await t.request("PUT", "/api/settings", { hostAgentDir: other });
 		expect(t.hostPi.invalidations).toBe(1);
 		expect(t.syncer.calls.filter((c) => c.method === "rewatch")).toHaveLength(1);
 		expect(t.oauth.rewatched).toBe(1);
-		await t.request("PUT", "/api/settings", { hostAgentDir: "/other/agent", listenPort: 7979 });
+		await t.request("PUT", "/api/settings", { hostAgentDir: other, listenPort: 7979 });
 		expect(t.hostPi.invalidations).toBe(1);
 		expect(t.oauth.rewatched).toBe(1);
 	});

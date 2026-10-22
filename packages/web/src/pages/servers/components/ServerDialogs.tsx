@@ -1,5 +1,5 @@
 /** Modals of the server pages: agent logs, deploy/upgrade options, uninstall, delete, host key re-check. */
-import type { DeployProgress, DeployRequest, ServerView, TestConnectionResult } from "@pi-web/shared";
+import type { DeployProgress, DeployRequest, ServerView, TestConnectionResult, WorkspaceView } from "@pi-web/shared";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Copy, RefreshCw, ShieldAlert, ShieldCheck, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { useEffect, useId, useState } from "react";
@@ -17,7 +17,10 @@ import { Modal } from "../../../components/ui/Modal";
 import { LoadingBlock } from "../../../components/ui/Spinner";
 import { cn } from "../../../lib/cn";
 import { paths } from "../../../lib/routes";
+import { queryClient, queryKeys } from "../../../api/queryClient";
 import { useServersStore } from "../../../stores/servers";
+import { useUiStore } from "../../../stores/ui";
+import { closeWorkspaceTerminals } from "../../workspace/terminal-store";
 import { agentAvailable, serverQueryKeys, useAgentLogs } from "../hooks";
 import { type AgentLogLine, parseAgentLogLine } from "../lib/agent-log";
 import { serverTarget } from "../lib/connection-form";
@@ -283,7 +286,7 @@ export function UninstallModal({
 				<p className="m-0">
 					{keepSessions ? (
 						<>
-							停止 daemon 并删除服务器上的 <code className="text-fg-code">{root}</code>；会话文件先移动到 <code className="text-fg-code">~/pi-web-sessions-backup-…</code>。
+							停止 daemon 并删除服务器上的 <code className="text-fg-code">{root}</code>；会话文件先移动到 <code className="text-fg-code">~/pi-web-backups/sessions-…</code>（仅本人可读）。
 						</>
 					) : (
 						<>
@@ -310,6 +313,15 @@ export function DeleteServerModal({ view, open, onClose }: { view: ServerView; o
 	const mutation = useMutation({
 		mutationFn: () => deleteServer(view.config.id),
 		onSuccess: async () => {
+			// The server's workspaces are gone on the host: drop them from the cache, the remembered
+			// sessions and the terminal tabs before "/" redirects to the last visited conversation.
+			const serverId = view.config.id;
+			const removed = (queryClient.getQueryData<WorkspaceView[]>(queryKeys.workspaces) ?? [])
+				.filter((w) => w.config.serverId === serverId)
+				.map((w) => w.config.id);
+			queryClient.setQueryData<WorkspaceView[]>(queryKeys.workspaces, (list) => list?.filter((w) => w.config.serverId !== serverId));
+			useUiStore.getState().forgetWorkspaces(removed);
+			for (const workspaceId of removed) closeWorkspaceTerminals(workspaceId);
 			onClose();
 			navigate(paths.home(), { replace: true });
 			useServersStore.getState().removeServer(view.config.id);

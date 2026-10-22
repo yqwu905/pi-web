@@ -80,7 +80,11 @@ describe("bridge + daemon end to end", () => {
 		expect(await first.peer.request("agent.configure", config)).toEqual({ ok: true });
 		expect((await stat(join(root, "state", "config.json"))).mode & 0o777).toBe(0o600);
 		const proxyEnv = await readFile(join(root, "run", "proxy.env"), "utf8");
-		expect(proxyEnv).toContain(`export HTTPS_PROXY=http://pw:feedfacefeedfacefeedface@127.0.0.1:${port}`);
+		// pi gets a per-daemon token (never the host's), and only while this daemon is alive.
+		const sessionToken = /export HTTPS_PROXY=http:\/\/pw:([0-9a-f]{48})@127\.0\.0\.1:(\d+)/.exec(proxyEnv);
+		expect(sessionToken?.[2]).toBe(String(port));
+		expect(proxyEnv).not.toContain("feedfacefeedfacefeedface");
+		expect(proxyEnv).toContain(`kill -0 ${hello.pid} `);
 		expect(proxyEnv).toContain("export NO_PROXY=localhost,127.0.0.1");
 		expect((await stat(join(root, "run", "proxy.env"))).mode & 0o777).toBe(0o600);
 		await waitFor(() => first.events.find(([name, data]) => name === "agent.log" && String((data as { msg: string }).msg).startsWith("configured")));
@@ -120,6 +124,8 @@ describe("bridge + daemon end to end", () => {
 		expect(await second.peer.request("agent.shutdown", {})).toEqual({ ok: true });
 		await expect(stat(join(root, "run", "agent.sock"))).rejects.toThrow();
 		await expect(stat(join(root, "run", "agent.pid"))).rejects.toThrow();
+		// The proxy port is released: proxy.env must not point anyone at it any more.
+		await expect(stat(join(root, "run", "proxy.env"))).rejects.toThrow();
 		const third = await openBridge(root);
 		const hello3 = await third.peer.request<AgentHelloResult>("hello", { hostVersion: "test", protocol: AGENT_PROTOCOL_VERSION });
 		daemonPids.push(hello3.pid);
@@ -128,6 +134,9 @@ describe("bridge + daemon end to end", () => {
 		expect(hello3.config?.agentDir).toBe(config.agentDir);
 		const status3 = await third.peer.request<AgentStatus>("agent.status", {});
 		expect(status3.proxy).toMatchObject({ listening: true, port });
+		const proxyEnv3 = await readFile(join(root, "run", "proxy.env"), "utf8");
+		expect(proxyEnv3).toContain(`kill -0 ${hello3.pid} `);
+		expect(proxyEnv3).not.toContain(sessionToken![1]);
 
 		// The old daemon finishes stopping its conversation (SIGTERM after 5s) and exits with its bridges.
 		await Promise.all([firstExit, secondExit]);

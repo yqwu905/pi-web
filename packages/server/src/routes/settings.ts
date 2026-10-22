@@ -1,5 +1,7 @@
-import type { HostSettings, UpdateSettingsRequest } from "@pi-web/shared";
+import { stat } from "node:fs/promises";
+import type { HostSettings, SettingsResponse, UpdateSettingsRequest } from "@pi-web/shared";
 import type { FastifyInstance } from "fastify";
+import { resolveHostAgentDir } from "../core/paths.js";
 import type { AppContext } from "../core/types.js";
 import type { AccessControl } from "./auth.js";
 import { badRequest, bodyObject, errorMessage, optBool, optEnum, optInt, optString, optStringArray } from "./util.js";
@@ -101,17 +103,27 @@ export function parseSettingsPatch(input: unknown): UpdateSettingsRequest {
 export function settingsRoutes(app: FastifyInstance, ctx: AppContext, auth: AccessControl): void {
 	app.get("/settings", async (): Promise<HostSettings> => ctx.store.getSettings());
 
-	app.put("/settings", async (request, reply): Promise<HostSettings> => {
+	app.put("/settings", async (request): Promise<SettingsResponse> => {
 		const patch = parseSettingsPatch(request.body);
 		const before = ctx.store.getSettings();
 		if (patch.nodeSource === "custom" || (patch.nodeSource === undefined && before.nodeSource === "custom")) {
 			const base = "nodeCustomBaseUrl" in patch ? patch.nodeCustomBaseUrl : before.nodeCustomBaseUrl;
 			if (!base) throw badRequest("使用自定义下载源时必须填写下载地址");
 		}
-		const updated = await ctx.store.updateSettings(patch);
+		if (patch.hostAgentDir && patch.hostAgentDir !== before.hostAgentDir) {
+			// Auto-sync and the OAuth push mirror this directory to every server: a typo must not
+			// read as "everything was deleted".
+			const dir = resolveHostAgentDir({ hostAgentDir: patch.hostAgentDir });
+			const isDir = await stat(dir).then(
+				(st) => st.isDirectory(),
+				() => false,
+			);
+			if (!isDir) throw badRequest(`Host agent 目录不存在或不是目录：${dir}`);
+		}
+		const updated: SettingsResponse = await ctx.store.updateSettings(patch);
 		if (updated.accessTokenEnabled && !before.accessTokenEnabled) {
-			// Keep the browser that enabled the token signed in.
-			auth.setCookie(reply, await auth.ensureToken());
+			// Keep the browser that enabled the token signed in: it stores the token itself.
+			return { ...updated, issuedAccessToken: await auth.ensureToken() };
 		}
 		if (updated.hostAgentDir !== before.hostAgentDir) {
 			ctx.hostPi.invalidate();

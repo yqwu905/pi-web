@@ -12,7 +12,7 @@ function desired(
 	for (const entry of entries) {
 		map.set(entry.path, { item: "extensions", size: 10, ...entry });
 	}
-	return { entries: map, roots: rootsForItems(items), warnings: ["w1", "w1"], externalPaths: [] };
+	return { entries: map, roots: rootsForItems(items), protectedRoots: [], warnings: ["w1", "w1"], externalPaths: [] };
 }
 
 function manifest(files: Record<string, string>, managed: Record<string, string>): SyncManifestResult {

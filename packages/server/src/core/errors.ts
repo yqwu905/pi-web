@@ -47,3 +47,13 @@ export function toApiError(err: unknown, fallbackCode = "INTERNAL", status = 500
 export function serverNotFound(serverId: string): ApiError {
 	return new ApiError(404, "SERVER_NOT_FOUND", `服务器不存在：${serverId}`);
 }
+
+/** A connect attempt that was overtaken by disconnect()/disconnectAgent(). */
+export function connectCancelled(): ApiError {
+	return new ApiError(409, "CANCELLED", "连接已取消");
+}
+
+/** The server's connection was removed (server deleted). */
+export function connectionRemoved(): ApiError {
+	return new ApiError(404, "SERVER_NOT_FOUND", "服务器已删除");
+}

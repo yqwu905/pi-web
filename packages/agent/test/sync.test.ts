@@ -205,4 +205,89 @@ describe("sync.apply", () => {
 		expect(result.errors[0]?.path).toBe("themes/t.json");
 		await expect(stat(join(outside, "t.json"))).rejects.toThrow();
 	});
+
+	it("handles a directory replaced by a symlink (and back) without touching the link target", async () => {
+		await sync.apply({
+			archivePath: await archive({ "skills/foo/SKILL.md": "foo skill" }),
+			writes: [{ path: "skills/foo/SKILL.md", sha256: sha("foo skill") }],
+			deletes: [],
+			backupLabel: "s1",
+		});
+		// Host: skills/foo renamed to skills/bar, compatibility link skills/foo -> bar.
+		const swap = await sync.apply({
+			archivePath: await archive({ "skills/bar/SKILL.md": "foo skill", "skills/foo": { link: "bar" } }),
+			writes: [
+				{ path: "skills/bar/SKILL.md", sha256: sha("foo skill") },
+				{ path: "skills/foo", sha256: sha("symlink:bar"), link: "bar" },
+			],
+			deletes: ["skills/foo/SKILL.md"],
+			backupLabel: "s2",
+		});
+		expect(swap).toMatchObject({ written: 2, deleted: 1, errors: [], backedUp: [] });
+		expect(await readFile(join(agentDir, "skills/bar/SKILL.md"), "utf8")).toBe("foo skill");
+		expect(await readlink(join(agentDir, "skills/foo"))).toBe("bar");
+		expect(Object.keys((await sync.manifest({ roots: [] })).managed).sort()).toEqual(["skills/bar/SKILL.md", "skills/foo"]);
+
+		// A stale delete below a path that is now a link only drops the manifest entry.
+		const stale = await sync.apply({ archivePath: null, writes: [], deletes: ["skills/foo/SKILL.md"], backupLabel: "s3" });
+		expect(stale).toMatchObject({ deleted: 0, errors: [] });
+		expect(await readFile(join(agentDir, "skills/bar/SKILL.md"), "utf8")).toBe("foo skill");
+
+		// Writes never go through a symlinked parent (they would land in the link target).
+		const through = await sync.apply({
+			archivePath: await archive({ "skills/foo/SKILL.md": "new foo" }),
+			writes: [{ path: "skills/foo/SKILL.md", sha256: sha("new foo") }],
+			deletes: [],
+			backupLabel: "s4",
+		});
+		expect(through.written).toBe(0);
+		expect(through.errors[0]?.error).toContain("符号链接");
+		expect(await readFile(join(agentDir, "skills/bar/SKILL.md"), "utf8")).toBe("foo skill");
+
+		// Reverse swap: the link becomes a real directory again.
+		const back = await sync.apply({
+			archivePath: await archive({ "skills/foo/SKILL.md": "new foo" }),
+			writes: [{ path: "skills/foo/SKILL.md", sha256: sha("new foo") }],
+			deletes: ["skills/foo"],
+			backupLabel: "s5",
+		});
+		expect(back).toMatchObject({ written: 1, deleted: 1, errors: [] });
+		expect((await lstat(join(agentDir, "skills/foo"))).isDirectory()).toBe(true);
+		expect(await readFile(join(agentDir, "skills/bar/SKILL.md"), "utf8")).toBe("foo skill");
+	});
+
+	it("adopts identical files as managed without writing them", async () => {
+		await put("prompts/p.md", "same");
+		await put("prompts/q.md", "changed since the plan");
+		const result = await sync.apply({
+			archivePath: null,
+			writes: [],
+			deletes: [],
+			adopt: [
+				{ path: "prompts/p.md", sha256: sha("same") },
+				{ path: "prompts/q.md", sha256: sha("planned") },
+			],
+			backupLabel: "a",
+		});
+		expect(result).toMatchObject({ written: 0, deleted: 0, errors: [] });
+		expect((await sync.manifest({ roots: [] })).managed).toEqual({ "prompts/p.md": sha("same") });
+	});
+
+	it("keeps conflict backups of a shared agent dir outside the install root", async () => {
+		const home = await tempDir("pwa-home-");
+		const shared = join(home, ".pi", "agent");
+		await mkdir(shared, { recursive: true });
+		await writeFile(join(shared, "auth.json"), '{"real":"refresh"}');
+		const handler = new SyncHandler({ paths, getAgentDir: () => shared });
+		const result = await handler.apply({
+			archivePath: await archive({ "auth.json": "{}" }),
+			writes: [{ path: "auth.json", sha256: sha("{}") }],
+			deletes: [],
+			backupLabel: "shared",
+		});
+		expect(result.backedUp).toEqual(["auth.json"]);
+		expect(result.backupDir).toBe(join(shared, ".pi-web-backup", "shared"));
+		expect(await readFile(join(shared, ".pi-web-backup", "shared", "auth.json"), "utf8")).toBe('{"real":"refresh"}');
+		await expect(stat(join(paths.backupDir, "shared"))).rejects.toThrow();
+	});
 });

@@ -55,7 +55,10 @@ export interface MetaResponse {
 	/** True when the request was authenticated (or auth is disabled). */
 	authenticated: boolean;
 }
-export type SettingsResponse = HostSettings;
+export type SettingsResponse = HostSettings & {
+	/** Only in the response that enabled the access token: the token, for the browser that enabled it. */
+	issuedAccessToken?: string;
+};
 export type UpdateSettingsRequest = Partial<HostSettings>;
 
 // ---------- servers ----------

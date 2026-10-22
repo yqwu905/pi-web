@@ -35,6 +35,13 @@ export const FRAME_HEADER_SIZE = 9;
 export const MAX_FRAME_PAYLOAD = 256 * 1024;
 export const MAX_MESSAGE_SIZE = 64 * 1024 * 1024;
 export const STREAM_WINDOW = 512 * 1024;
+/**
+ * Default cap for bytes queued in the transport's write buffer. Messages ignore backpressure
+ * (events are fire-and-forget), so a dead or too slow peer would otherwise buffer without
+ * limit; above the cap the peer is destroyed (the other side reconnects and resyncs). Room for
+ * one maximum-size message plus a burst of events.
+ */
+export const DEFAULT_MAX_BUFFERED_BYTES = MAX_MESSAGE_SIZE + 32 * 1024 * 1024;
 const DATA_CHUNK = 64 * 1024;
 const MAX_PREAMBLE_SCAN = 256 * 1024;
 
@@ -143,6 +150,10 @@ export interface LinkPeerOptions {
 	requestTimeoutMs?: number;
 	/** When set, incoming bytes are discarded until this exact marker has been seen. */
 	preamble?: string;
+	/** Destroy the peer when this many bytes wait in the transport's write buffer (default DEFAULT_MAX_BUFFERED_BYTES). */
+	maxBufferedBytes?: number;
+	/** Destroy the peer when nothing at all was received for this long (default 0: never). */
+	idleTimeoutMs?: number;
 }
 
 interface PendingRequest {
@@ -182,6 +193,9 @@ export class LinkPeer extends EventEmitter {
 	private drainWaiters: Array<() => void> = [];
 	private closedError: Error | undefined;
 	private isClosed = false;
+	private readonly maxBufferedBytes: number;
+	private receivedAt = Date.now();
+	private idleTimer?: NodeJS.Timeout;
 
 	constructor(
 		private readonly transport: Duplex,
@@ -191,6 +205,17 @@ export class LinkPeer extends EventEmitter {
 		this.side = options.side;
 		this.requestTimeoutMs = options.requestTimeoutMs ?? 60_000;
 		this.nextStreamId = options.side === "host" ? 1 : 2;
+		this.maxBufferedBytes = options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES;
+		const idleTimeoutMs = options.idleTimeoutMs ?? 0;
+		if (idleTimeoutMs > 0) {
+			this.idleTimer = setInterval(
+				() => {
+					if (Date.now() - this.receivedAt > idleTimeoutMs) this.destroy(new Error(`link idle for ${Math.round(idleTimeoutMs / 1000)}s`));
+				},
+				Math.max(10, Math.min(5000, Math.floor(idleTimeoutMs / 4))),
+			);
+			this.idleTimer.unref?.();
+		}
 		this.preamble = options.preamble ? Buffer.from(options.preamble, "utf8") : null;
 		this.ready = new Promise<void>((resolve, reject) => {
 			this.resolveReady = resolve;
@@ -211,6 +236,16 @@ export class LinkPeer extends EventEmitter {
 
 	get closed(): boolean {
 		return this.isClosed;
+	}
+
+	/** When bytes last arrived from the other side (epoch ms): liveness even while a reply is queued behind a large transfer. */
+	get lastReceivedAt(): number {
+		return this.receivedAt;
+	}
+
+	/** Bytes waiting in the transport's write buffer. */
+	get bufferedBytes(): number {
+		return this.transport.writableLength;
 	}
 
 	/** Register a handler for incoming requests of `method`. */
@@ -308,6 +343,7 @@ export class LinkPeer extends EventEmitter {
 		if (this.isClosed) return;
 		this.isClosed = true;
 		this.closedError = err;
+		if (this.idleTimer) clearInterval(this.idleTimer);
 		const closeErr = new LinkRequestError("LINK_CLOSED", err?.message ?? "link closed");
 		for (const [id, entry] of this.pending) {
 			if (entry.timer) clearTimeout(entry.timer);
@@ -346,6 +382,9 @@ export class LinkPeer extends EventEmitter {
 	sendFrameSafe(type: number, stream: number, payload?: Buffer | string): void {
 		if (this.isClosed || this.transport.destroyed) return;
 		this.transport.write(encodeFrame(type, stream, payload));
+		if (this.transport.writableLength > this.maxBufferedBytes) {
+			this.destroy(new LinkProtocolError(`link write buffer overflow (${this.transport.writableLength} bytes queued): peer too slow or gone`));
+		}
 	}
 
 	/** @internal */
@@ -374,6 +413,7 @@ export class LinkPeer extends EventEmitter {
 
 	private onData(chunk: Buffer): void {
 		if (this.isClosed) return;
+		this.receivedAt = Date.now();
 		if (this.preamble) {
 			this.preambleBuffer = Buffer.concat([this.preambleBuffer, chunk]);
 			const index = this.preambleBuffer.indexOf(this.preamble);

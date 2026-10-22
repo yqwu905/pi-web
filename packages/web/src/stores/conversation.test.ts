@@ -33,7 +33,7 @@ vi.mock("../api/client", async (importOriginal) => ({
 
 import { ApiError, conversationRpc, getConversationSnapshot, replayConversation } from "../api/client";
 import { queryClient } from "../api/queryClient";
-import { getLiveConversation } from "./conversation";
+import { dialogDeadline, getLiveConversation } from "./conversation";
 
 const snapshotMock = vi.mocked(getConversationSnapshot);
 const replayMock = vi.mocked(replayConversation);
@@ -120,6 +120,43 @@ describe("live conversation registry", () => {
 		await vi.advanceTimersByTimeAsync(500);
 		expect(rpcMock).toHaveBeenCalledWith(convId, { command: { type: "get_session_stats" } });
 		expect(entry.getView().stats?.cost).toBe(1);
+	});
+
+	it("applies streaming deltas at once but notifies listeners once per frame", async () => {
+		snapshotMock.mockResolvedValueOnce(snap(5, convId));
+		const entry = getLiveConversation(convId);
+		release = entry.retain();
+		await settle();
+		const listener = vi.fn();
+		entry.subscribe(listener);
+		const push = fake.handlers.get(`conv:${convId}`);
+		push?.(ev(6, { type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "a" } } as never, convId));
+		push?.(ev(7, { type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "b" } } as never, convId));
+		expect(entry.getView().state.seq).toBe(7);
+		expect(listener).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(20);
+		expect(listener).toHaveBeenCalledTimes(1);
+		// Other records notify right away.
+		push?.(ev(8, { type: "agent_settled", aborted: false }, convId));
+		expect(listener).toHaveBeenCalledTimes(2);
+	});
+
+	it("times dialogs from when pi asked, also when only the snapshot shows them", async () => {
+		vi.setSystemTime(1_000_000);
+		const withDialog = snap(5, convId);
+		withDialog.snapshot.ui.pending = [{ type: "extension_ui_request", id: `d-${convId}`, method: "confirm", title: "?", timeout: 60_000 }];
+		withDialog.snapshot.uiRemainingMs = { [`d-${convId}`]: 10_000 };
+		snapshotMock.mockResolvedValueOnce(withDialog);
+		const entry = getLiveConversation(convId);
+		release = entry.retain();
+		await settle();
+		expect(dialogDeadline(`d-${convId}`)).toBe(1_000_000 + 10_000);
+		fake.handlers.get(`conv:${convId}`)?.(
+			ev(6, { type: "extension_ui_request", id: `e-${convId}`, method: "confirm", title: "?", timeout: 30_000 } as never, convId),
+		);
+		expect(dialogDeadline(`e-${convId}`)).toBe(1_000_000 + 30_000);
+		fake.handlers.get(`conv:${convId}`)?.(ev(7, { type: "pi_web_ui_resolved", id: `e-${convId}` } as never, convId));
+		expect(dialogDeadline(`e-${convId}`)).toBeUndefined();
 	});
 
 	it("fills gaps through /replay", async () => {

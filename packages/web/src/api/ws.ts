@@ -12,6 +12,7 @@
  * React code should use the hooks in ./hooks.ts (useTopic, useWsStatus, useWsReconnect).
  */
 import type { WsClientMessage, WsServerMessage, WsTopic } from "@pi-web/shared";
+import { wsProtocols } from "./auth-token";
 
 export type WsState = "connecting" | "open" | "reconnecting";
 
@@ -152,7 +153,7 @@ export class WsClient {
 	private connect(): void {
 		let socket: WebSocket;
 		try {
-			socket = new WebSocket(this.url());
+			socket = new WebSocket(this.url(), wsProtocols());
 		} catch {
 			this.scheduleReconnect();
 			return;

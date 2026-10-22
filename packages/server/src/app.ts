@@ -11,7 +11,7 @@ import type { HostSettings, SshConfigHost } from "@pi-web/shared";
 import Fastify from "fastify";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { AppContext } from "./core/types.js";
-import { createAccessControl } from "./routes/auth.js";
+import { clearLegacyCookie, createAccessControl, selectWsProtocol } from "./routes/auth.js";
 import type { AccessControl } from "./routes/auth.js";
 import { errorBody, toErrorResponse } from "./routes/errors.js";
 import { registerApiRoutes } from "./routes/index.js";
@@ -24,6 +24,10 @@ declare module "fastify" {
 	interface FastifyRequest {
 		/** True when access-token auth is disabled or the request carried a valid token. */
 		authenticated: boolean;
+	}
+	interface FastifyContextConfig {
+		/** Reachable without the access token. Every other route requires it (deny by default). */
+		public?: boolean;
 	}
 }
 
@@ -136,8 +140,45 @@ function isApiOrWs(path: string): boolean {
 	return path === "/api" || path.startsWith("/api/") || path === "/ws" || path.startsWith("/ws/");
 }
 
-/** Paths reachable without a token when access-token auth is on. */
-const PUBLIC_API = new Set(["/api/meta", "/api/auth/login"]);
+/**
+ * True when the path percent-encodes a character that never needs encoding (letters, digits,
+ * "-._~"). The router matches on the decoded path, so such a request would reach a route under
+ * a spelling that path-based checks do not recognise; no legitimate client sends one.
+ */
+export function hasEncodedUnreserved(path: string): boolean {
+	for (const match of path.matchAll(/%([0-9a-fA-F]{2})/g)) {
+		if (/[A-Za-z0-9\-._~]/.test(String.fromCharCode(Number.parseInt(match[1], 16)))) return true;
+	}
+	return false;
+}
+
+/** The static SPA route of @fastify/static (serves only files of the built web UI). */
+const STATIC_ROUTE = "/*";
+
+/**
+ * Content-Security-Policy for every response. Images come only from this origin (or data:/blob:
+ * previews), so model output cannot make the browser fetch remote URLs; fonts are the web UI's
+ * Google Fonts stylesheet.
+ */
+export function contentSecurityPolicy(hostHeader: string): string {
+	// Only the hostname of Host is validated: keep anything but host[:port] characters out of the header.
+	const host = hostHeader.trim();
+	const sockets = /^[A-Za-z0-9.\-[\]:]+$/.test(host) ? ` ws://${host} wss://${host}` : "";
+	return [
+		"default-src 'self'",
+		"script-src 'self'",
+		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+		"font-src 'self' data: https://fonts.gstatic.com",
+		"img-src 'self' data: blob:",
+		`connect-src 'self'${sockets}`,
+		"worker-src 'self' blob:",
+		"object-src 'none'",
+		"frame-src 'none'",
+		"frame-ancestors 'none'",
+		"base-uri 'none'",
+		"form-action 'self'",
+	].join("; ");
+}
 
 export async function buildApp(ctx: AppContext, options: AppOptions = {}): Promise<FastifyInstance> {
 	const auth = options.auth ?? createAccessControl(ctx);
@@ -146,6 +187,8 @@ export async function buildApp(ctx: AppContext, options: AppOptions = {}): Promi
 	const listenHosts = options.listenHost ? [options.listenHost] : [];
 
 	app.decorateRequest("authenticated", false);
+	const webDir = ctx.paths.webDistDir;
+	const spa = !!webDir && existsSync(join(webDir, "index.html"));
 
 	// JSON bodies: tolerate an empty body (POST without payload) and drop "__proto__" keys.
 	app.removeContentTypeParser("application/json");
@@ -167,7 +210,25 @@ export async function buildApp(ctx: AppContext, options: AppOptions = {}): Promi
 
 	// Registered before the security hook: its own onRequest hook marks upgrade requests so that a
 	// rejected handshake (reply sent from our hook) still gets its socket destroyed afterwards.
-	await app.register(fastifyWebsocket, { options: { maxPayload: 16 * 1024 * 1024 } });
+	await app.register(fastifyWebsocket, {
+		options: {
+			maxPayload: 16 * 1024 * 1024,
+			// The client offers "pi-web" plus its token as a second entry: never echo the token.
+			handleProtocols: (protocols: Set<string>) => selectWsProtocol(protocols),
+		},
+	});
+
+	/**
+	 * Auth is decided by the route the router matched (deny by default), never by the raw URL:
+	 * routes marked `config.public`, the static SPA files and the not-found handler (which only
+	 * serves the SPA shell or a 404) are open; everything else needs the token.
+	 */
+	const isPublicRoute = (request: FastifyRequest): boolean => {
+		if (request.routeOptions.config?.public === true) return true;
+		const url = request.routeOptions.url;
+		if (url === undefined) return true;
+		return spa && url === STATIC_ROUTE;
+	};
 
 	app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
 		reply.header("x-content-type-options", "nosniff");
@@ -178,6 +239,12 @@ export async function buildApp(ctx: AppContext, options: AppOptions = {}): Promi
 		const hostHeader = request.headers.host;
 		if (!isAllowedHost(hostHeader, settings, listenHosts)) {
 			return reply.code(403).send(errorBody("FORBIDDEN_HOST", "不允许的 Host 请求头"));
+		}
+		reply.header("content-security-policy", contentSecurityPolicy(hostHeader!));
+
+		const path = pathOf(request.url);
+		if (hasEncodedUnreserved(path)) {
+			return reply.code(400).send(errorBody("BAD_PATH", "请求路径包含不必要的转义字符"));
 		}
 
 		const isWebSocket = String(request.headers.upgrade ?? "").toLowerCase() === "websocket";
@@ -195,23 +262,13 @@ export async function buildApp(ctx: AppContext, options: AppOptions = {}): Promi
 			}
 		}
 
-		const path = pathOf(request.url);
+		clearLegacyCookie(request, reply);
 		if (!auth.enabled()) {
 			request.authenticated = true;
 			return;
 		}
-		// "/?token=…" bootstrap: set the cookie (when valid) and drop the token from the address bar.
-		if (request.method === "GET" && !isApiOrWs(path) && request.url.includes("token=")) {
-			const url = new URL(request.url, "http://localhost");
-			const token = url.searchParams.get("token");
-			if (token !== null) {
-				if (await auth.verify(token)) auth.setCookie(reply, token);
-				url.searchParams.delete("token");
-				return reply.redirect(url.pathname + url.search, 302);
-			}
-		}
 		request.authenticated = await auth.isAuthenticated(request);
-		if (request.authenticated || !isApiOrWs(path) || PUBLIC_API.has(path)) return;
+		if (request.authenticated || isPublicRoute(request)) return;
 		return reply.code(401).send(errorBody("UNAUTHORIZED", "需要访问令牌"));
 	});
 
@@ -225,7 +282,13 @@ export async function buildApp(ctx: AppContext, options: AppOptions = {}): Promi
 
 	const hub = options.hub ?? (isWsHub(ctx.hub) ? ctx.hub : undefined);
 	if (hub) {
-		app.get("/ws", { websocket: true }, (socket) => hub.handleSocket(socket));
+		app.get("/ws", { websocket: true }, (socket, request) => {
+			if (!request.authenticated) {
+				socket.close(1008, "unauthorized");
+				return;
+			}
+			hub.handleSocket(socket);
+		});
 	} else {
 		log.warn("event hub cannot serve sockets; /ws disabled");
 	}
@@ -238,8 +301,6 @@ export async function buildApp(ctx: AppContext, options: AppOptions = {}): Promi
 		{ prefix: "/api" },
 	);
 
-	const webDir = ctx.paths.webDistDir;
-	const spa = !!webDir && existsSync(join(webDir, "index.html"));
 	if (spa) {
 		await app.register(fastifyStatic, {
 			root: webDir!,

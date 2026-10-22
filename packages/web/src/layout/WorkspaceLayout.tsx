@@ -1,11 +1,13 @@
 import { FolderX } from "lucide-react";
 import { useEffect } from "react";
 import { Outlet, useLocation, useParams } from "react-router";
-import { useWorkspace } from "../api/hooks";
+import { useWorkspace, useWorkspaceSessions } from "../api/hooks";
 import { ButtonLink } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/Display";
 import { LoadingBlock } from "../components/ui/Spinner";
 import { parseRoute, paths } from "../lib/routes";
+import { findSessionById } from "../lib/sessions";
+import { useConvsStore } from "../stores/convs";
 import { WorkspaceTabs } from "../pages/workspace/WorkspaceTabs";
 import { useUiStore } from "../stores/ui";
 
@@ -23,6 +25,18 @@ export function WorkspaceLayout() {
 	useEffect(() => {
 		if (sessionId) rememberSession(workspaceId, sessionId);
 	}, [workspaceId, sessionId, rememberSession]);
+
+	// A remembered session that no longer exists (deleted, e.g. from another tab) is forgotten
+	// once the session list says so, unless a live conversation serves it (not listed yet).
+	const sessions = useWorkspaceSessions(workspaceId);
+	const lastSession = useUiStore((s) => s.lastSession[workspaceId]);
+	const convsById = useConvsStore((s) => s.byId);
+	useEffect(() => {
+		if (!lastSession || lastSession === sessionId || !sessions.isSuccess) return;
+		if (findSessionById(sessions.data, lastSession)) return;
+		if (Object.values(convsById).some((c) => c.info.sessionId === lastSession && c.info.status !== "exited")) return;
+		useUiStore.getState().forgetSession(workspaceId, lastSession);
+	}, [lastSession, sessionId, sessions.isSuccess, sessions.data, convsById, workspaceId]);
 
 	if (isLoading) return <LoadingBlock />;
 	if (!workspace) {

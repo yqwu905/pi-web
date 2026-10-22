@@ -1,6 +1,6 @@
 import type { RpcSlashCommand } from "@pi-web/shared";
 import { describe, expect, it } from "vitest";
-import { applyCommand, classifyInput, matchCommands, restoreQueuedText, slashToken, stripAnsi, visibleCommands } from "./composer";
+import { applyCommand, classifyInput, insertAt, matchCommands, restoreQueuedText, slashToken, stripAnsi, visibleCommands } from "./composer";
 
 const cmd = (name: string, source: RpcSlashCommand["source"] = "prompt", description?: string): RpcSlashCommand => ({ name, source, description });
 
@@ -79,5 +79,14 @@ describe("stripAnsi", () => {
 		expect(stripAnsi("\u001b[32m✓\u001b[0m done")).toBe("✓ done");
 		expect(stripAnsi("\u001b]8;;http://x\u0007link\u001b]8;;\u0007")).toBe("link");
 		expect(stripAnsi("plain")).toBe("plain");
+	});
+});
+
+describe("insertAt", () => {
+	it("adds a mention to the draft instead of replacing it", () => {
+		expect(insertAt("", 0, "@src/a.ts")).toEqual({ text: "@src/a.ts", cursor: 9 });
+		expect(insertAt("look at", 7, "@src/a.ts")).toEqual({ text: "look at @src/a.ts", cursor: 17 });
+		expect(insertAt("see  please", 4, "@x")).toEqual({ text: "see @x please", cursor: 6 });
+		expect(insertAt("draft", 99, "diff\nbody")).toEqual({ text: "draft\ndiff\nbody", cursor: 15 });
 	});
 });

@@ -116,6 +116,36 @@ describe("ConversationService.attach", () => {
 		expect(convEvents(fake, "c1").map((e) => e.seq)).toEqual([1, 2, 3, 4]);
 	});
 
+	it("keeps a conv.info that arrived during the replay instead of the older conv.list copy", async () => {
+		const { fake, agent } = await setup();
+		agent.addConv({ convId: "c1", cwd: "/home/dev/project" });
+		await connect(fake);
+		agent.setStatus("c1", "running");
+		await flush();
+		fake.connections.get("srv1").disconnectAgent();
+		await flush();
+		agent.emitRecord("c1", { type: "turn_start" });
+
+		const replayHandler = agent.handlers.get("conv.replay")!;
+		let releaseReplay!: () => void;
+		const gate = new Promise<void>((r) => (releaseReplay = r));
+		agent.handle("conv.replay", async (p) => {
+			await gate;
+			return replayHandler(p);
+		});
+		const attaching = fake.ctx.conversations.attach("srv1", agent.connect());
+		await until(() => agent.callsOf("conv.replay").length === 1);
+		// The run finishes while the replay round trip is in flight.
+		agent.setStatus("c1", "idle");
+		await flush();
+		releaseReplay();
+		await attaching;
+
+		expect(fake.ctx.conversations.get("c1")?.info).toMatchObject({ status: "idle", lastSeq: 3 });
+		expect(fake.connections.status("srv1").conversationsRunning).toBe(0);
+		expect(fake.hub.topic<ConversationView>("convs").at(-1)?.info.status).toBe("idle");
+	});
+
 	it("publishes a resync marker when the agent's buffer no longer covers the gap", async () => {
 		const { fake, agent } = await setup();
 		agent.addConv({ convId: "c1", cwd: "/home/dev/project", sessionFile: "/s/a.jsonl" });
@@ -306,7 +336,8 @@ describe("ConversationService commands", () => {
 		expect(linkTimeouts.filter(([method]) => method !== "conv.list")).toEqual([
 			["conv.start", CONV_START_TIMEOUT_MS + margin],
 			["conv.snapshot", CONV_SNAPSHOT_TIMEOUT_MS + margin],
-			["conv.send", RPC_TIMEOUT_MS + margin],
+			// A prompt may first auto-compact the session (an LLM call) before pi answers.
+			["conv.send", LONG_RPC_TIMEOUT_MS + margin],
 			["conv.send", LONG_RPC_TIMEOUT_MS + margin],
 			["conv.send", LONG_RPC_TIMEOUT_MS + margin],
 			["conv.send", 5000 + margin],

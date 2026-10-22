@@ -8,6 +8,11 @@ export type { TerminalDeps, TerminalOptions, TerminalQuery } from "./terminal.js
 /** GET /ws/term?serverId=…&cwd=…&cols=…&rows=… (WebSocket). Requires @fastify/websocket to be registered. */
 export function registerTerminalRoute(app: FastifyInstance, deps: TerminalDeps, options?: TerminalOptions): void {
 	app.get<{ Querystring: TerminalQuery }>("/ws/term", { websocket: true }, (socket, request) => {
+		// The onRequest hook already rejects unauthenticated handshakes; never open a shell without it.
+		if (!request.authenticated) {
+			socket.close(1008, "unauthorized");
+			return;
+		}
 		void handleTerminalSocket(deps, socket, request.query ?? {}, options);
 	});
 }

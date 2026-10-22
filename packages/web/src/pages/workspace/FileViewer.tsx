@@ -1,8 +1,9 @@
 import type { FsReadResult, GitFileStatus } from "@pi-web/shared";
 import { Check, Copy, Download, File as FileIcon, FileQuestion, FileWarning, Lock, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type MouseEvent, useEffect, useState } from "react";
 import { Link } from "react-router";
-import { errorMessage, workspaceDownloadUrl } from "../../api/client";
+import { getAccessToken } from "../../api/auth-token";
+import { authorizedUrl, errorMessage, workspaceDownloadUrl } from "../../api/client";
 import { CodeBlock, copyText } from "../../components/CodeBlock";
 import { Markdown } from "../../components/Markdown";
 import { Button, buttonClass } from "../../components/ui/Button";
@@ -12,6 +13,7 @@ import { LoadingBlock } from "../../components/ui/Spinner";
 import { cn } from "../../lib/cn";
 import { formatBytes } from "../../lib/format";
 import { isImagePath } from "../../lib/languages";
+import { toast } from "../../stores/toasts";
 import { useUiStore } from "../../stores/ui";
 import { fileMetaText, imageDataUrl, previewKind } from "./lib/file-view";
 import { gitBadge, gitStateText } from "./lib/git";
@@ -67,8 +69,24 @@ function CopyPathButton({ path }: { path: string }) {
 }
 
 function DownloadLink({ workspaceId, path, className, label = "下载" }: { workspaceId: string; path: string; className?: string; label?: string }) {
+	const href = workspaceDownloadUrl(workspaceId, path);
+	// A plain link cannot send the access token: fetch a single-use ticket for this download first.
+	const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
+		if (!getAccessToken()) return;
+		e.preventDefault();
+		authorizedUrl(href)
+			.then((url) => {
+				const a = document.createElement("a");
+				a.href = url;
+				a.download = baseName(path);
+				document.body.appendChild(a);
+				a.click();
+				a.remove();
+			})
+			.catch((err: unknown) => toast.error(errorMessage(err), { title: "下载失败" }));
+	};
 	return (
-		<a href={workspaceDownloadUrl(workspaceId, path)} download={baseName(path)} className={cn(ACTION, "text-fg hover:text-fg", className)}>
+		<a href={href} download={baseName(path)} onClick={onClick} className={cn(ACTION, "text-fg hover:text-fg", className)}>
 			<Download size={13} aria-hidden="true" />
 			{label}
 		</a>

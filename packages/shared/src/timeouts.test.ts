@@ -8,9 +8,11 @@ import {
 } from "./timeouts.js";
 
 describe("conversation timeouts", () => {
-	it("gives long-running commands and extension slash commands the long timeout", () => {
+	it("gives long-running commands and every prompt the long timeout", () => {
 		expect(defaultCommandTimeout({ type: "get_state" })).toBe(RPC_TIMEOUT_MS);
-		expect(defaultCommandTimeout({ type: "prompt", message: "hello /x" })).toBe(RPC_TIMEOUT_MS);
+		expect(defaultCommandTimeout({ type: "steer", message: "x" })).toBe(RPC_TIMEOUT_MS);
+		// pi may auto-compact (an LLM call) before it answers a prompt.
+		expect(defaultCommandTimeout({ type: "prompt", message: "hello /x" })).toBe(LONG_RPC_TIMEOUT_MS);
 		expect(defaultCommandTimeout({ type: "prompt", message: "/deploy now" })).toBe(LONG_RPC_TIMEOUT_MS);
 		for (const type of ["compact", "export_html", "abort", "bash", "fork", "clone", "new_session", "switch_session"]) {
 			expect(defaultCommandTimeout({ type })).toBe(LONG_RPC_TIMEOUT_MS);

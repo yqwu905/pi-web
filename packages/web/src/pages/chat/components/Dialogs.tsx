@@ -6,7 +6,8 @@ import { invalidateSessions } from "../../../api/hooks";
 import { Button, Callout, Field, Input, LoadingBlock, Modal, Textarea, toast } from "../../../components/ui";
 import { cn } from "../../../lib/cn";
 import { formatTokens } from "../../../lib/format";
-import type { ConversationHandle } from "../../../stores/conversation";
+import { type ConversationHandle, dialogDeadline } from "../../../stores/conversation";
+import { useUiStore } from "../../../stores/ui";
 import { firstSeen, useNow } from "../hooks";
 
 export type DialogRequest = Extract<ExtensionUIRequest, { method: "select" | "confirm" | "input" | "editor" }>;
@@ -36,17 +37,26 @@ function optionClass(selected: boolean, bordered: boolean) {
 // ---------- extension UI dialogs ----------
 
 /** select / confirm / input / editor requests from extensions, with the timeout countdown. */
+/** Activations right after an unsolicited dialog opened are ignored: an Enter meant for the composer must not answer it. */
+const ARM_DELAY_MS = 400;
+
 export function ExtensionUiDialog({ request, onRespond }: { request: DialogRequest; onRespond: (response: ExtensionUIResponse) => Promise<void> }) {
 	const [busy, setBusy] = useState(false);
 	const [selected, setSelected] = useState(0);
 	const [value, setValue] = useState(request.method === "editor" ? (request.prefill ?? "") : "");
-	const seenAt = firstSeen.get(`ui:${request.id}`);
+	const [openedAt] = useState(() => Date.now());
+	// pi's timer started when it asked (possibly before this tab saw the dialog, or while another dialog was shown).
+	const deadline = request.timeout ? (dialogDeadline(request.id) ?? firstSeen.get(`ui:${request.id}`) + request.timeout) : null;
 	const now = useNow(250, Boolean(request.timeout));
-	const remaining = request.timeout ? Math.max(0, request.timeout - (now - seenAt)) : null;
+	const remaining = deadline !== null ? Math.max(0, deadline - now) : null;
+	const expired = remaining === 0;
 	const listRef = useRef<HTMLDivElement>(null);
 
 	const respond = async (response: ExtensionUIResponse) => {
 		if (busy) return;
+		// pi already took the default answer; the dialog closes once that arrives.
+		if (expired && !("cancelled" in response)) return;
+		if (!("cancelled" in response) && Date.now() - openedAt < ARM_DELAY_MS) return;
 		setBusy(true);
 		try {
 			await onRespond(response);
@@ -63,7 +73,7 @@ export function ExtensionUiDialog({ request, onRespond }: { request: DialogReque
 	}, [request.method, selected]);
 
 	let hint: string;
-	if (remaining !== null) hint = remaining > 0 ? `${Math.ceil(remaining / 1000)} 秒后自动${request.method === "confirm" ? "拒绝" : "取消"}` : "已超时";
+	if (remaining !== null) hint = remaining > 0 ? `${Math.ceil(remaining / 1000)} 秒后自动${request.method === "confirm" ? "拒绝" : "取消"}` : "已超时，pi 已按默认处理";
 	else if (request.method === "select") hint = "↑ ↓ 选择 · Enter 确定";
 	else if (request.method === "editor") hint = "Ctrl+Enter 保存 · Esc 取消";
 	else if (request.method === "input") hint = "Enter 确定 · Esc 取消";
@@ -96,7 +106,7 @@ export function ExtensionUiDialog({ request, onRespond }: { request: DialogReque
 					<Button onClick={cancel} disabled={busy}>
 						取消
 					</Button>
-					<Button variant="primary" onClick={() => submitValue(request.options[selected])} loading={busy} disabled={request.options.length === 0}>
+					<Button variant="primary" onClick={() => submitValue(request.options[selected])} loading={busy} disabled={request.options.length === 0 || expired}>
 						确定
 					</Button>
 				</>
@@ -104,12 +114,13 @@ export function ExtensionUiDialog({ request, onRespond }: { request: DialogReque
 			break;
 		case "confirm":
 			body = request.message ? <p className="m-0 text-sm leading-5 break-words whitespace-pre-wrap text-fg-2">{request.message}</p> : null;
+			// Focus starts on 拒绝: the dialog appears unasked, often while the user is typing.
 			footer = (
 				<>
-					<Button onClick={() => void respond({ type: "extension_ui_response", id: request.id, confirmed: false })} disabled={busy}>
+					<Button data-autofocus onClick={() => void respond({ type: "extension_ui_response", id: request.id, confirmed: false })} disabled={busy || expired}>
 						拒绝
 					</Button>
-					<Button variant="primary" data-autofocus onClick={() => void respond({ type: "extension_ui_response", id: request.id, confirmed: true })} loading={busy}>
+					<Button variant="primary" onClick={() => void respond({ type: "extension_ui_response", id: request.id, confirmed: true })} loading={busy} disabled={expired}>
 						允许
 					</Button>
 				</>
@@ -132,7 +143,7 @@ export function ExtensionUiDialog({ request, onRespond }: { request: DialogReque
 					<Button onClick={cancel} disabled={busy}>
 						取消
 					</Button>
-					<Button variant="primary" type="submit" form={`ui-${request.id}`} loading={busy}>
+					<Button variant="primary" type="submit" form={`ui-${request.id}`} loading={busy} disabled={expired}>
 						确定
 					</Button>
 				</>
@@ -160,7 +171,7 @@ export function ExtensionUiDialog({ request, onRespond }: { request: DialogReque
 					<Button onClick={cancel} disabled={busy}>
 						取消
 					</Button>
-					<Button variant="primary" onClick={() => submitValue(value)} loading={busy}>
+					<Button variant="primary" onClick={() => submitValue(value)} loading={busy} disabled={expired}>
 						保存
 					</Button>
 				</>
@@ -433,6 +444,7 @@ export function DeleteSessionDialog({
 	}
 	const { serverId, sessionFile, isLive, stop } = conv;
 	const workspaceId = conv.workspace?.config.id;
+	const deletedIds = [conv.sessionId, conv.session?.id].filter((id): id is string => Boolean(id));
 
 	const remove = async () => {
 		if (!serverId || !sessionFile || busy) return;
@@ -442,7 +454,11 @@ export function DeleteSessionDialog({
 			// The agent refuses to delete a file a running pi process still writes to.
 			if (isLive) await stop();
 			await deleteSession(serverId, sessionFile);
-			if (workspaceId) void invalidateSessions(workspaceId);
+			if (workspaceId) {
+				// The 对话 tab, "/" and the Files/Git links must not lead back to the deleted session.
+				for (const id of deletedIds) useUiStore.getState().forgetSession(workspaceId, id);
+				void invalidateSessions(workspaceId);
+			}
 			toast.success("会话已移到服务器的回收站");
 			onClose();
 			onDeleted();

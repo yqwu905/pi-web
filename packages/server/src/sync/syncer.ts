@@ -42,6 +42,12 @@ export interface SyncerOptions {
 	/** Host Agent Skills directory; default <homeDir>/.agents/skills. */
 	agentsSkillsDir?: string;
 	usePolling?: boolean;
+	/**
+	 * First retry delay after a failed non-manual sync (OAuth push, auto, connect, deploy) to a
+	 * server that is still connected; doubles per attempt up to 10 min (default 30s). Keeps a
+	 * refreshed OAuth access token from expiring on a server whose link never dropped.
+	 */
+	retryBaseMs?: number;
 }
 
 /** Persisted per-server sync state (store key `sync:<serverId>`). */
@@ -70,6 +76,7 @@ interface Prepared {
 }
 
 const HASH_CACHE_KEY = "syncHashCache";
+const RETRY_MAX_MS = 10 * 60_000;
 const MANIFEST_TIMEOUT_MS = 5 * 60_000;
 const ALWAYS_RECORDED: ReadonlySet<SyncRecord["trigger"]> = new Set(["manual", "deploy"]);
 const WATCH_IGNORED_TOP = new Set(["sessions", "trust.json", "bin", "tools", "external-cache"]);
@@ -100,6 +107,8 @@ class SyncerImpl extends EventEmitter implements Syncer {
 	private readonly plans = new Map<string, CachedPlan>();
 	private readonly states = new Map<string, ServerSyncState>();
 	private readonly planRefreshTimers = new Map<string, NodeJS.Timeout>();
+	private readonly retries = new Map<string, { timer?: NodeJS.Timeout; attempt: number }>();
+	private readonly retryBaseMs: number;
 	private readonly lastPublishedStatus = new Map<string, string>();
 	private watcher: FSWatcher | undefined;
 	private readonly watchedExtra = new Set<string>();
@@ -114,6 +123,7 @@ class SyncerImpl extends EventEmitter implements Syncer {
 	) {
 		super();
 		this.debounceMs = options.debounceMs ?? 2000;
+		this.retryBaseMs = options.retryBaseMs ?? 30_000;
 		this.writeFinishMs = options.writeFinishMs ?? 500;
 		this.homeDir = options.homeDir ?? homedir();
 		this.agentsSkillsDir = options.agentsSkillsDir ?? join(this.homeDir, ".agents", "skills");
@@ -152,7 +162,13 @@ class SyncerImpl extends EventEmitter implements Syncer {
 	}
 
 	run(serverId: string, trigger: SyncRecord["trigger"]): Promise<SyncRecord> {
+		return this.runItems(serverId, trigger);
+	}
+
+	/** run() limited to `items` (default: every enabled item). Only full runs coalesce. */
+	private runItems(serverId: string, trigger: SyncRecord["trigger"], items?: SyncItemKey[]): Promise<SyncRecord> {
 		if (!this.ctx.store.getServer(serverId)) return Promise.reject(this.notFound());
+		if (items) return this.serialize(serverId, () => this.runNow(serverId, trigger, items));
 		const coalesce = trigger === "auto" || trigger === "connect";
 		if (coalesce) {
 			const queued = this.queued.get(serverId);
@@ -209,6 +225,8 @@ class SyncerImpl extends EventEmitter implements Syncer {
 		this.statusTimer = undefined;
 		for (const timer of this.planRefreshTimers.values()) clearTimeout(timer);
 		this.planRefreshTimers.clear();
+		for (const retry of this.retries.values()) if (retry.timer) clearTimeout(retry.timer);
+		this.retries.clear();
 		const watcher = this.watcher;
 		this.watcher = undefined;
 		this.watchedExtra.clear();
@@ -233,10 +251,17 @@ class SyncerImpl extends EventEmitter implements Syncer {
 	onAgentConnected(serverId: string): void {
 		const server = this.ctx.store.getServer(serverId);
 		if (!server || server.jumpOnly) return;
-		if (this.state(serverId).pending || server.sync.auto) {
+		const state = this.state(serverId);
+		if (server.sync.auto) {
 			this.run(serverId, "connect").catch((err: unknown) =>
 				this.log.warn("sync on connect failed", { serverId, error: errorMessage(err) }),
 			);
+		} else if (state.pending) {
+			// Manual sync: finish only what failed earlier (e.g. an OAuth push), never a full unapproved sync.
+			const items = this.pendingFor(server);
+			const done = items.length > 0 ? this.runItems(serverId, "connect", items) : this.clearPending(serverId);
+			done.catch((err: unknown) => this.log.warn("sync on connect failed", { serverId, error: errorMessage(err) }));
+			this.schedulePlanRefresh(serverId, 0);
 		} else {
 			// OAuth access tokens may have been refreshed while the server was offline.
 			if (server.sync.items.auth) void this.pushAuth([serverId]);
@@ -324,7 +349,7 @@ class SyncerImpl extends EventEmitter implements Syncer {
 			scope = prepared.items;
 			const { computed } = prepared;
 			let result: SyncApplyResult = { written: 0, deleted: 0, backedUp: [], errors: [] };
-			if (computed.writes.length > 0 || computed.deletes.length > 0) {
+			if (computed.writes.length > 0 || computed.deletes.length > 0 || computed.adopt.length > 0) {
 				result = await executePlan({
 					computed,
 					connection: prepared.connection,
@@ -349,8 +374,10 @@ class SyncerImpl extends EventEmitter implements Syncer {
 			const state = this.state(serverId);
 			const next: ServerSyncState = { ...state, lastSyncAt: now };
 			if (result.written + result.deleted > 0) next.lastChangeAt = now;
-			if (record.status === "ok") {
-				const remaining = (state.pendingItems ?? []).filter((item) => !prepared.items.includes(item));
+			const failedItems = [...new Set(result.errors.map((e) => itemForPath(e.path)).filter((i): i is SyncItemKey => !!i))];
+			const remaining = (state.pendingItems ?? []).filter((item) => !prepared.items.includes(item) || failedItems.includes(item));
+			if (trigger !== "manual") for (const item of failedItems) if (!remaining.includes(item)) remaining.push(item);
+			if (record.status === "ok" || trigger !== "manual") {
 				next.pendingItems = remaining;
 				next.pending = remaining.length > 0;
 			}
@@ -368,6 +395,8 @@ class SyncerImpl extends EventEmitter implements Syncer {
 			if (trigger !== "manual" && server) await this.markPending(serverId, scope ?? enabledItems(server.sync));
 		}
 		this.setRunning(serverId, -1);
+		if (record.status === "ok" && !this.state(serverId).pending) this.resetRetry(serverId);
+		else if (trigger !== "manual" && this.state(serverId).pending) this.scheduleRetry(serverId);
 		const changed = record.added + record.updated + record.deleted > 0;
 		if (ALWAYS_RECORDED.has(trigger) || changed || record.status === "error") {
 			await this.ctx.store.appendSyncRecord(record).catch((err: unknown) =>
@@ -457,6 +486,53 @@ class SyncerImpl extends EventEmitter implements Syncer {
 		await this.ctx.store.setState(`sync:${serverId}`, state).catch((err: unknown) =>
 			this.log.warn("failed to persist sync state", { serverId, error: errorMessage(err) }),
 		);
+	}
+
+	/** Pending items that are still enabled for the server. */
+	private pendingFor(server: ServerConfig): SyncItemKey[] {
+		const enabled = new Set(enabledItems(server.sync));
+		return (this.state(server.id).pendingItems ?? []).filter((item) => enabled.has(item));
+	}
+
+	private async clearPending(serverId: string): Promise<SyncRecord | undefined> {
+		await this.saveState(serverId, { ...this.state(serverId), pending: false, pendingItems: [] });
+		this.pushRuntimeStatus(serverId);
+		return undefined;
+	}
+
+	/**
+	 * A non-manual sync failed but the server may still be connected (upload error, apply
+	 * timeout, full remote disk): retry the pending items with backoff instead of waiting for a
+	 * reconnect. Offline servers are handled by onAgentConnected.
+	 */
+	private scheduleRetry(serverId: string): void {
+		if (this.stopped) return;
+		const retry = this.retries.get(serverId) ?? { attempt: 0 };
+		if (retry.timer) return;
+		const delay = Math.min(RETRY_MAX_MS, this.retryBaseMs * 2 ** retry.attempt);
+		retry.attempt++;
+		retry.timer = setTimeout(() => {
+			retry.timer = undefined;
+			const server = this.ctx.store.getServer(serverId);
+			if (this.stopped || !server || !this.isOnline(serverId) || !this.state(serverId).pending) return;
+			const items = server.sync.auto ? undefined : this.pendingFor(server);
+			if (items && items.length === 0) {
+				void this.clearPending(serverId);
+				return;
+			}
+			this.log.info("retrying failed sync", { serverId, attempt: retry.attempt, items: items ?? "all" });
+			this.runItems(serverId, server.sync.auto ? "auto" : "connect", items).catch((err: unknown) =>
+				this.log.warn("sync retry failed", { serverId, error: errorMessage(err) }),
+			);
+		}, delay);
+		retry.timer.unref?.();
+		this.retries.set(serverId, retry);
+	}
+
+	private resetRetry(serverId: string): void {
+		const retry = this.retries.get(serverId);
+		if (retry?.timer) clearTimeout(retry.timer);
+		this.retries.delete(serverId);
 	}
 
 	private async markPending(serverId: string, items: readonly SyncItemKey[]): Promise<void> {

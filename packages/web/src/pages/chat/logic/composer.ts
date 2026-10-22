@@ -104,3 +104,14 @@ const ANSI_RE = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u0
 export function stripAnsi(text: string): string {
 	return text.replace(ANSI_RE, "");
 }
+
+/** Appends `insert` to `current` at `cursor`, separated by a space or line break as needed. */
+export function insertAt(current: string, cursor: number, insert: string): { text: string; cursor: number } {
+	const at = Math.max(0, Math.min(cursor, current.length));
+	const before = current.slice(0, at);
+	const after = current.slice(at);
+	const lead = before && !/\s$/.test(before) ? (insert.includes("\n") ? "\n" : " ") : "";
+	const trail = after && !/^\s/.test(after) ? " " : "";
+	const text = `${before}${lead}${insert}${trail}${after}`;
+	return { text, cursor: before.length + lead.length + insert.length };
+}

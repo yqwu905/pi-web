@@ -9,6 +9,8 @@ import { createSecrets } from "../../src/core/secrets.js";
 import { createServerConfig, createStore, type JsonStore } from "../../src/core/store.js";
 import type { ConnectionManager } from "../../src/core/types.js";
 import { createDeployer, type PiWebDeployer } from "../../src/deploy/deployer.js";
+import { MIN_PI_VERSION } from "../../src/deploy/scripts.js";
+import serverPackage from "../../package.json" with { type: "json" };
 
 let dir: string;
 let store: JsonStore;
@@ -103,6 +105,31 @@ describe("Deployer (no SSH)", () => {
 		expect(await deployer.targetPiVersion()).toMatch(/^\d+\.\d+\.\d+/);
 		await store.updateSettings({ piVersionPolicy: "pinned", piPinnedVersion: "1.3.9" });
 		expect(await deployer.targetPiVersion()).toBe("1.3.9");
+	});
+
+	it("deploys the bundled pi instead of an unsupported host pi", async () => {
+		let hostVersion = "0.73.1"; // e.g. the deprecated @mariozechner/pi-coding-agent on PATH
+		const withHost = createDeployer({
+			version: "test",
+			paths: createHostPaths({ dataDir: dir, agentDistDir: path.join(dir, "agent-dist"), webDistDir: null, env: {} }),
+			log: createNullLogger(),
+			store,
+			secrets,
+			connections: {} as ConnectionManager,
+			hostPi: { version: async () => hostVersion },
+		});
+		const { VERSION: bundled } = await import("@earendil-works/pi-coding-agent");
+		expect(await withHost.targetPiVersion()).toBe(bundled);
+		hostVersion = "99.0.0";
+		expect(await withHost.targetPiVersion()).toBe("99.0.0");
+		expect(MIN_PI_VERSION).toBe(serverPackage.dependencies["@earendil-works/pi-coding-agent"].replace(/^[\^~]/, ""));
+	});
+
+	it("runs the pi CLI recorded at install time", async () => {
+		const server = store.getServer("s")!;
+		server.deployed = { ...deployed!, piCli: "node_modules/@earendil-works/pi-coding-agent/dist/cli.js" };
+		await store.saveServer(server);
+		expect((await deployer.buildAgentConfig("s")).piCliPath).toBe("/home/dev/.pi-web/pi/current/node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
 	});
 
 	it("lists cache entries with their users", async () => {

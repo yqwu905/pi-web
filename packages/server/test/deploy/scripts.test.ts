@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readlinkSync } from "node:fs";
+import { existsSync, readFileSync, readlinkSync, statSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	compareVersions,
 	installScript,
+	normalizeRemoteRoot,
 	mapArch,
 	parseKeyValues,
 	parseProbeOutput,
@@ -102,20 +103,32 @@ describe("probe", () => {
 	});
 });
 
-async function fakeBundles(root: string) {
+async function fakeBundles(root: string, binPath = "dist/bundle/cli.js") {
 	const nodeDir = "node-v22.99.0-linux-x64";
 	const nodeSrc = path.join(root, "src-node");
 	await mkdir(path.join(nodeSrc, nodeDir, "bin"), { recursive: true });
-	// A fake "node" that prints its arguments.
-	await writeFile(path.join(nodeSrc, nodeDir, "bin", "node"), '#!/bin/sh\necho "fake-node $*"\necho "AGENT=$PI_CODING_AGENT_DIR OFFLINE=$PI_OFFLINE PROXY=$HTTPS_PROXY"\n');
+	// A fake "node" that prints its arguments (and answers -v and the install's bin.pi lookup).
+	await writeFile(
+		path.join(nodeSrc, nodeDir, "bin", "node"),
+		[
+			"#!/bin/sh",
+			'if [ "$1" = "-v" ]; then echo v22.99.0; exit 0; fi',
+			'if [ "$1" = "-e" ]; then sed -n \'s/.*"pi": *"\\([^"]*\\)".*/\\1/p\' "$3"; exit 0; fi',
+			'echo "fake-node $*"',
+			'echo "AGENT=$PI_CODING_AGENT_DIR OFFLINE=$PI_OFFLINE PROXY=$HTTPS_PROXY"',
+			"",
+		].join("\n"),
+	);
 	await chmod(path.join(nodeSrc, nodeDir, "bin", "node"), 0o755);
 	const nodeTar = path.join(root, "node.tar.gz");
 	execFileSync("tar", ["-czf", nodeTar, "-C", nodeSrc, nodeDir]);
 
 	const piSrc = path.join(root, "src-pi");
-	const cli = path.join(piSrc, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle");
+	const pkg = path.join(piSrc, "node_modules", "@earendil-works", "pi-coding-agent");
+	const cli = path.join(pkg, path.dirname(binPath));
 	await mkdir(cli, { recursive: true });
-	await writeFile(path.join(cli, "cli.js"), "console.log('pi');\n");
+	await writeFile(path.join(pkg, binPath), "console.log('pi');\n");
+	await writeFile(path.join(pkg, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: binPath } }));
 	await writeFile(path.join(piSrc, "package.json"), "{}\n");
 	const piTar = path.join(root, "pi.tar.gz");
 	execFileSync("tar", ["-czf", piTar, "-C", piSrc, "node_modules", "package.json"]);
@@ -149,6 +162,8 @@ describe("install", () => {
 		const result = sh(installScript(params));
 		expect(result.stderr).toBe("");
 		expect(parseKeyValues(result.stdout).install).toBe("ok");
+		expect(parseKeyValues(result.stdout).pi_cli).toBe("node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js");
+		expect(existsSync(path.join(R, ".pi-web-root"))).toBe(true);
 		expect(readlinkSync(path.join(R, "runtime", "current"))).toBe(bundles.nodeDir);
 		expect(readlinkSync(path.join(R, "pi", "current"))).toBe("1.4.0");
 		expect(readFileSync(path.join(R, "daemon", "VERSION"), "utf8").trim()).toBe("9.9.9");
@@ -174,6 +189,46 @@ describe("install", () => {
 		expect(parseKeyValues(again.stdout).install).toBe("ok");
 		expect(existsSync(path.join(R, "pi", "1.4.0", "marker"))).toBe(true);
 	}, 30_000);
+
+	it("runs the CLI named by bin.pi of the installed package", async () => {
+		const R = path.join(home, ".pi-web");
+		const upload = path.join(R, ".upload");
+		await mkdir(upload, { recursive: true });
+		const bundles = await fakeBundles(dir, "dist/cli.js");
+		for (const f of ["node.tar.gz", "pi.tar.gz"]) execFileSync("cp", [path.join(dir, f), path.join(upload, f)]);
+		const result = sh(
+			installScript({
+				remoteRoot: R,
+				agentDir: path.join(R, "agent"),
+				nodeDir: bundles.nodeDir,
+				piVersion: "1.5.0",
+				node: { archive: path.join(upload, "node.tar.gz"), sha256: sha256(bundles.nodeTar) },
+				pi: { archive: path.join(upload, "pi.tar.gz"), sha256: sha256(bundles.piTar) },
+				force: false,
+			}),
+		);
+		expect(parseKeyValues(result.stdout)).toMatchObject({ install: "ok", pi_cli: "node_modules/@earendil-works/pi-coding-agent/dist/cli.js" });
+		const run = spawnSync(path.join(R, "bin", "pi"), [], { encoding: "utf8", env: { PATH: "/usr/bin:/bin", HOME: home } });
+		expect(run.stdout).toContain(`fake-node ${R}/pi/current/node_modules/@earendil-works/pi-coding-agent/dist/cli.js`);
+	}, 30_000);
+
+	it("never installs into the home directory, its parents or an unrelated existing directory", async () => {
+		const bundles = await fakeBundles(dir);
+		const base = { agentDir: path.join(home, "agent"), nodeDir: bundles.nodeDir, piVersion: "1.4.0", force: false };
+		for (const R of [home, path.dirname(home)]) {
+			const result = sh(installScript({ ...base, remoteRoot: R }));
+			expect(result.status, R).not.toBe(0);
+			expect(parseKeyValues(result.stdout).error).toContain("refusing to install");
+		}
+		const tools = path.join(home, "tools");
+		await mkdir(path.join(tools, ".upload"), { recursive: true });
+		await writeFile(path.join(tools, "my-script.sh"), "mine");
+		const foreign = sh(installScript({ ...base, remoteRoot: tools }));
+		expect(parseKeyValues(foreign.stdout).error).toContain("not a Pi-Web install directory");
+		expect(readFileSync(path.join(tools, "my-script.sh"), "utf8")).toBe("mine");
+		expect(existsSync(path.join(tools, "runtime"))).toBe(false);
+		expect(existsSync(path.join(tools, ".upload"))).toBe(false);
+	});
 
 	it("rejects a corrupted upload", async () => {
 		const R = path.join(home, ".pi-web");
@@ -210,22 +265,83 @@ describe("install", () => {
 });
 
 describe("uninstall", () => {
-	it("backs up sessions and removes the root", async () => {
+	it("keeps sessions in a private backup folder and removes the root", async () => {
 		const R = path.join(home, ".pi-web");
-		await mkdir(path.join(R, "agent", "sessions", "--x--"), { recursive: true });
-		await writeFile(path.join(R, "agent", "sessions", "--x--", "s.jsonl"), "{}\n");
+		await mkdir(path.join(R, "agent", "sessions", "--x--"), { recursive: true, mode: 0o755 });
+		await writeFile(path.join(R, "agent", "sessions", "--x--", "s.jsonl"), "{}\n", { mode: 0o644 });
+		await mkdir(path.join(R, "state", "backup", "20250101-x"), { recursive: true });
+		await writeFile(path.join(R, "state", "backup", "20250101-x", "auth.json"), "original");
+		await writeFile(path.join(R, ".pi-web-root"), "pi-web install root\n");
 		const result = sh(uninstallScript({ remoteRoot: "~/.pi-web", keepSessions: true, timestamp: "20260101-000000" }));
 		const kv = parseKeyValues(result.stdout);
 		expect(kv.uninstall).toBe("ok");
-		expect(kv.backup).toBe(path.join(home, "pi-web-sessions-backup-20260101-000000"));
+		expect(kv.backup).toBe(path.join(home, "pi-web-backups", "sessions-20260101-000000"));
 		expect(existsSync(path.join(kv.backup, "--x--", "s.jsonl"))).toBe(true);
+		// Other users cannot read the transcripts once they leave the 0700 root.
+		expect(statSync(path.join(home, "pi-web-backups")).mode & 0o777).toBe(0o700);
+		expect(statSync(path.join(kv.backup, "--x--", "s.jsonl")).mode & 0o077).toBe(0);
+		expect(statSync(path.join(kv.backup, "--x--")).mode & 0o077).toBe(0);
+		// Sync backups of the user's own files (shared agent dir) survive too.
+		expect(readFileSync(path.join(kv.sync_backup, "20250101-x", "auth.json"), "utf8")).toBe("original");
 		expect(existsSync(R)).toBe(false);
 	});
 
-	it("refuses to delete the home directory", () => {
-		const result = sh(uninstallScript({ remoteRoot: "~", keepSessions: false, timestamp: "t" }));
+	it("only removes what pi-web created", async () => {
+		const R = path.join(home, "opt");
+		await mkdir(path.join(R, "daemon"), { recursive: true });
+		await writeFile(path.join(R, "daemon", "VERSION"), "0.1.0\n"); // an install that predates the marker
+		await mkdir(path.join(R, "runtime"), { recursive: true });
+		await writeFile(path.join(R, "notes.txt"), "user data");
+		const kv = parseKeyValues(sh(uninstallScript({ remoteRoot: R, keepSessions: false, timestamp: "t" })).stdout);
+		expect(kv.uninstall).toBe("ok");
+		expect(kv.kept_root).toBe(R);
+		expect(readFileSync(path.join(R, "notes.txt"), "utf8")).toBe("user data");
+		expect(existsSync(path.join(R, "runtime"))).toBe(false);
+	});
+
+	it("refuses the home directory, its parents and directories that are not pi-web roots", async () => {
+		expect(sh(uninstallScript({ remoteRoot: "~", keepSessions: false, timestamp: "t" })).status).toBe(3);
+		expect(sh(uninstallScript({ remoteRoot: path.dirname(home), keepSessions: false, timestamp: "t" })).status).toBe(3);
+		const data = path.join(home, "data");
+		await mkdir(data, { recursive: true });
+		await writeFile(path.join(data, "important"), "x");
+		const result = sh(uninstallScript({ remoteRoot: data, keepSessions: false, timestamp: "t" }));
 		expect(result.status).toBe(3);
+		expect(result.stderr).toContain("not a Pi-Web install directory");
+		expect(existsSync(path.join(data, "important"))).toBe(true);
 		expect(existsSync(home)).toBe(true);
+		// Nothing installed: nothing to do.
+		expect(parseKeyValues(sh(uninstallScript({ remoteRoot: "~/.never", keepSessions: true, timestamp: "t" })).stdout).uninstall).toBe("ok");
+	});
+});
+
+describe("remote root", () => {
+	it("normalizes before validating", () => {
+		expect(normalizeRemoteRoot("~/.pi-web/")).toBe("~/.pi-web");
+		expect(normalizeRemoteRoot("/opt//pi-web/./x/")).toBe("/opt/pi-web/x");
+		for (const bad of ["~", "~/", "~//", "/", "//", "/./", "~/.", "relative", "~/a/../..", "/opt/../etc"]) {
+			expect(() => normalizeRemoteRoot(bad), bad).toThrow();
+		}
+	});
+
+	it("reports roots that are the home directory, its parents or foreign directories", async () => {
+		const parse = (extra: string) =>
+			parseProbeOutput(
+				`@@os=Linux\n@@arch=x86_64\n@@glibc=2.36\n@@tar=1\n@@gzip=1\n@@home=/home/u\n@@loaders=/lib64/ld-linux-x86-64.so.2,\n${extra}\n@@done=1\n`,
+				true,
+			).issues;
+		expect(parse("@@root=/home/u/.pi-web\n@@root_state=missing")).toEqual([]);
+		expect(parse("@@root=/home\n@@root_state=foreign").join()).toContain("家目录或其上级目录");
+		expect(parse("@@root=/home/u/tools\n@@root_state=foreign").join()).toContain("不是 Pi-Web 的安装目录");
+		expect(parse("@@root=/home/u/.pi-web\n@@root_state=pi-web")).toEqual([]);
+	});
+
+	it("detects a 32-bit userland under a 64-bit kernel", () => {
+		const probe = (kv: string) =>
+			parseProbeOutput(`@@os=Linux\n@@arch=aarch64\n@@glibc=2.36\n@@tar=1\n@@gzip=1\n@@home=/home/u\n@@root=/home/u/.pi-web\n${kv}\n@@done=1\n`, true).issues;
+		expect(probe("@@long_bit=32\n@@loaders=/lib/ld-linux-armhf.so.3,").join()).toContain("32 位");
+		expect(probe("@@long_bit=64\n@@loaders=/lib/ld-linux-armhf.so.3,").join()).toContain("/lib/ld-linux-aarch64.so.1");
+		expect(probe("@@long_bit=64\n@@loaders=/lib/ld-linux-aarch64.so.1,")).toEqual([]);
 	});
 });
 

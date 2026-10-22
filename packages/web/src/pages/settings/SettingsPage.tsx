@@ -3,11 +3,12 @@ import { useMutation } from "@tanstack/react-query";
 import { Box, Cpu, Database, Globe, Info, Lock, TriangleAlert, Upload } from "lucide-react";
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useBlocker, useLocation } from "react-router";
-import { errorMessage, importNodeArchive, updateSettings } from "../../api/client";
+import { errorMessage, importNodeArchive, rotateAccessToken, updateSettings } from "../../api/client";
 import { useMeta, useSettings } from "../../api/hooks";
 import { queryClient, queryKeys } from "../../api/queryClient";
 import { toast } from "../../components/ui";
 import { Button } from "../../components/ui/Button";
+import { copyText } from "../../components/CodeBlock";
 import { Checkbox } from "../../components/ui/Choice";
 import { Callout } from "../../components/ui/Display";
 import { Input } from "../../components/ui/Input";
@@ -365,10 +366,40 @@ function AccessSection({ form, set, errors, dirty }: SectionProps) {
 					)}
 				</div>
 				<Hint>
-					通过 Cookie 校验，防止同一台机器上的其他用户访问 Pi-Web。启用后，当前浏览器保持登录；令牌保存在 Host 数据目录中，启动 Pi-Web 时会打印带 ?token= 的访问链接。
+					防止同一台机器上的其他用户访问 Pi-Web。令牌只保存在本页面所在源（含端口）的浏览器存储中，不使用 Cookie。启用后，当前浏览器保持登录；令牌保存在 Host
+					数据目录中，启动 Pi-Web 时会打印带 ?token= 的访问链接。
 				</Hint>
+				{form.accessTokenEnabled && !dirty.has("accessTokenEnabled") && <RotateToken />}
 			</SettingRow>
 		</SettingsSection>
+	);
+}
+
+/** Replaces the access token: other browsers must sign in again with the new one. */
+function RotateToken() {
+	const [token, setToken] = useState<string | null>(null);
+	const rotate = useMutation({
+		mutationFn: rotateAccessToken,
+		onSuccess: (result) => {
+			setToken(result.token);
+			toast.success("已生成新令牌，其他浏览器需要使用新令牌重新登录");
+		},
+		onError: (e) => toast.error(errorMessage(e), { title: "无法更换令牌" }),
+	});
+	return (
+		<div className="flex flex-wrap items-center gap-2">
+			<Button size="sm" loading={rotate.isPending} onClick={() => rotate.mutate()}>
+				更换令牌
+			</Button>
+			{token && (
+				<span className="flex min-w-0 items-center gap-1.5">
+					<code className="truncate font-mono text-xs text-fg">{token}</code>
+					<Button size="sm" variant="ghost" onClick={() => void copyText(token).then((ok) => ok && toast.success("令牌已复制"))}>
+						复制
+					</Button>
+				</span>
+			)}
+		</div>
 	);
 }
 
@@ -434,6 +465,16 @@ function SettingsEditor({ settings }: { settings: HostSettings }) {
 	});
 
 	const blocker = useBlocker(({ currentLocation, nextLocation }) => changed > 0 && !save.isPending && currentLocation.pathname !== nextLocation.pathname);
+	// Reloading or closing the tab: useBlocker only covers in-app navigation.
+	useEffect(() => {
+		if (changed === 0) return;
+		const onBeforeUnload = (e: BeforeUnloadEvent) => {
+			e.preventDefault();
+			e.returnValue = "";
+		};
+		window.addEventListener("beforeunload", onBeforeUnload);
+		return () => window.removeEventListener("beforeunload", onBeforeUnload);
+	}, [changed]);
 
 	const set = (p: Partial<SettingsForm>) => setForm((f) => ({ ...f, ...p }));
 	const sectionProps: SectionProps = { form, set, errors: showErrors ? errors : {}, dirty };
