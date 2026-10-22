@@ -1,0 +1,794 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Pi-Web 添加服务器</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0E1014;color:#E7E9EE;font-family:Inter,"PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;font-size:14px;-webkit-font-smoothing:antialiased}
+a{color:#8DBBFF;text-decoration:none}a:hover{color:#B7D3FF}
+pre,code{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+@keyframes pwspin{to{transform:rotate(360deg)}}
+@keyframes pwpulse{0%,100%{opacity:1}50%{opacity:.35}}
+</style>
+</helmet>
+<div style="height: 100vh; display: flex; flex-direction: column; background: #0E1014; color: #E7E9EE; overflow: auto;">
+
+  <header style="height: 48px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 16px; border-bottom: 1px solid #262C37; background: #13161C;">
+    <a href="Main.dc.html" style="display: flex; align-items: center; gap: 8px; color: #E7E9EE; font-weight: 700; font-size: 15px; letter-spacing: 0.2px;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" stroke="#6AA6FF" stroke-width="1.8"></rect><path d="M7 8h10M10 8v9M14 8v6.5c0 1.5.8 2.5 2.5 2.5" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round"></path></svg>
+      Pi-Web
+    </a>
+    <nav aria-label="位置" style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #A9B1BE; min-width: 0; flex-wrap: wrap;">
+      <span>服务器</span>
+      <span aria-hidden="true" style="color: #8A93A3;">/</span>
+      <span aria-current="page" style="color: #E7E9EE;">添加服务器</span>
+    </nav>
+    <div style="flex: 1;"></div>
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+      <a href="ServerDetail.dc.html" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; font-size: 12px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6l8-3z"></path></svg>
+        隧道代理 · 3 个连接
+      </a>
+      <a href="SyncCenter.dc.html" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; font-size: 12px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+        配置已同步
+      </a>
+      <a href="Settings.dc.html" aria-label="全局设置" style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; color: #A9B1BE;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+      </a>
+    </div>
+  </header>
+
+  <div style="flex: 1; min-height: 0; display: flex; flex-wrap: wrap;">
+
+    <aside aria-label="服务器与会话" style="flex: 1 1 264px; max-width: 100%; display: flex; flex-direction: column; background: #13161C; border-right: 1px solid #262C37; min-height: 0;">
+      <div style="padding: 12px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #262C37;">
+        <label for="pw-search" style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">搜索会话</label>
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4-4"></path></svg>
+          <input id="pw-search" type="text" placeholder="名称或首条消息" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: #E7E9EE; font-size: 13px; font-family: inherit;">
+        </div>
+      </div>
+
+      <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 8px 6px; display: flex; flex-direction: column; gap: 2px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 4px;">
+          <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">服务器</span>
+          <a href="AddServer.dc.html" aria-label="添加服务器" style="display: flex; width: 24px; height: 24px; align-items: center; justify-content: center; border-radius: 4px; color: #A9B1BE;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          </a>
+        </div>
+
+        <a href="ServerDetail.dc.html" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: 6px; color: #E7E9EE; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>
+          <span style="flex: 1;">gpu-01</span>
+          <span style="font-size: 11px; font-weight: 500; color: #8A93A3;">在线 · 12ms</span>
+        </a>
+        <div style="display: flex; flex-direction: column; gap: 2px; padding-left: 18px;">
+          <div style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; color: #A9B1BE; font-size: 13px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+            <span style="flex: 1;">llm-train</span>
+            <span style="font-size: 11px; color: #8A93A3;">3</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 2px; padding-left: 20px;">
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #6AA6FF; animation: pwpulse 1.4s ease-in-out infinite;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">修复数据加载器的内存泄漏</span>
+              </span>
+              <span style="font-size: 11px; color: #8DBBFF; padding-left: 14px;">运行中 · bash</span>
+            </a>
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #F0A03C;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">添加 FSDP 支持</span>
+              </span>
+              <span style="font-size: 11px; color: #F0A03C; padding-left: 14px;">等待确认 · 扩展对话框</span>
+            </a>
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">重构配置系统</span>
+              </span>
+              <span style="font-size: 11px; color: #8A93A3; padding-left: 14px;">昨天 · 48 条消息</span>
+            </a>
+            <button type="button" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; background: transparent; border: 0; color: #8A93A3; font-size: 12px; font-family: inherit; cursor: pointer; text-align: left;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+              新建对话
+            </button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; color: #A9B1BE; font-size: 13px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+            <span style="flex: 1;">infra-scripts</span>
+            <span style="font-size: 11px; color: #8A93A3;">7</span>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; margin-top: 6px; color: #E7E9EE; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>
+          <span style="flex: 1;">build-arm</span>
+          <span style="font-size: 11px; font-weight: 500; color: #8A93A3;">在线 · 1 个待同步</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; color: #8A93A3; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span>
+          <span style="flex: 1;">staging-db</span>
+          <span style="font-size: 11px; font-weight: 500;">离线</span>
+        </div>
+      </div>
+
+      <div style="padding: 8px 6px; border-top: 1px solid #262C37; display: flex; flex-direction: column; gap: 2px;">
+        <a href="SyncCenter.dc.html" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+          同步中心
+        </a>
+        <a href="AddServer.dc.html" aria-current="page" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; background: #1F2A3D; color: #E7E9EE; font-size: 13px; font-weight: 600;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"></rect><rect x="3" y="13" width="18" height="7" rx="2"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>
+          添加服务器
+        </a>
+      </div>
+    </aside>
+
+    <main style="flex: 999 1 560px; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #0E1014;">
+      <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 24px 0;">
+        <div style="max-width: 1120px; margin: 0 auto; padding: 0 24px; display: flex; flex-direction: column; gap: 20px;">
+
+          <div style="display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px;">
+            <div style="flex: 1 1 360px; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+              <h1 style="margin: 0; font-size: 20px; line-height: 28px; font-weight: 600;">添加服务器</h1>
+              <p style="margin: 0; font-size: 13px; line-height: 20px; color: #A9B1BE;">通过 SSH 连接服务器，离线上传 Node 运行时、pi、配置与插件。</p>
+            </div>
+            <span style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px; border: 1px solid #262C37; border-radius: 6px; background: #13161C; font-size: 12px; color: #A9B1BE;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"></rect><rect x="3" y="13" width="18" height="7" rx="2"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>
+              <span style="color: #E7E9EE; font-weight: 600;">gpu-01</span>
+              <code style="font-size: 12px; color: #C9CFD9;">dev@10.0.3.21:22</code>
+              <span>经 bastion-gw</span>
+            </span>
+          </div>
+
+          <nav aria-label="添加步骤">
+            <ol style="margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr)); gap: 12px;">
+              <sc-for list="{{ steps }}" as="s" hint-placeholder-count="5">
+                <li style="display: flex; min-width: 0;">
+                  <button type="button" onClick="{{ s.pick }}" aria-current="{{ s.ariaCurrent }}" style="width: 100%; display: flex; flex-direction: column; gap: 10px; padding: 0 0 4px; background: transparent; border: 0; color: inherit; font-family: inherit; text-align: left; cursor: pointer;">
+                    <span style="{{ s.barStyle }}" aria-hidden="true"></span>
+                    <span style="display: flex; align-items: center; gap: 8px; width: 100%;">
+                      <span style="{{ s.dotStyle }}">
+                        <sc-if value="{{ s.done }}" hint-placeholder-val="{{ false }}">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+                        </sc-if>
+                        <sc-if value="{{ s.notDone }}" hint-placeholder-val="{{ false }}">
+                          <span>{{ s.n }}</span>
+                        </sc-if>
+                      </span>
+                      <span style="{{ s.labelStyle }}">{{ s.label }}</span>
+                      <span style="{{ s.statusStyle }}">{{ s.statusText }}</span>
+                    </span>
+                  </button>
+                </li>
+              </sc-for>
+            </ol>
+          </nav>
+
+          <sc-if value="{{ isStep1 }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px;">
+              <section aria-labelledby="as-conn-t" style="flex: 999 1 520px; min-width: 0; background: #13161C; border: 1px solid #262C37; border-radius: 10px; display: flex; flex-direction: column;">
+                <div style="display: flex; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid #262C37;">
+                  <h2 id="as-conn-t" style="margin: 0; flex: 1; font-size: 14px; font-weight: 600;">SSH 连接</h2>
+                  <span style="font-size: 12px; color: #8A93A3;">凭据用 Host 主密钥加密保存</span>
+                </div>
+                <div style="padding: 16px; display: flex; flex-direction: column; gap: 16px;">
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 14px 16px;">
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                      <label for="as-name" style="font-size: 12px; line-height: 16px; font-weight: 500; color: #A9B1BE;">名称</label>
+                      <input id="as-name" type="text" value="gpu-01" style="width: 100%; box-sizing: border-box; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px; outline: none; color: #E7E9EE; font-size: 13px; font-family: inherit;">
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                      <label for="as-group" style="font-size: 12px; line-height: 16px; font-weight: 500; color: #A9B1BE;">分组</label>
+                      <input id="as-group" type="text" value="训练集群" style="width: 100%; box-sizing: border-box; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px; outline: none; color: #E7E9EE; font-size: 13px; font-family: inherit;">
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                      <label for="as-host" style="font-size: 12px; line-height: 16px; font-weight: 500; color: #A9B1BE;">主机</label>
+                      <input id="as-host" type="text" value="10.0.3.21" style="width: 100%; box-sizing: border-box; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px; outline: none; color: #E7E9EE; font-size: 12.5px; font-family: 'JetBrains Mono', monospace;">
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                      <label for="as-port" style="font-size: 12px; line-height: 16px; font-weight: 500; color: #A9B1BE;">端口</label>
+                      <input id="as-port" type="text" inputmode="numeric" value="22" style="width: 100%; box-sizing: border-box; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px; outline: none; color: #E7E9EE; font-size: 12.5px; font-family: 'JetBrains Mono', monospace;">
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                      <label for="as-user" style="font-size: 12px; line-height: 16px; font-weight: 500; color: #A9B1BE;">用户名</label>
+                      <input id="as-user" type="text" value="dev" style="width: 100%; box-sizing: border-box; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px; outline: none; color: #E7E9EE; font-size: 12.5px; font-family: 'JetBrains Mono', monospace;">
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                      <label for="as-jump" style="font-size: 12px; line-height: 16px; font-weight: 500; color: #A9B1BE;">跳板机</label>
+                      <div style="position: relative;">
+                        <select id="as-jump" style="width: 100%; box-sizing: border-box; height: 32px; padding: 0 28px 0 10px; appearance: none; -webkit-appearance: none; color-scheme: dark; background: #191D25; border: 1px solid #262C37; border-radius: 6px; outline: none; color: #E7E9EE; font-size: 12.5px; font-family: 'JetBrains Mono', monospace; cursor: pointer;">
+                          <option value="">无</option>
+                          <option value="bastion-gw" selected="selected">bastion-gw (ops@203.0.113.10)</option>
+                        </select>
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.4" stroke-linecap="round" aria-hidden="true" style="position: absolute; right: 10px; top: 11px; pointer-events: none;"><path d="M6 9l6 6 6-6"></path></svg>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style="display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid #262C37;">
+                    <span id="as-auth-l" style="font-size: 12px; line-height: 16px; font-weight: 500; color: #A9B1BE;">认证方式</span>
+                    <div role="group" aria-labelledby="as-auth-l" style="align-self: flex-start; display: flex; gap: 2px; padding: 2px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px;">
+                      <sc-for list="{{ authOptions }}" as="a" hint-placeholder-count="3">
+                        <button type="button" onClick="{{ a.pick }}" aria-pressed="{{ a.pressed }}" style="{{ a.btnStyle }}">{{ a.label }}</button>
+                      </sc-for>
+                    </div>
+                    <sc-if value="{{ authKey }}" hint-placeholder-val="{{ false }}">
+                      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 14px 16px;">
+                        <div style="display: flex; flex-direction: column; gap: 6px;">
+                          <label for="as-keypath" style="font-size: 12px; line-height: 16px; font-weight: 500; color: #A9B1BE;">私钥路径</label>
+                          <input id="as-keypath" type="text" value="~/.ssh/id_ed25519" style="width: 100%; box-sizing: border-box; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px; outline: none; color: #E7E9EE; font-size: 12.5px; font-family: 'JetBrains Mono', monospace;">
+                          <span style="font-size: 12px; color: #8A93A3;">从 Host 读取，不会上传到服务器</span>
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 6px;">
+                          <label for="as-passphrase" style="font-size: 12px; line-height: 16px; font-weight: 500; color: #A9B1BE;">口令</label>
+                          <input id="as-passphrase" type="password" value="passphrase" style="width: 100%; box-sizing: border-box; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px; outline: none; color: #E7E9EE; font-size: 13px; font-family: inherit;">
+                          <span style="font-size: 12px; color: #8A93A3;">私钥未加密时留空</span>
+                        </div>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ authPassword }}" hint-placeholder-val="{{ false }}">
+                      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 14px 16px;">
+                        <div style="display: flex; flex-direction: column; gap: 6px;">
+                          <label for="as-password" style="font-size: 12px; line-height: 16px; font-weight: 500; color: #A9B1BE;">密码</label>
+                          <input id="as-password" type="password" value="password" style="width: 100%; box-sizing: border-box; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px; outline: none; color: #E7E9EE; font-size: 13px; font-family: inherit;">
+                          <span style="font-size: 12px; color: #8A93A3;">用 Host 主密钥加密保存</span>
+                        </div>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ authAgent }}" hint-placeholder-val="{{ false }}">
+                      <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px; font-size: 13px; color: #C9CFD9;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"></circle><path d="M11 12l9-9M17 6l3 3M14 9l2 2"></path></svg>
+                        使用 <code style="font-size: 12px; color: #E7E9EE;">SSH_AUTH_SOCK</code> 中的密钥（检测到 2 把）
+                      </div>
+                    </sc-if>
+                  </div>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid #262C37;">
+                  <sc-if value="{{ testIdle }}" hint-placeholder-val="{{ false }}">
+                    <span style="flex: 1 1 240px; min-width: 0; font-size: 12px; color: #8A93A3;">测试连接只建立 SSH 会话，不写入任何文件</span>
+                  </sc-if>
+                  <sc-if value="{{ testDone }}" hint-placeholder-val="{{ false }}">
+                    <span style="flex: 1 1 240px; min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #7FE0D2;">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l2.8 2.8L16 10"></path></svg>
+                      握手成功（经 bastion-gw，41ms）· 下一步核对主机指纹
+                    </span>
+                  </sc-if>
+                  <button type="button" onClick="{{ runTest }}" style="height: 32px; padding: 0 14px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; font-family: inherit; cursor: pointer;">测试连接</button>
+                  <button type="button" onClick="{{ toStep2 }}" style="height: 32px; padding: 0 16px; background: #2F6FDB; border: 0; border-radius: 6px; color: #FFFFFF; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;">下一步</button>
+                </div>
+              </section>
+
+              <section aria-label="从 SSH 配置导入" style="flex: 1 1 280px; max-width: 100%; min-width: 0; background: #13161C; border: 1px solid #262C37; border-radius: 10px; padding: 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px;">
+                <button type="button" onClick="{{ toggleImport }}" aria-expanded="{{ importExpanded }}" style="display: flex; align-items: center; justify-content: center; gap: 8px; height: 32px; padding: 0 12px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; font-family: inherit; cursor: pointer;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+                  从 ~/.ssh/config 导入
+                </button>
+                <sc-if value="{{ importOpen }}" hint-placeholder-val="{{ false }}">
+                  <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">HOST 条目 · 3</span>
+                    <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; border: 1px solid #262C37; border-radius: 8px;">
+                      <sc-for list="{{ sshHosts }}" as="h" hint-placeholder-count="3">
+                        <li style="{{ h.rowStyle }}">
+                          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+                            <code style="font-size: 12.5px; color: #E7E9EE;">{{ h.id }}</code>
+                            <span style="font-size: 11.5px; color: #8A93A3; font-family: 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ h.target }}</span>
+                            <span style="font-size: 11.5px; color: #8A93A3;">{{ h.extra }}</span>
+                          </span>
+                          <sc-if value="{{ h.notImported }}" hint-placeholder-val="{{ false }}">
+                            <button type="button" onClick="{{ h.doImport }}" aria-label="{{ h.importLabel }}" style="flex-shrink: 0; height: 24px; padding: 0 4px; background: transparent; border: 0; color: #8DBBFF; font-size: 12px; font-family: inherit; cursor: pointer;">导入</button>
+                          </sc-if>
+                          <sc-if value="{{ h.isImported }}" hint-placeholder-val="{{ false }}">
+                            <span style="flex-shrink: 0; font-size: 12px; color: #7FE0D2;">已填入</span>
+                          </sc-if>
+                        </li>
+                      </sc-for>
+                    </ul>
+                    <span style="font-size: 12px; line-height: 18px; color: #8A93A3;">导入会读取 HostName、User、Port、IdentityFile 与 ProxyJump。</span>
+                  </div>
+                </sc-if>
+              </section>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isStep2 }}" hint-placeholder-val="{{ false }}">
+            <section aria-labelledby="as-hk-t" style="max-width: 760px; display: flex; flex-direction: column; gap: 16px; padding: 20px; background: #241D12; border: 1px solid #5A4220; border-radius: 10px;">
+              <div style="display: flex; align-items: flex-start; gap: 12px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F0A03C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0; margin-top: 2px;"><path d="M12 4l9 16H3L12 4z"></path><path d="M12 10v4M12 17.5v.01"></path></svg>
+                <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;">
+                  <span style="font-size: 12px; font-weight: 600; color: #F7C47E;">需要确认 · 未知主机</span>
+                  <h2 id="as-hk-t" style="margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; color: #E7E9EE;">首次连接 10.0.3.21:22（经 bastion-gw）</h2>
+                </div>
+              </div>
+              <dl style="margin: 0; display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 10px 16px; align-items: baseline; font-size: 13px;">
+                <dt style="color: #A9B1BE;">主机</dt>
+                <dd style="margin: 0; color: #E7E9EE;">gpu-01 · <code style="font-size: 12.5px; color: #C9CFD9;">dev@10.0.3.21:22</code></dd>
+                <dt style="color: #A9B1BE;">密钥类型</dt>
+                <dd style="margin: 0;"><code style="font-size: 12.5px; color: #E7E9EE;">ED25519</code></dd>
+                <dt style="color: #A9B1BE;">指纹</dt>
+                <dd style="margin: 0; min-width: 0;"><code style="display: block; padding: 8px 10px; background: #0B0D11; border: 1px solid #5A4220; border-radius: 6px; font-size: 13px; line-height: 20px; color: #E7E9EE; word-break: break-all;">SHA256:9mO1q3m0Xb6F0nQ5xVv2t1o8KcQd3ZtPjX0rYc7a4kE</code></dd>
+                <dt style="color: #A9B1BE;">跳板机</dt>
+                <dd style="margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: #E7E9EE;">
+                  bastion-gw <code style="font-size: 12.5px; color: #C9CFD9;">ops@203.0.113.10:22</code>
+                  <span style="display: flex; align-items: center; gap: 4px; font-size: 12px; color: #7FE0D2;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+                    指纹已信任
+                  </span>
+                </dd>
+              </dl>
+              <p style="margin: 0; font-size: 13px; line-height: 21px; color: #E7E9EE;">请与服务器管理员核对指纹。信任后会保存到 Pi-Web 的 known_hosts，指纹变化时将拒绝连接。</p>
+              <p style="margin: 0; font-size: 12px; line-height: 18px; color: #A9B1BE;">在服务器上运行 <code style="font-size: 12px; color: #C9CFD9;">ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> 可查看本机指纹。</p>
+              <div style="display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px;">
+                <button type="button" onClick="{{ toStep1 }}" style="height: 32px; padding: 0 14px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; font-family: inherit; cursor: pointer;">取消</button>
+                <button type="button" onClick="{{ toStep3 }}" style="height: 32px; padding: 0 16px; background: #2F6FDB; border: 0; border-radius: 6px; color: #FFFFFF; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;">信任并继续</button>
+              </div>
+            </section>
+          </sc-if>
+
+          <sc-if value="{{ isStep3 }}" hint-placeholder-val="{{ false }}">
+            <section aria-labelledby="as-probe-t" style="background: #13161C; border: 1px solid #262C37; border-radius: 10px; display: flex; flex-direction: column;">
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 14px 16px; border-bottom: 1px solid #262C37;">
+                <h2 id="as-probe-t" style="margin: 0; font-size: 14px; font-weight: 600;">环境探测</h2>
+                <span style="flex: 1; font-size: 12px; color: #8A93A3;">dev@10.0.3.21 · 用时 1.8 s · 探测命令均为只读</span>
+                <span style="font-size: 12px; color: #7FE0D2;">7 项通过</span>
+                <span style="font-size: 12px; color: #F7C47E;">1 项提示</span>
+              </div>
+              <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column;">
+                <li style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 16px;">
+                  <span style="flex: 0 0 56px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #7FE0D2;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l2.8 2.8L16 10"></path></svg>通过</span>
+                  <span style="flex: 0 0 96px; font-size: 13px; color: #A9B1BE;">系统</span>
+                  <span style="flex: 1 1 240px; min-width: 0; font-size: 13px; color: #E7E9EE;">Linux x86_64</span>
+                  <code style="font-size: 12px; color: #8A93A3;">uname -sm</code>
+                </li>
+                <li style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 16px; border-top: 1px solid #262C37;">
+                  <span style="flex: 0 0 56px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #7FE0D2;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l2.8 2.8L16 10"></path></svg>通过</span>
+                  <span style="flex: 0 0 96px; font-size: 13px; color: #A9B1BE;">glibc</span>
+                  <span style="flex: 1 1 240px; min-width: 0; font-size: 13px; color: #E7E9EE;"><code style="font-size: 12.5px;">2.35</code><span style="color: #A9B1BE;">（要求 ≥ 2.28）</span></span>
+                  <code style="font-size: 12px; color: #8A93A3;">getconf GNU_LIBC_VERSION</code>
+                </li>
+                <li style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 16px; border-top: 1px solid #262C37;">
+                  <span style="flex: 0 0 56px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #7FE0D2;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l2.8 2.8L16 10"></path></svg>通过</span>
+                  <span style="flex: 0 0 96px; font-size: 13px; color: #A9B1BE;">家目录</span>
+                  <span style="flex: 1 1 240px; min-width: 0; font-size: 13px; color: #E7E9EE;"><code style="font-size: 12.5px;">/home/dev</code><span style="color: #A9B1BE;"> · 磁盘可用 118 GB</span></span>
+                  <code style="font-size: 12px; color: #8A93A3;">df -h $HOME</code>
+                </li>
+                <li style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 16px; border-top: 1px solid #262C37;">
+                  <span style="flex: 0 0 56px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #7FE0D2;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l2.8 2.8L16 10"></path></svg>通过</span>
+                  <span style="flex: 0 0 96px; font-size: 13px; color: #A9B1BE;">tar / gzip</span>
+                  <span style="flex: 1 1 240px; min-width: 0; font-size: 13px; color: #E7E9EE;">可用</span>
+                  <code style="font-size: 12px; color: #8A93A3;">command -v tar gzip</code>
+                </li>
+                <li style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 16px; border-top: 1px solid #262C37;">
+                  <span style="flex: 0 0 56px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #7FE0D2;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l2.8 2.8L16 10"></path></svg>通过</span>
+                  <span style="flex: 0 0 96px; font-size: 13px; color: #A9B1BE;">SFTP 子系统</span>
+                  <span style="flex: 1 1 240px; min-width: 0; font-size: 13px; color: #E7E9EE;">可用</span>
+                  <code style="font-size: 12px; color: #8A93A3;">sftp</code>
+                </li>
+                <li style="display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px 12px; padding: 10px 16px; border-top: 1px solid #5A4220; border-bottom: 1px solid #5A4220; background: #241D12;">
+                  <span style="flex: 0 0 56px; display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 20px; color: #F7C47E;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F0A03C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3L12 4z"></path><path d="M12 10v4M12 17.5v.01"></path></svg>提示</span>
+                  <span style="flex: 0 0 96px; font-size: 13px; line-height: 20px; color: #A9B1BE;">外网访问</span>
+                  <span style="flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; line-height: 20px; color: #E7E9EE;">
+                    <span>无法访问 <code style="font-size: 12.5px;">api.anthropic.com</code></span>
+                    <span style="font-size: 12px; color: #F7C47E;">→ 建议开启隧道代理，LLM 请求经 Host 发出</span>
+                  </span>
+                  <code style="font-size: 12px; line-height: 20px; color: #8A93A3;">curl -sI https://api.anthropic.com</code>
+                </li>
+                <li style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 16px;">
+                  <span style="flex: 0 0 56px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #7FE0D2;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l2.8 2.8L16 10"></path></svg>通过</span>
+                  <span style="flex: 0 0 96px; font-size: 13px; color: #A9B1BE;">已有安装</span>
+                  <span style="flex: 1 1 240px; min-width: 0; font-size: 13px; color: #E7E9EE;">未发现 <code style="font-size: 12.5px;">~/.pi-web</code><span style="color: #A9B1BE;">，将全新安装</span></span>
+                  <code style="font-size: 12px; color: #8A93A3;">ls ~/.pi-web</code>
+                </li>
+                <li style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 16px; border-top: 1px solid #262C37;">
+                  <span style="flex: 0 0 56px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #7FE0D2;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l2.8 2.8L16 10"></path></svg>通过</span>
+                  <span style="flex: 0 0 96px; font-size: 13px; color: #A9B1BE;">默认 shell</span>
+                  <span style="flex: 1 1 240px; min-width: 0; font-size: 13px; color: #E7E9EE;"><code style="font-size: 12.5px;">/bin/bash</code></span>
+                  <code style="font-size: 12px; color: #8A93A3;">echo $SHELL</code>
+                </li>
+              </ul>
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid #262C37;">
+                <span style="flex: 1 1 240px; min-width: 0; font-size: 12px; color: #8A93A3;">提示项不阻止部署，可在下一步开启隧道代理</span>
+                <button type="button" style="height: 32px; padding: 0 14px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; font-family: inherit; cursor: pointer;">重新探测</button>
+                <button type="button" onClick="{{ toStep4 }}" style="height: 32px; padding: 0 16px; background: #2F6FDB; border: 0; border-radius: 6px; color: #FFFFFF; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;">下一步</button>
+              </div>
+            </section>
+          </sc-if>
+
+          <sc-if value="{{ isStep4 }}" hint-placeholder-val="{{ false }}">
+            <div style="display: flex; flex-direction: column; gap: 16px;">
+              <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;">
+
+                <section aria-labelledby="as-opt-t" style="flex: 1 1 400px; max-width: 100%; min-width: 0; background: #13161C; border: 1px solid #262C37; border-radius: 10px; display: flex; flex-direction: column;">
+                  <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid #262C37;">
+                    <h2 id="as-opt-t" style="margin: 0; flex: 1; font-size: 14px; font-weight: 600;">部署选项</h2>
+                    <a href="ServerSettings.dc.html" style="font-size: 12px;">部署后可在服务器设置中修改</a>
+                  </div>
+                  <div style="padding: 10px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: #A9B1BE; border-bottom: 1px solid #262C37;">
+                    目标 <code style="font-size: 12px; color: #C9CFD9;">dev@10.0.3.21:22</code> · 安装到 <code style="font-size: 12px; color: #C9CFD9;">~/.pi-web</code>
+                  </div>
+
+                  <div role="radiogroup" aria-labelledby="as-dir-l" style="display: flex; flex-wrap: wrap; gap: 8px 12px; padding: 14px 16px; border-bottom: 1px solid #262C37;">
+                    <span id="as-dir-l" style="flex: 0 0 88px; font-size: 12px; line-height: 20px; font-weight: 500; color: #A9B1BE;">Agent 目录</span>
+                    <div style="flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 10px;">
+                      <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                        <input type="radio" name="as-dir" value="own" checked="checked" style="margin: 3px 0 0; flex-shrink: 0; width: 14px; height: 14px; accent-color: #2F6FDB;">
+                        <span style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+                          <span style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; line-height: 20px; color: #E7E9EE;">独立 <code style="font-size: 12px; color: #C9CFD9;">~/.pi-web/agent</code><span style="font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 4px; background: rgba(60,200,180,0.12); color: #7FE0D2;">推荐</span></span>
+                          <span style="font-size: 12px; line-height: 18px; color: #8A93A3;">与服务器上已有的 pi 配置互不影响</span>
+                        </span>
+                      </label>
+                      <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                        <input type="radio" name="as-dir" value="shared" style="margin: 3px 0 0; flex-shrink: 0; width: 14px; height: 14px; accent-color: #2F6FDB;">
+                        <span style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+                          <span style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; line-height: 20px; color: #E7E9EE;">共用 <code style="font-size: 12px; color: #C9CFD9;">~/.pi/agent</code></span>
+                          <span style="display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 18px; color: #8A93A3;">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#F0A03C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3L12 4z"></path><path d="M12 10v4M12 17.5v.01"></path></svg>
+                            注意：会覆盖服务器上已有的 pi 配置
+                          </span>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div role="radiogroup" aria-labelledby="as-ver-l" style="display: flex; flex-wrap: wrap; gap: 8px 12px; padding: 14px 16px; border-bottom: 1px solid #262C37;">
+                    <span id="as-ver-l" style="flex: 0 0 88px; font-size: 12px; line-height: 20px; font-weight: 500; color: #A9B1BE;">pi 版本</span>
+                    <div style="flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 10px;">
+                      <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 20px; color: #E7E9EE; cursor: pointer;">
+                        <input type="radio" name="as-ver" value="host" checked="checked" style="margin: 0; flex-shrink: 0; width: 14px; height: 14px; accent-color: #2F6FDB;">
+                        <span>跟随 Host · <code style="font-size: 12px; color: #C9CFD9;">1.4.0</code></span>
+                      </label>
+                      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 20px; color: #E7E9EE; cursor: pointer;">
+                          <input type="radio" name="as-ver" value="pinned" style="margin: 0; flex-shrink: 0; width: 14px; height: 14px; accent-color: #2F6FDB;">
+                          <span>指定版本</span>
+                        </label>
+                        <label for="as-ver-input" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">指定 pi 版本号</label>
+                        <input id="as-ver-input" type="text" placeholder="例如 1.3.2" style="width: 120px; box-sizing: border-box; height: 28px; padding: 0 8px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px; outline: none; color: #E7E9EE; font-size: 12px; font-family: 'JetBrains Mono', monospace;">
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style="display: flex; flex-wrap: wrap; gap: 8px 12px; padding: 14px 16px; border-bottom: 1px solid #262C37;">
+                    <span style="flex: 0 0 88px; font-size: 12px; line-height: 20px; font-weight: 500; color: #A9B1BE;">Node 运行时</span>
+                    <span style="flex: 1 1 240px; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; line-height: 20px; color: #E7E9EE;">
+                      <code style="font-size: 12.5px; color: #E7E9EE;">22.20.0 · linux-x64</code>
+                      <span style="color: #A9B1BE;">（来源 npmmirror 缓存）</span>
+                      <span style="font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 4px; background: #1A1E26; border: 1px solid #262C37; color: #8A93A3;">只读</span>
+                    </span>
+                  </div>
+
+                  <div role="radiogroup" aria-labelledby="as-proxy-l" style="display: flex; flex-wrap: wrap; gap: 8px 12px; padding: 14px 16px; border-bottom: 1px solid #262C37;">
+                    <span id="as-proxy-l" style="flex: 0 0 88px; font-size: 12px; line-height: 20px; font-weight: 500; color: #A9B1BE;">LLM 代理</span>
+                    <div style="flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 10px;">
+                      <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                        <input type="radio" name="as-proxy" value="tunnel" checked="checked" style="margin: 3px 0 0; flex-shrink: 0; width: 14px; height: 14px; accent-color: #2F6FDB;">
+                        <span style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+                          <span style="font-size: 13px; line-height: 20px; color: #E7E9EE;">隧道</span>
+                          <span style="font-size: 12px; line-height: 18px; color: #8A93A3;">入口 <code style="font-size: 11.5px; color: #A9B1BE;">127.0.0.1:38412</code>，经 SSH Link 回到 Host 发出</span>
+                        </span>
+                      </label>
+                      <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 20px; color: #E7E9EE; cursor: pointer;">
+                        <input type="radio" name="as-proxy" value="off" style="margin: 0; flex-shrink: 0; width: 14px; height: 14px; accent-color: #2F6FDB;">
+                        <span>关闭（服务器可直连）</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div role="radiogroup" aria-labelledby="as-scope-l" style="display: flex; flex-wrap: wrap; gap: 8px 12px; padding: 14px 16px;">
+                    <span id="as-scope-l" style="flex: 0 0 88px; font-size: 12px; line-height: 20px; font-weight: 500; color: #A9B1BE;">代理范围</span>
+                    <div style="flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 10px;">
+                      <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                        <input type="radio" name="as-scope" value="llm" checked="checked" style="margin: 3px 0 0; flex-shrink: 0; width: 14px; height: 14px; accent-color: #2F6FDB;">
+                        <span style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+                          <span style="font-size: 13px; line-height: 20px; color: #E7E9EE;">仅 LLM</span>
+                          <span style="font-size: 12px; line-height: 18px; color: #8A93A3;">bash 工具不继承代理变量，内网镜像照常访问</span>
+                        </span>
+                      </label>
+                      <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                        <input type="radio" name="as-scope" value="all" style="margin: 3px 0 0; flex-shrink: 0; width: 14px; height: 14px; accent-color: #2F6FDB;">
+                        <span style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+                          <span style="font-size: 13px; line-height: 20px; color: #E7E9EE;">工具命令也走代理</span>
+                          <span style="font-size: 12px; line-height: 18px; color: #8A93A3;">按 Host 白名单放行</span>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                </section>
+
+                <section aria-labelledby="as-prog-t" style="flex: 1.4 1 480px; max-width: 100%; min-width: 0; box-sizing: border-box; background: #13161C; border: 1px solid #262C37; border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+                  <div style="display: flex; align-items: flex-end; gap: 12px;">
+                    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+                      <h2 id="as-prog-t" style="margin: 0; font-size: 14px; font-weight: 600;">部署进度</h2>
+                      <span style="font-size: 12px; color: #8A93A3;">已用时 0:10 · 已上传 46.5 / 70.6 MB</span>
+                    </div>
+                    <span style="font-size: 20px; line-height: 24px; font-weight: 600; font-family: 'JetBrains Mono', monospace;">52%</span>
+                  </div>
+                  <div role="progressbar" aria-label="总体部署进度" aria-valuenow="52" aria-valuemin="0" aria-valuemax="100" style="height: 6px; border-radius: 3px; background: #262C37; overflow: hidden;">
+                    <div style="width: 52%; height: 6px; background: #6AA6FF;"></div>
+                  </div>
+
+                  <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column;">
+                    <li style="display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 0;">
+                      <span style="width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l2.8 2.8L16 10"></path></svg></span>
+                      <span style="flex: 1; min-width: 0; font-size: 13px; color: #E7E9EE;">准备离线包</span>
+                      <span style="font-size: 12px; color: #A9B1BE;">命中缓存</span>
+                      <span style="flex: 0 0 44px; text-align: right; font-size: 12px; color: #7FE0D2;">完成</span>
+                    </li>
+                    <li style="display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 0; border-top: 1px solid #262C37;">
+                      <span style="width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l2.8 2.8L16 10"></path></svg></span>
+                      <span style="flex: 1; min-width: 0; font-size: 13px; color: #E7E9EE;">上传 Node 运行时</span>
+                      <span style="font-size: 12px; color: #A9B1BE; font-family: 'JetBrains Mono', monospace;">28.9 MB</span>
+                      <span style="flex: 0 0 44px; text-align: right; font-size: 12px; color: #7FE0D2;">完成</span>
+                    </li>
+                    <li style="display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid #262C37;">
+                      <span style="display: flex; align-items: center; gap: 10px;">
+                        <span style="width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;"><span style="width: 13px; height: 13px; border: 2px solid #33405A; border-top-color: #6AA6FF; border-radius: 50%; animation: pwspin 0.9s linear infinite; box-sizing: border-box;" aria-hidden="true"></span></span>
+                        <span style="flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: #E7E9EE;">上传 pi 1.4.0</span>
+                        <span style="font-size: 12px; color: #C9CFD9; font-family: 'JetBrains Mono', monospace;">17.6 / 41.7 MB</span>
+                        <span style="flex: 0 0 44px; text-align: right; font-size: 12px; color: #8DBBFF;">进行中</span>
+                      </span>
+                      <span style="display: flex; align-items: center; gap: 10px; padding-left: 26px;">
+                        <span role="progressbar" aria-label="上传 pi 1.4.0" aria-valuenow="42" aria-valuemin="0" aria-valuemax="100" style="flex: 1; min-width: 0; height: 4px; border-radius: 2px; background: #262C37; overflow: hidden; display: block;">
+                          <span style="display: block; width: 42%; height: 4px; background: #6AA6FF;"></span>
+                        </span>
+                        <span style="font-size: 12px; color: #A9B1BE; font-family: 'JetBrains Mono', monospace;">42% · 6.1 MB/s</span>
+                      </span>
+                    </li>
+                    <li style="display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 0; border-top: 1px solid #262C37;">
+                      <span style="width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;"><span style="width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span></span>
+                      <span style="flex: 1; min-width: 0; font-size: 13px; color: #A9B1BE;">解压并安装</span>
+                      <span style="font-size: 12px; color: #8A93A3;">写入 current 软链接与 bin/pi</span>
+                      <span style="flex: 0 0 44px; text-align: right; font-size: 12px; color: #8A93A3;">等待</span>
+                    </li>
+                    <li style="display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 0; border-top: 1px solid #262C37;">
+                      <span style="width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;"><span style="width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span></span>
+                      <span style="flex: 1; min-width: 0; font-size: 13px; color: #A9B1BE;">启动 pi-web-agent</span>
+                      <span style="font-size: 12px; color: #8A93A3; font-family: 'JetBrains Mono', monospace;">0.1.0</span>
+                      <span style="flex: 0 0 44px; text-align: right; font-size: 12px; color: #8A93A3;">等待</span>
+                    </li>
+                    <li style="display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 0; border-top: 1px solid #262C37;">
+                      <span style="width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;"><span style="width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span></span>
+                      <span style="flex: 1; min-width: 0; font-size: 13px; color: #A9B1BE;">同步配置</span>
+                      <span style="font-size: 12px; color: #8A93A3;">11 项</span>
+                      <span style="flex: 0 0 44px; text-align: right; font-size: 12px; color: #8A93A3;">等待</span>
+                    </li>
+                    <li style="display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 0; border-top: 1px solid #262C37;">
+                      <span style="width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;"><span style="width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span></span>
+                      <span style="flex: 1; min-width: 0; font-size: 13px; color: #A9B1BE;">自检（pi --version、模型列表、代理连通性）</span>
+                      <span style="flex: 0 0 44px; text-align: right; font-size: 12px; color: #8A93A3;">等待</span>
+                    </li>
+                  </ol>
+
+                  <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <span id="as-log-l" style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">部署日志 · 最近 6 行</span>
+                    <pre aria-labelledby="as-log-l" style="margin: 0; padding: 10px 12px; background: #0B0D11; border: 1px solid #262C37; border-radius: 8px; font-size: 11.5px; line-height: 1.65; color: #C9CFD9; white-space: pre; overflow-x: auto;"><span style="color: #8A93A3;">[13:41:57]</span> 离线包命中缓存：node-22.20.0-linux-x64、pi 1.4.0
+<span style="color: #8A93A3;">[13:41:58]</span> mkdir -p ~/.pi-web/.upload ~/.pi-web/runtime
+<span style="color: #8A93A3;">[13:41:59]</span> sftp put ~/.pi-web/.upload/node-22.20.0-linux-x64.tar.gz 28.9M
+<span style="color: #8A93A3;">[13:42:04]</span> sha256 校验通过 node-22.20.0-linux-x64.tar.gz
+<span style="color: #8A93A3;">[13:42:04]</span> sftp put ~/.pi-web/.upload/pi-1.4.0-linux.tar.gz 0/41.7M
+<span style="color: #8A93A3;">[13:42:07]</span> sftp put ~/.pi-web/.upload/pi-1.4.0-linux.tar.gz <span style="color: #8DBBFF;">17.6M/41.7M</span></pre>
+                  </div>
+                </section>
+              </div>
+
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+                <span style="flex: 1 1 280px; min-width: 0; font-size: 12px; color: #8A93A3;">转到后台后，可在服务器详情中继续查看部署进度</span>
+                <a href="ServerDetail.dc.html" style="display: flex; align-items: center; height: 32px; padding: 0 14px; box-sizing: border-box; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px;">转到后台</a>
+                <button type="button" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px; background: #3A2A12; border: 1px solid #6B4A1C; border-radius: 6px; color: #F7C47E; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+                  取消部署
+                </button>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isStep5 }}" hint-placeholder-val="{{ false }}">
+            <section aria-labelledby="as-sync-t" style="background: #13161C; border: 1px solid #262C37; border-radius: 10px; display: flex; flex-direction: column;">
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 14px 16px; border-bottom: 1px solid #262C37;">
+                <h2 id="as-sync-t" style="margin: 0; font-size: 14px; font-weight: 600;">首次同步</h2>
+                <span style="flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: #A9B1BE;">
+                  Host <code style="font-size: 12px; color: #C9CFD9;">~/.pi/agent</code> → 服务器 <code style="font-size: 12px; color: #C9CFD9;">~/.pi-web/agent</code> · 单向
+                </span>
+                <span style="font-size: 12px; color: #A9B1BE;">已选 11 项 · 约 6.4 MB</span>
+              </div>
+              <div style="padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+                <div role="group" aria-label="同步项目" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 8px;">
+                  <sc-for list="{{ syncItems }}" as="it" hint-placeholder-count="11">
+                    <label style="display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid #262C37; border-radius: 8px; cursor: pointer;">
+                      <input type="checkbox" checked="checked" style="margin: 2px 0 0; flex-shrink: 0; width: 14px; height: 14px; accent-color: #2F6FDB;">
+                      <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+                        <span style="font-size: 13px; line-height: 18px; color: #E7E9EE;"><code style="font-size: 12.5px;">{{ it.name }}</code><span style="color: #A9B1BE;">{{ it.note }}</span></span>
+                        <span style="{{ it.descStyle }}">{{ it.desc }}</span>
+                      </span>
+                      <span style="flex-shrink: 0; font-size: 12px; line-height: 18px; color: #A9B1BE;">{{ it.count }}</span>
+                    </label>
+                  </sc-for>
+                  <label style="display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px dashed #33405A; border-radius: 8px; cursor: pointer;">
+                    <input type="checkbox" style="margin: 2px 0 0; flex-shrink: 0; width: 14px; height: 14px; accent-color: #2F6FDB;">
+                    <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+                      <span style="font-size: 13px; line-height: 18px; color: #E7E9EE;"><code style="font-size: 12.5px;">~/.agents/skills/</code><span style="color: #A9B1BE;">、</span><code style="font-size: 12.5px;">keybindings.json</code></span>
+                      <span style="font-size: 12px; line-height: 18px; color: #8A93A3;">可选，默认不同步</span>
+                    </span>
+                  </label>
+                </div>
+                <span style="font-size: 12px; line-height: 18px; color: #8A93A3;">永不同步：sessions/、trust.json、*.log、bin/、tools/。服务器上本地新增的文件不会被删除。</span>
+              </div>
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 16px; border-top: 1px solid #262C37;">
+                <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+                  <span id="as-auto-l" style="font-size: 13px; color: #E7E9EE;">自动同步（监听 Host ~/.pi/agent）</span>
+                  <span style="font-size: 12px; color: #8A93A3;">变更 2 秒后增量推送；服务器离线时标记为待同步，重连后补上</span>
+                </div>
+                <button type="button" role="switch" aria-checked="{{ autoSyncChecked }}" aria-labelledby="as-auto-l" onClick="{{ toggleAutoSync }}" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 4px; background: transparent; border: 0; color: #A9B1BE; font-size: 12px; font-family: inherit; cursor: pointer;">
+                  <span style="{{ trackStyle }}" aria-hidden="true"><span style="{{ knobStyle }}"></span></span>
+                  {{ autoSyncText }}
+                </button>
+              </div>
+              <div style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid #262C37;">
+                <button type="button" onClick="{{ toStep4 }}" style="height: 32px; padding: 0 14px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; font-family: inherit; cursor: pointer;">上一步</button>
+                <a href="ServerDetail.dc.html" style="display: flex; align-items: center; height: 32px; padding: 0 16px; box-sizing: border-box; background: #2F6FDB; border-radius: 6px; color: #FFFFFF; font-size: 13px; font-weight: 600;">完成并打开服务器</a>
+              </div>
+            </section>
+          </sc-if>
+
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { step: 4, auth: 'key', importOpen: true, imported: '', tested: false, autoSync: true };
+  }
+  renderVals() {
+    const s = this.state;
+    const go = (n) => () => this.setState({ step: n });
+
+    const stepDefs = [
+      { n: 1, label: '连接信息' },
+      { n: 2, label: '主机验证' },
+      { n: 3, label: '环境探测' },
+      { n: 4, label: '离线部署' },
+      { n: 5, label: '同步配置' }
+    ];
+    const steps = stepDefs.map((d) => {
+      const done = d.n < s.step;
+      const current = d.n === s.step;
+      let bar = '#262C37';
+      let dot = 'border: 1px solid #33405A; color: #A9B1BE;';
+      let label = 'color: #8A93A3; font-weight: 500;';
+      let status = 'color: #8A93A3;';
+      let text = '未开始';
+      if (done) {
+        bar = '#3CC8B4';
+        dot = 'background: rgba(60,200,180,0.12); color: #7FE0D2;';
+        label = 'color: #A9B1BE; font-weight: 500;';
+        status = 'color: #7FE0D2;';
+        text = '完成';
+      }
+      if (current) {
+        bar = '#6AA6FF';
+        dot = 'background: #2F6FDB; color: #FFFFFF;';
+        label = 'color: #E7E9EE; font-weight: 600;';
+        status = 'color: #8DBBFF;';
+        text = '当前';
+      }
+      return {
+        n: d.n,
+        label: d.label,
+        done: done,
+        notDone: !done,
+        statusText: text,
+        ariaCurrent: current ? 'step' : 'false',
+        pick: go(d.n),
+        barStyle: 'display: block; width: 100%; height: 3px; border-radius: 2px; background: ' + bar + ';',
+        dotStyle: "flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-sizing: border-box; font-size: 11px; font-weight: 600; font-family: 'JetBrains Mono', monospace; " + dot,
+        labelStyle: 'flex: 1; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; ' + label,
+        statusStyle: 'flex-shrink: 0; font-size: 11px; ' + status
+      };
+    });
+
+    const authDefs = [
+      { id: 'key', label: '私钥' },
+      { id: 'password', label: '密码' },
+      { id: 'agent', label: 'ssh-agent' }
+    ];
+    const authOptions = authDefs.map((a) => {
+      const on = a.id === s.auth;
+      return {
+        label: a.label,
+        pressed: on ? 'true' : 'false',
+        pick: () => this.setState({ auth: a.id }),
+        btnStyle: 'height: 28px; padding: 0 14px; border: 0; border-radius: 4px; font-size: 13px; font-family: inherit; cursor: pointer; ' + (on ? 'background: #1F2A3D; color: #E7E9EE; font-weight: 600;' : 'background: transparent; color: #A9B1BE; font-weight: 500;')
+      };
+    });
+
+    const hostDefs = [
+      { id: 'gpu-01', target: 'dev@10.0.3.21:22', extra: 'ProxyJump bastion-gw' },
+      { id: 'build-arm', target: 'ops@10.0.5.8:22', extra: 'IdentityFile ~/.ssh/id_ed25519' },
+      { id: 'bastion-gw', target: 'ops@203.0.113.10:22', extra: 'IdentityFile ~/.ssh/id_ed25519' }
+    ];
+    const sshHosts = hostDefs.map((h, i) => ({
+      id: h.id,
+      target: h.target,
+      extra: h.extra,
+      isImported: s.imported === h.id,
+      notImported: s.imported !== h.id,
+      importLabel: '导入 ' + h.id,
+      doImport: () => this.setState({ imported: h.id }),
+      rowStyle: 'display: flex; align-items: center; gap: 8px; padding: 8px 10px;' + (i > 0 ? ' border-top: 1px solid #262C37;' : '')
+    }));
+
+    const descBase = 'font-size: 12px; line-height: 18px; ';
+    const syncDefs = [
+      { name: 'settings.json', note: '（转换后）', desc: '注入代理设置，合并服务器级覆盖', count: '1 个文件' },
+      { name: 'models.json', note: '', desc: '自定义 provider 与模型', count: '1 个文件' },
+      { name: 'auth.json', note: '（OAuth 仅推送 access token）', desc: 'API Key 原样同步，refresh token 留在 Host', count: '3 条凭据' },
+      { name: 'mcp.json', note: '', desc: '提示：1 个 stdio 服务器依赖 npx，离线时可能不可用', count: '2 个服务器', warn: true },
+      { name: '指令文件', note: ' AGENTS.md 等', desc: 'AGENTS.md、SYSTEM.md', count: '2 个文件' },
+      { name: 'extensions/', note: '', desc: '含 git-checkpoint、token-meter', count: '4 个' },
+      { name: 'skills/', note: '', desc: 'SKILL.md 及附带脚本', count: '7 个' },
+      { name: 'prompts/', note: '', desc: '提示模板', count: '3 个' },
+      { name: 'themes/', note: '', desc: '界面主题', count: '1 个' },
+      { name: 'npm/', note: '', desc: 'pi 管理的 npm 包', count: '2 个包' },
+      { name: 'git/', note: '', desc: 'git 包，含 node_modules', count: '1 个包' }
+    ];
+    const syncItems = syncDefs.map((d) => ({
+      name: d.name,
+      note: d.note,
+      desc: d.desc,
+      count: d.count,
+      descStyle: descBase + (d.warn ? 'color: #F7C47E;' : 'color: #8A93A3;')
+    }));
+
+    return {
+      steps: steps,
+      isStep1: s.step === 1,
+      isStep2: s.step === 2,
+      isStep3: s.step === 3,
+      isStep4: s.step === 4,
+      isStep5: s.step === 5,
+      toStep1: go(1),
+      toStep2: go(2),
+      toStep3: go(3),
+      toStep4: go(4),
+      toStep5: go(5),
+      authOptions: authOptions,
+      authKey: s.auth === 'key',
+      authPassword: s.auth === 'password',
+      authAgent: s.auth === 'agent',
+      testIdle: !s.tested,
+      testDone: s.tested,
+      runTest: () => this.setState({ tested: true }),
+      importOpen: s.importOpen,
+      importExpanded: s.importOpen ? 'true' : 'false',
+      toggleImport: () => this.setState({ importOpen: !s.importOpen }),
+      sshHosts: sshHosts,
+      syncItems: syncItems,
+      autoSyncChecked: s.autoSync ? 'true' : 'false',
+      autoSyncText: s.autoSync ? '已开启' : '已关闭',
+      toggleAutoSync: () => this.setState({ autoSync: !s.autoSync }),
+      trackStyle: 'display: flex; width: 32px; height: 18px; padding: 2px; box-sizing: border-box; border-radius: 9px; ' + (s.autoSync ? 'justify-content: flex-end; background: #2F6FDB;' : 'justify-content: flex-start; background: #262C37;'),
+      knobStyle: 'display: block; width: 14px; height: 14px; border-radius: 50%; ' + (s.autoSync ? 'background: #FFFFFF;' : 'background: #A9B1BE;')
+    };
+  }
+}
+</script>
+</body>
+</html>

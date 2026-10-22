@@ -1,0 +1,423 @@
+@import "tailwindcss";
+
+/*
+ * Pi-Web "Graphite" dark theme. Every color used by the app is a token below;
+ * Tailwind's default palette is removed on purpose so ad-hoc colors cannot creep in.
+ * Usage: bg-panel, text-fg-2, border-border, border-border-strong, bg-success-soft …
+ */
+@theme {
+	--color-*: initial;
+
+	/* Surfaces */
+	--color-bg: #0e1014;
+	--color-panel: #13161c;
+	--color-raised: #191d25;
+	--color-code: #0b0d11;
+	--color-chip: #1a1e26;
+	--color-selected: #1f2a3d;
+	--color-overlay: rgba(8, 10, 14, 0.72);
+
+	/* Borders */
+	--color-border: #262c37;
+	--color-border-strong: #33405a;
+	--color-thinking: #2c3340;
+
+	/* Text */
+	--color-fg: #e7e9ee;
+	--color-fg-code: #c9cfd9;
+	--color-fg-2: #a9b1be;
+	--color-fg-3: #8a93a3;
+	--color-fg-4: #5b6370;
+	--color-white: #ffffff;
+	--color-black: #000000;
+
+	/* Accent / interactive */
+	--color-accent: #6aa6ff;
+	--color-link: #8dbbff;
+	--color-link-hover: #b7d3ff;
+	--color-primary: #2f6fdb;
+	--color-primary-hover: #3a7be6;
+
+	/* User message bubble & queued message */
+	--color-user: #1a2131;
+	--color-user-border: #263452;
+	--color-queue: #11151d;
+
+	/* Status */
+	--color-success: #3cc8b4;
+	--color-success-fg: #7fe0d2;
+	--color-success-soft: rgba(60, 200, 180, 0.12);
+	--color-success-faint: rgba(60, 200, 180, 0.08);
+	--color-success-tint: rgba(60, 200, 180, 0.2);
+	--color-warning: #f0a03c;
+	--color-warning-fg: #f7c47e;
+	--color-warning-body: #e3cfae;
+	--color-warning-soft: #241d12;
+	--color-warning-muted: #2a2418;
+	--color-warning-strong: #3a2a12;
+	--color-warning-border: #5a4220;
+	--color-warning-edge: #6b4a1c;
+	--color-danger: #f4a29a;
+	--color-danger-strong: #f2766b;
+	--color-danger-soft: rgba(242, 118, 107, 0.12);
+	--color-danger-faint: rgba(242, 118, 107, 0.08);
+	--color-danger-tint: rgba(242, 118, 107, 0.2);
+
+	/* Syntax highlighting (matches the artboards' code colors) */
+	--color-syn-keyword: #c792ea;
+	--color-syn-title: #82aaff;
+	--color-syn-string: #c3e88d;
+	--color-syn-number: #f78c6c;
+	--color-syn-comment: #8a93a3;
+
+	/* Typography */
+	--font-sans: Inter, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+	--font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+	--text-2xs: 11px;
+	--text-2xs--line-height: 16px;
+	--text-xs: 12px;
+	--text-xs--line-height: 16px;
+	--text-mono: 12.5px;
+	--text-mono--line-height: 20px;
+	--text-sm: 13px;
+	--text-sm--line-height: 20px;
+	--text-base: 14px;
+	--text-base--line-height: 1.6;
+	--text-md: 15px;
+	--text-md--line-height: 22px;
+	--text-lg: 16px;
+	--text-lg--line-height: 24px;
+	--text-xl: 20px;
+	--text-xl--line-height: 28px;
+	--text-2xl: 22px;
+	--text-2xl--line-height: 1.2;
+
+	--tracking-label: 0.6px;
+
+	/* Radii: 4 / 6 / 8 / 10 */
+	--radius-sm: 4px;
+	--radius-md: 6px;
+	--radius-lg: 8px;
+	--radius-xl: 10px;
+
+	--shadow-pop: 0 20px 60px rgba(0, 0, 0, 0.5);
+
+	--animate-spin: pw-spin 0.9s linear infinite;
+	--animate-pulse-dot: pw-pulse 1.4s ease-in-out infinite;
+
+	@keyframes pw-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	@keyframes pw-pulse {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.35;
+		}
+	}
+}
+
+@layer base {
+	html {
+		color-scheme: dark;
+	}
+	html,
+	body,
+	#root {
+		height: 100%;
+	}
+	body {
+		margin: 0;
+		background: var(--color-bg);
+		color: var(--color-fg);
+		font-family: var(--font-sans);
+		font-size: 14px;
+		-webkit-font-smoothing: antialiased;
+		-moz-osx-font-smoothing: grayscale;
+	}
+	a {
+		color: var(--color-link);
+		text-decoration: none;
+	}
+	a:hover {
+		color: var(--color-link-hover);
+	}
+	pre,
+	code,
+	kbd,
+	samp {
+		font-family: var(--font-mono);
+	}
+	button,
+	input,
+	select,
+	textarea {
+		font: inherit;
+		color: inherit;
+	}
+	button:not(:disabled),
+	[role="button"]:not([aria-disabled="true"]) {
+		cursor: pointer;
+	}
+	::placeholder {
+		color: var(--color-fg-3);
+		opacity: 1;
+	}
+	:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 1px;
+	}
+	::selection {
+		background: rgba(106, 166, 255, 0.3);
+	}
+
+	/* Scrollbars */
+	* {
+		scrollbar-width: thin;
+		scrollbar-color: var(--color-border) transparent;
+	}
+	::-webkit-scrollbar {
+		width: 10px;
+		height: 10px;
+	}
+	::-webkit-scrollbar-track {
+		background: transparent;
+	}
+	::-webkit-scrollbar-thumb {
+		background: var(--color-border);
+		border: 2px solid transparent;
+		border-radius: 8px;
+		background-clip: padding-box;
+	}
+	::-webkit-scrollbar-thumb:hover {
+		background: var(--color-border-strong);
+		background-clip: padding-box;
+		border: 2px solid transparent;
+	}
+	::-webkit-scrollbar-corner {
+		background: transparent;
+	}
+}
+
+@utility sr-only-focusable {
+	&:not(:focus) {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+	}
+}
+
+/* Small uppercase-style section label used across panels ("服务器", "上下文"…). */
+@utility section-label {
+	font-size: var(--text-2xs);
+	line-height: var(--text-2xs--line-height);
+	font-weight: 600;
+	letter-spacing: var(--tracking-label);
+	color: var(--color-fg-3);
+}
+
+/* ---------- highlight.js theme (artboard code colors) ---------- */
+@layer components {
+	.hljs {
+		color: var(--color-fg-code);
+		background: transparent;
+	}
+	.hljs-keyword,
+	.hljs-literal,
+	.hljs-selector-tag,
+	.hljs-section,
+	.hljs-doctag,
+	.hljs-meta .hljs-keyword,
+	.hljs-template-tag,
+	.hljs-name {
+		color: var(--color-syn-keyword);
+	}
+	.hljs-title,
+	.hljs-title.function_,
+	.hljs-title.class_,
+	.hljs-title.class_.inherited__,
+	.hljs-attr,
+	.hljs-attribute,
+	.hljs-property,
+	.hljs-built_in,
+	.hljs-type,
+	.hljs-selector-id,
+	.hljs-selector-class,
+	.hljs-selector-attr,
+	.hljs-selector-pseudo {
+		color: var(--color-syn-title);
+	}
+	.hljs-string,
+	.hljs-regexp,
+	.hljs-code,
+	.hljs-char.escape_,
+	.hljs-meta .hljs-string,
+	.hljs-link {
+		color: var(--color-syn-string);
+	}
+	.hljs-number,
+	.hljs-symbol,
+	.hljs-bullet,
+	.hljs-variable.constant_,
+	.hljs-operator {
+		color: var(--color-syn-number);
+	}
+	.hljs-comment,
+	.hljs-quote,
+	.hljs-meta,
+	.hljs-meta .hljs-prompt_ {
+		color: var(--color-syn-comment);
+	}
+	.hljs-variable,
+	.hljs-template-variable,
+	.hljs-params,
+	.hljs-subst {
+		color: var(--color-fg-code);
+	}
+	.hljs-tag {
+		color: var(--color-fg-2);
+	}
+	.hljs-addition {
+		color: var(--color-success-fg);
+		background: var(--color-success-soft);
+	}
+	.hljs-deletion {
+		color: var(--color-danger);
+		background: var(--color-danger-soft);
+	}
+	.hljs-emphasis {
+		font-style: italic;
+	}
+	.hljs-strong {
+		font-weight: 600;
+	}
+}
+
+/* ---------- Markdown prose (chat messages, README previews) ---------- */
+@layer components {
+	.pw-markdown {
+		font-size: 14px;
+		line-height: 1.7;
+		color: var(--color-fg);
+		overflow-wrap: anywhere;
+	}
+	.pw-markdown > :first-child {
+		margin-top: 0;
+	}
+	.pw-markdown > :last-child {
+		margin-bottom: 0;
+	}
+	.pw-markdown p,
+	.pw-markdown ul,
+	.pw-markdown ol,
+	.pw-markdown blockquote,
+	.pw-markdown table,
+	.pw-markdown .pw-md-pre {
+		margin: 0 0 12px;
+	}
+	.pw-markdown h1,
+	.pw-markdown h2,
+	.pw-markdown h3,
+	.pw-markdown h4,
+	.pw-markdown h5,
+	.pw-markdown h6 {
+		margin: 18px 0 10px;
+		font-weight: 600;
+		line-height: 1.4;
+		color: var(--color-fg);
+	}
+	.pw-markdown h1 {
+		font-size: 20px;
+		padding-bottom: 10px;
+		border-bottom: 1px solid var(--color-border);
+	}
+	.pw-markdown h2 {
+		font-size: 16px;
+	}
+	.pw-markdown h3 {
+		font-size: 15px;
+	}
+	.pw-markdown h4,
+	.pw-markdown h5,
+	.pw-markdown h6 {
+		font-size: 14px;
+	}
+	.pw-markdown ul,
+	.pw-markdown ol {
+		padding-left: 20px;
+	}
+	.pw-markdown ul {
+		list-style: disc;
+	}
+	.pw-markdown ol {
+		list-style: decimal;
+	}
+	.pw-markdown li + li {
+		margin-top: 4px;
+	}
+	.pw-markdown li > ul,
+	.pw-markdown li > ol {
+		margin: 4px 0 0;
+	}
+	.pw-markdown li.task-list-item {
+		list-style: none;
+		margin-left: -20px;
+	}
+	.pw-markdown li.task-list-item input {
+		margin: 0 6px 0 0;
+		accent-color: var(--color-primary);
+		vertical-align: -2px;
+	}
+	.pw-markdown :not(pre) > code {
+		font-size: 12.5px;
+		padding: 1px 5px;
+		border-radius: 4px;
+		background: var(--color-chip);
+		color: var(--color-fg);
+	}
+	.pw-markdown blockquote {
+		padding: 2px 0 2px 12px;
+		border-left: 2px solid var(--color-thinking);
+		color: var(--color-fg-2);
+	}
+	.pw-markdown hr {
+		border: 0;
+		border-top: 1px solid var(--color-border);
+		margin: 16px 0;
+	}
+	.pw-markdown table {
+		display: block;
+		max-width: 100%;
+		overflow-x: auto;
+		border-collapse: collapse;
+		font-size: 13px;
+	}
+	.pw-markdown th,
+	.pw-markdown td {
+		border: 1px solid var(--color-border);
+		padding: 6px 10px;
+		text-align: left;
+	}
+	.pw-markdown th {
+		background: var(--color-panel);
+		font-weight: 600;
+	}
+	.pw-markdown img {
+		max-width: 100%;
+		border-radius: 6px;
+	}
+	.pw-markdown strong {
+		font-weight: 600;
+	}
+	.pw-markdown del {
+		color: var(--color-fg-3);
+	}
+}

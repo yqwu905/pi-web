@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Pi-Web 全局设置</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0E1014;color:#E7E9EE;font-family:Inter,"PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;font-size:14px;-webkit-font-smoothing:antialiased}
+a{color:#8DBBFF;text-decoration:none}a:hover{color:#B7D3FF}
+pre,code{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+@keyframes pwspin{to{transform:rotate(360deg)}}
+@keyframes pwpulse{0%,100%{opacity:1}50%{opacity:.35}}
+</style>
+</helmet>
+<div style="height: 100vh; display: flex; flex-direction: column; background: #0E1014; color: #E7E9EE; overflow: auto;">
+
+  <header style="height: 48px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 16px; border-bottom: 1px solid #262C37; background: #13161C;">
+    <a href="Main.dc.html" style="display: flex; align-items: center; gap: 8px; color: #E7E9EE; font-weight: 700; font-size: 15px; letter-spacing: 0.2px;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" stroke="#6AA6FF" stroke-width="1.8"></rect><path d="M7 8h10M10 8v9M14 8v6.5c0 1.5.8 2.5 2.5 2.5" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round"></path></svg>
+      Pi-Web
+    </a>
+    <nav aria-label="位置" style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #A9B1BE; min-width: 0; flex-wrap: wrap;">
+      <span style="color: #E7E9EE;">设置</span>
+    </nav>
+    <div style="flex: 1;"></div>
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+      <a href="ServerDetail.dc.html" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; font-size: 12px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6l8-3z"></path></svg>
+        隧道代理 · 3 个连接
+      </a>
+      <a href="SyncCenter.dc.html" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; font-size: 12px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+        配置已同步
+      </a>
+      <a href="Settings.dc.html" aria-label="全局设置" aria-current="page" style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; background: #1F2A3D; color: #E7E9EE;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+      </a>
+    </div>
+  </header>
+
+  <div style="flex: 1; min-height: 0; display: flex; flex-wrap: wrap;">
+
+    <aside aria-label="服务器与会话" style="flex: 1 1 264px; max-width: 100%; display: flex; flex-direction: column; background: #13161C; border-right: 1px solid #262C37; min-height: 0;">
+      <div style="padding: 12px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #262C37;">
+        <label for="pw-search" style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">搜索会话</label>
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4-4"></path></svg>
+          <input id="pw-search" type="text" placeholder="名称或首条消息" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: #E7E9EE; font-size: 13px; font-family: inherit;">
+        </div>
+      </div>
+
+      <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 8px 6px; display: flex; flex-direction: column; gap: 2px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 4px;">
+          <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">服务器</span>
+          <a href="AddServer.dc.html" aria-label="添加服务器" style="display: flex; width: 24px; height: 24px; align-items: center; justify-content: center; border-radius: 4px; color: #A9B1BE;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          </a>
+        </div>
+
+        <a href="ServerDetail.dc.html" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: 6px; color: #E7E9EE; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>
+          <span style="flex: 1;">gpu-01</span>
+          <span style="font-size: 11px; font-weight: 500; color: #8A93A3;">在线 · 12ms</span>
+        </a>
+        <div style="display: flex; flex-direction: column; gap: 2px; padding-left: 18px;">
+          <div style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; color: #A9B1BE; font-size: 13px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+            <span style="flex: 1;">llm-train</span>
+            <span style="font-size: 11px; color: #8A93A3;">3</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 2px; padding-left: 20px;">
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #6AA6FF; animation: pwpulse 1.4s ease-in-out infinite;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">修复数据加载器的内存泄漏</span>
+              </span>
+              <span style="font-size: 11px; color: #8DBBFF; padding-left: 14px;">运行中 · bash</span>
+            </a>
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #F0A03C;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">添加 FSDP 支持</span>
+              </span>
+              <span style="font-size: 11px; color: #F0A03C; padding-left: 14px;">等待确认 · 扩展对话框</span>
+            </a>
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">重构配置系统</span>
+              </span>
+              <span style="font-size: 11px; color: #8A93A3; padding-left: 14px;">昨天 · 48 条消息</span>
+            </a>
+            <button type="button" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; background: transparent; border: 0; color: #8A93A3; font-size: 12px; font-family: inherit; cursor: pointer; text-align: left;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+              新建对话
+            </button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; color: #A9B1BE; font-size: 13px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+            <span style="flex: 1;">infra-scripts</span>
+            <span style="font-size: 11px; color: #8A93A3;">7</span>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; margin-top: 6px; color: #E7E9EE; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>
+          <span style="flex: 1;">build-arm</span>
+          <span style="font-size: 11px; font-weight: 500; color: #8A93A3;">在线 · 1 个待同步</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; color: #8A93A3; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span>
+          <span style="flex: 1;">staging-db</span>
+          <span style="font-size: 11px; font-weight: 500;">离线</span>
+        </div>
+      </div>
+
+      <div style="padding: 8px 6px; border-top: 1px solid #262C37; display: flex; flex-direction: column; gap: 2px;">
+        <a href="SyncCenter.dc.html" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+          同步中心
+        </a>
+        <a href="AddServer.dc.html" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"></rect><rect x="3" y="13" width="18" height="7" rx="2"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>
+          添加服务器
+        </a>
+      </div>
+    </aside>
+
+    <main style="flex: 999 1 560px; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #0E1014;">
+      <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 24px;">
+        <div style="max-width: 1064px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px;">
+
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <h1 style="margin: 0; font-size: 20px; font-weight: 600;">全局设置</h1>
+            <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #A9B1BE;">作用于 Host 和所有服务器的默认值。单台服务器的代理、同步和 agent 目录在 <a href="ServerSettings.dc.html">服务器设置</a> 中修改。</p>
+          </div>
+
+          <div style="display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px;">
+
+            <nav aria-label="设置分类" style="flex: 1 1 200px; max-width: 100%; display: flex; flex-direction: column; gap: 2px;">
+              <a href="#set-runtime" aria-current="true" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; background: #1F2A3D; color: #E7E9EE; font-size: 13px; font-weight: 500;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"></path><path d="M4 7.5l8 4.5 8-4.5M12 12v9"></path></svg>
+                运行时
+              </a>
+              <a href="#set-pi" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 9l3 3-3 3M12 15h5"></path></svg>
+                pi
+              </a>
+              <a href="#set-network" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"></path></svg>
+                网络
+              </a>
+              <a href="#set-access" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v2"></path></svg>
+                访问控制
+              </a>
+              <a href="#set-cache" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5"></rect><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"></path></svg>
+                缓存
+              </a>
+              <a href="#set-about" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 8h.01"></path></svg>
+                关于
+              </a>
+            </nav>
+
+            <div style="flex: 999 1 560px; min-width: 0; max-width: 820px; display: flex; flex-direction: column; gap: 16px;">
+
+              <section id="set-runtime" aria-labelledby="set-runtime-h" style="background: #13161C; border: 1px solid #262C37; border-radius: 8px;">
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;">
+                  <h2 id="set-runtime-h" style="margin: 0; font-size: 16px; font-weight: 600;">运行时</h2>
+                  <span style="font-size: 12px; color: #8A93A3;">部署到服务器的 Node.js。下载后统一转成 tar.gz，缓存在 Host。</span>
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 16px; border-top: 1px solid #262C37;">
+                  <span id="set-node-src-l" style="flex: 0 1 168px; padding-top: 6px; font-size: 13px; font-weight: 500;">Node.js 下载源</span>
+                  <div role="radiogroup" aria-labelledby="set-node-src-l" style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 4px;">
+                    <label style="display: flex; align-items: center; gap: 8px; min-height: 32px; font-size: 13px; color: #A9B1BE; cursor: pointer;">
+                      <input type="radio" name="node-src" value="official" style="accent-color: #2F6FDB; width: 16px; height: 16px; margin: 0;">
+                      <span style="width: 112px;">官方</span>
+                      <code style="font-size: 12.5px; color: #A9B1BE;">nodejs.org</code>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; min-height: 32px; font-size: 13px; color: #E7E9EE; cursor: pointer;">
+                      <input type="radio" name="node-src" value="mirror" checked="checked" style="accent-color: #2F6FDB; width: 16px; height: 16px; margin: 0;">
+                      <span style="width: 112px;">镜像</span>
+                      <code style="font-size: 12.5px; color: #C9CFD9;">npmmirror.com</code>
+                    </label>
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 32px;">
+                      <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #A9B1BE; cursor: pointer;">
+                        <input type="radio" name="node-src" value="custom" style="accent-color: #2F6FDB; width: 16px; height: 16px; margin: 0;">
+                        <span style="width: 112px;">自定义 URL</span>
+                      </label>
+                      <label for="set-node-url" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">自定义 Node.js 下载地址</label>
+                      <input id="set-node-url" type="text" disabled="disabled" placeholder="https://mirror.internal/nodejs/dist/" style="flex: 1 1 220px; min-width: 0; max-width: 340px; height: 32px; box-sizing: border-box; padding: 0 10px; background: #13161C; border: 1px solid #262C37; border-radius: 6px; color: #8A93A3; font-size: 12.5px; font-family: 'JetBrains Mono', monospace; cursor: not-allowed;">
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 32px;">
+                      <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #A9B1BE; cursor: pointer;">
+                        <input type="radio" name="node-src" value="local" style="accent-color: #2F6FDB; width: 16px; height: 16px; margin: 0;">
+                        <span style="width: 112px;">从本地文件导入</span>
+                      </label>
+                      <button type="button" style="display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12px; font-family: inherit; cursor: pointer;">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"></path></svg>
+                        选择 tar.xz…
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 16px; border-top: 1px solid #262C37;">
+                  <label for="set-node-ver" style="flex: 0 1 168px; padding-top: 6px; font-size: 13px; font-weight: 500;">Node 版本</label>
+                  <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+                    <select id="set-node-ver" style="width: 100%; max-width: 280px; height: 32px; box-sizing: border-box; padding: 0 8px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; font-family: inherit;">
+                      <option value="22.20.0" selected="selected">22.20.0（满足 pi ≥ 22.19）</option>
+                      <option value="22.19.0">22.19.0（满足 pi ≥ 22.19）</option>
+                      <option value="24.11.1">24.11.1</option>
+                    </select>
+                    <span style="font-size: 12px; line-height: 1.5; color: #8A93A3;">各版本在服务器上按目录并存，已部署的服务器在下次升级时切换。</span>
+                  </div>
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 16px; border-top: 1px solid #262C37;">
+                  <span id="set-arch-l" style="flex: 0 1 168px; padding-top: 2px; font-size: 13px; font-weight: 500;">目标平台</span>
+                  <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 8px;">
+                    <div role="group" aria-labelledby="set-arch-l" style="display: flex; flex-wrap: wrap; gap: 8px 24px;">
+                      <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #E7E9EE; cursor: pointer;">
+                        <input type="checkbox" checked="checked" style="accent-color: #2F6FDB; width: 16px; height: 16px; margin: 0;">
+                        <code style="font-size: 12.5px;">linux-x64</code>
+                      </label>
+                      <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #E7E9EE; cursor: pointer;">
+                        <input type="checkbox" checked="checked" style="accent-color: #2F6FDB; width: 16px; height: 16px; margin: 0;">
+                        <code style="font-size: 12.5px;">linux-arm64</code>
+                      </label>
+                    </div>
+                    <span style="font-size: 12px; line-height: 1.5; color: #8A93A3;">预先缓存这些平台的离线包。服务器要求 glibc ≥ 2.28。</span>
+                  </div>
+                </div>
+              </section>
+
+              <section id="set-pi" aria-labelledby="set-pi-h" style="background: #13161C; border: 1px solid #262C37; border-radius: 8px;">
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;">
+                  <h2 id="set-pi-h" style="margin: 0; font-size: 16px; font-weight: 600;">pi</h2>
+                  <span style="font-size: 12px; color: #8A93A3;">包名 <code style="font-size: 12px; color: #A9B1BE;">@earendil-works/pi-coding-agent</code></span>
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 16px; border-top: 1px solid #262C37;">
+                  <span id="set-pi-ver-l" style="flex: 0 1 168px; padding-top: 6px; font-size: 13px; font-weight: 500;">版本策略</span>
+                  <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+                    <div role="radiogroup" aria-labelledby="set-pi-ver-l" style="display: flex; flex-direction: column; gap: 4px;">
+                      <label style="display: flex; align-items: center; gap: 8px; min-height: 32px; font-size: 13px; color: #E7E9EE; cursor: pointer;">
+                        <input type="radio" name="pi-ver" value="follow" checked="checked" style="accent-color: #2F6FDB; width: 16px; height: 16px; margin: 0;">
+                        跟随 Host 已安装版本（当前 1.4.0）
+                      </label>
+                      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 32px;">
+                        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #A9B1BE; cursor: pointer;">
+                          <input type="radio" name="pi-ver" value="pinned" style="accent-color: #2F6FDB; width: 16px; height: 16px; margin: 0;">
+                          <span style="width: 112px;">指定版本</span>
+                        </label>
+                        <label for="set-pi-ver" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">指定 pi 版本</label>
+                        <input id="set-pi-ver" type="text" disabled="disabled" placeholder="1.4.0" style="width: 120px; height: 32px; box-sizing: border-box; padding: 0 10px; background: #13161C; border: 1px solid #262C37; border-radius: 6px; color: #8A93A3; font-size: 12.5px; font-family: 'JetBrains Mono', monospace; cursor: not-allowed;">
+                      </div>
+                    </div>
+                    <span style="font-size: 12px; line-height: 1.5; color: #8A93A3;">pi 按版本目录并存，升级或回滚只切换 current 软链接。</span>
+                  </div>
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 16px; border-top: 1px solid #262C37;">
+                  <label for="set-registry" style="flex: 0 1 168px; padding-top: 6px; font-size: 13px; font-weight: 500;">npm registry</label>
+                  <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+                    <input id="set-registry" type="text" value="https://registry.npmmirror.com" style="width: 100%; max-width: 420px; height: 32px; box-sizing: border-box; padding: 0 10px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12.5px; font-family: 'JetBrains Mono', monospace;">
+                    <span style="font-size: 12px; line-height: 1.5; color: #8A93A3;">Host 在缓存目录执行 npm install 时使用。</span>
+                  </div>
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 16px; border-top: 1px solid #262C37;">
+                  <span style="flex: 0 1 168px; padding-top: 2px; font-size: 13px; font-weight: 500;">打包</span>
+                  <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #E7E9EE; cursor: pointer;">
+                      <input type="checkbox" checked="checked" style="accent-color: #2F6FDB; width: 16px; height: 16px; margin: 0;">
+                      打包时移除 darwin/win32 预编译文件
+                    </label>
+                    <span style="font-size: 12px; line-height: 1.5; color: #8A93A3;">pi-tui 自带 linux-x64/arm64 预编译，与 Host 平台无关。</span>
+                  </div>
+                </div>
+              </section>
+
+              <section id="set-network" aria-labelledby="set-network-h" style="background: #13161C; border: 1px solid #262C37; border-radius: 8px;">
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;">
+                  <h2 id="set-network-h" style="margin: 0; font-size: 16px; font-weight: 600;">网络</h2>
+                  <span style="font-size: 12px; color: #8A93A3;">服务器上的 LLM 请求经 SSH Link 回到 Host 的 TunnelProxy 再发出。</span>
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 16px; border-top: 1px solid #262C37;">
+                  <label for="set-upstream" style="flex: 0 1 168px; padding-top: 6px; font-size: 13px; font-weight: 500;">Host 上游代理</label>
+                  <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+                    <input id="set-upstream" type="text" value="http://proxy.corp.local:3128" style="width: 100%; max-width: 420px; height: 32px; box-sizing: border-box; padding: 0 10px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12.5px; font-family: 'JetBrains Mono', monospace;">
+                    <span style="font-size: 12px; line-height: 1.5; color: #8A93A3;">隧道代理的出站连接会经过此代理。留空则 Host 直连上游。</span>
+                  </div>
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 16px; border-top: 1px solid #262C37;">
+                  <span id="set-port-range-l" style="flex: 0 1 168px; padding-top: 6px; font-size: 13px; font-weight: 500;">新服务器的代理端口范围</span>
+                  <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+                    <div role="group" aria-labelledby="set-port-range-l" style="display: flex; align-items: center; gap: 8px;">
+                      <label for="set-port-from" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">起始端口</label>
+                      <input id="set-port-from" type="text" inputmode="numeric" value="30000" style="width: 96px; height: 32px; box-sizing: border-box; padding: 0 10px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12.5px; font-family: 'JetBrains Mono', monospace;">
+                      <span aria-hidden="true" style="color: #8A93A3;">–</span>
+                      <label for="set-port-to" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">结束端口</label>
+                      <input id="set-port-to" type="text" inputmode="numeric" value="40000" style="width: 96px; height: 32px; box-sizing: border-box; padding: 0 10px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12.5px; font-family: 'JetBrains Mono', monospace;">
+                    </div>
+                    <span style="font-size: 12px; line-height: 1.5; color: #8A93A3;">添加服务器时从中分配一个固定端口，SSH 重连后不变（gpu-01 为 <code style="font-size: 12px; color: #A9B1BE;">38412</code>）。</span>
+                  </div>
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 16px; border-top: 1px solid #262C37;">
+                  <label for="set-noproxy" style="flex: 0 1 168px; padding-top: 6px; font-size: 13px; font-weight: 500;">默认 NO_PROXY</label>
+                  <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+                    <input id="set-noproxy" type="text" value="localhost,127.0.0.1,::1" style="width: 100%; max-width: 420px; height: 32px; box-sizing: border-box; padding: 0 10px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12.5px; font-family: 'JetBrains Mono', monospace;">
+                    <span style="font-size: 12px; line-height: 1.5; color: #8A93A3;">内网地址（如 vLLM）在 <a href="ServerSettings.dc.html">服务器设置</a> 中追加。</span>
+                  </div>
+                </div>
+              </section>
+
+              <section id="set-access" aria-labelledby="set-access-h" style="background: #13161C; border: 1px solid #262C37; border-radius: 8px;">
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;">
+                  <h2 id="set-access-h" style="margin: 0; font-size: 16px; font-weight: 600;">访问控制</h2>
+                  <span style="font-size: 12px; color: #8A93A3;">Pi-Web 界面与接口。所有接口都校验 Origin。</span>
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 16px; border-top: 1px solid #262C37;">
+                  <label for="set-listen" style="flex: 0 1 168px; padding-top: 6px; font-size: 13px; font-weight: 500;">监听地址</label>
+                  <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+                    <input id="set-listen" type="text" value="127.0.0.1" style="width: 100%; max-width: 200px; height: 32px; box-sizing: border-box; padding: 0 10px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12.5px; font-family: 'JetBrains Mono', monospace;">
+                    <span style="font-size: 12px; line-height: 1.5; color: #8A93A3;">仅本机访问；单用户模式</span>
+                  </div>
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 16px; border-top: 1px solid #262C37;">
+                  <label for="set-port" style="flex: 0 1 168px; padding-top: 6px; font-size: 13px; font-weight: 500;">端口</label>
+                  <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 6px;">
+                    <input id="set-port" type="text" inputmode="numeric" value="7878" style="width: 96px; height: 32px; box-sizing: border-box; padding: 0 10px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12.5px; font-family: 'JetBrains Mono', monospace;">
+                    <span style="font-size: 12px; line-height: 1.5; color: #8A93A3;">修改监听地址或端口后需重启 Pi-Web。</span>
+                  </div>
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 14px 16px; border-top: 1px solid #262C37;">
+                  <span id="set-token-l" style="flex: 0 1 168px; padding-top: 2px; font-size: 13px; font-weight: 500;">访问令牌</span>
+                  <div role="group" aria-labelledby="set-token-l" style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 8px;">
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #E7E9EE; cursor: pointer;">
+                      <input type="checkbox" checked="checked" style="accent-color: #2F6FDB; width: 16px; height: 16px; margin: 0;">
+                      启用访问令牌
+                    </label>
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+                      <code aria-label="当前令牌，已隐藏" style="display: flex; align-items: center; height: 32px; box-sizing: border-box; padding: 0 12px; background: #0B0D11; border: 1px solid #262C37; border-radius: 6px; font-size: 12.5px; color: #C9CFD9; letter-spacing: 0.4px;">pw_••••••••3f9a</code>
+                      <button type="button" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12px; font-family: inherit; cursor: pointer;">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>
+                        复制
+                      </button>
+                      <button type="button" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12px; font-family: inherit; cursor: pointer;">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7L20 8.5M20 4v4.5h-4.5"></path></svg>
+                        重新生成
+                      </button>
+                    </div>
+                    <span style="font-size: 12px; line-height: 1.5; color: #8A93A3;">通过 Cookie 校验，防止同一台机器上的其他用户访问 Pi-Web。重新生成后已登录的浏览器需重新输入。</span>
+                  </div>
+                </div>
+              </section>
+
+              <section id="set-cache" aria-labelledby="set-cache-h" style="background: #13161C; border: 1px solid #262C37; border-radius: 8px;">
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;">
+                  <h2 id="set-cache-h" style="margin: 0; font-size: 16px; font-weight: 600;">缓存</h2>
+                  <span style="font-size: 12px; color: #8A93A3;">离线包位于 <code style="font-size: 12px; color: #A9B1BE;">~/.pi-web-host/cache</code>，部署时命中缓存则跳过下载和打包。</span>
+                </div>
+                <div style="padding: 14px 16px 16px; border-top: 1px solid #262C37; display: flex; flex-direction: column; gap: 12px;">
+                  <div style="overflow-x: auto; border: 1px solid #262C37; border-radius: 8px;">
+                    <table style="width: 100%; min-width: 460px; border-collapse: collapse; font-size: 13px;">
+                      <thead>
+                        <tr style="background: #191D25;">
+                          <th scope="col" style="text-align: left; padding: 8px 12px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">文件</th>
+                          <th scope="col" style="text-align: right; padding: 8px 12px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3; width: 96px;">大小</th>
+                          <th scope="col" style="text-align: left; padding: 8px 12px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3; width: 96px;">使用中</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td style="padding: 8px 12px; border-top: 1px solid #262C37;"><code style="font-size: 12.5px; color: #C9CFD9;">node-v22.20.0-linux-x64.tar.gz</code></td>
+                          <td style="padding: 8px 12px; border-top: 1px solid #262C37; text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: #C9CFD9;">28.9 MB</td>
+                          <td style="padding: 8px 12px; border-top: 1px solid #262C37;"><span style="display: flex; align-items: center; gap: 6px; color: #E7E9EE;"><span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>3 台</span></td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 12px; border-top: 1px solid #262C37;"><code style="font-size: 12.5px; color: #C9CFD9;">node-v22.20.0-linux-arm64.tar.gz</code></td>
+                          <td style="padding: 8px 12px; border-top: 1px solid #262C37; text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: #C9CFD9;">27.4 MB</td>
+                          <td style="padding: 8px 12px; border-top: 1px solid #262C37;"><span style="display: flex; align-items: center; gap: 6px; color: #E7E9EE;"><span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>1 台</span></td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 12px; border-top: 1px solid #262C37;"><code style="font-size: 12.5px; color: #C9CFD9;">pi-1.4.0-linux.tar.gz</code></td>
+                          <td style="padding: 8px 12px; border-top: 1px solid #262C37; text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: #C9CFD9;">41.7 MB</td>
+                          <td style="padding: 8px 12px; border-top: 1px solid #262C37;"><span style="display: flex; align-items: center; gap: 6px; color: #E7E9EE;"><span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>4 台</span></td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 12px; border-top: 1px solid #262C37;"><code style="font-size: 12.5px; color: #A9B1BE;">pi-1.3.0-linux.tar.gz</code></td>
+                          <td style="padding: 8px 12px; border-top: 1px solid #262C37; text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: #A9B1BE;">40.9 MB</td>
+                          <td style="padding: 8px 12px; border-top: 1px solid #262C37;"><span style="display: flex; align-items: center; gap: 6px; color: #8A93A3;"><span style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span>否</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;">
+                    <span style="font-size: 12px; color: #A9B1BE;">共 <span style="font-family: 'JetBrains Mono', monospace; color: #E7E9EE;">138.9 MB</span> · 未使用 <span style="font-family: 'JetBrains Mono', monospace;">40.9 MB</span></span>
+                    <button type="button" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12px; font-family: inherit; cursor: pointer;">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"></path></svg>
+                      清理未使用的包
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section id="set-about" aria-labelledby="set-about-h" style="background: #13161C; border: 1px solid #262C37; border-radius: 8px;">
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;">
+                  <h2 id="set-about-h" style="margin: 0; font-size: 16px; font-weight: 600;">关于</h2>
+                </div>
+                <div style="padding: 14px 16px 16px; border-top: 1px solid #262C37; display: flex; flex-direction: column; gap: 14px;">
+                  <dl style="margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr)); gap: 12px 16px;">
+                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                      <dt style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">Pi-Web</dt>
+                      <dd style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #E7E9EE;">0.1.0</dd>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                      <dt style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">数据目录</dt>
+                      <dd style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #E7E9EE;">~/.pi-web-host</dd>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                      <dt style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">Host pi</dt>
+                      <dd style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #E7E9EE;">1.4.0</dd>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                      <dt style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">Node</dt>
+                      <dd style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #E7E9EE;">22.20.0</dd>
+                    </div>
+                  </dl>
+                  <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;">
+                    <button type="button" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12px; font-family: inherit; cursor: pointer;">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"></path></svg>
+                      导出诊断信息
+                    </button>
+                    <span style="font-size: 12px; color: #8A93A3;">包含版本、日志和服务器状态，不含密码、密钥与令牌。</span>
+                  </div>
+                </div>
+              </section>
+
+              <div style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding-bottom: 8px;">
+                <button type="button" style="height: 34px; padding: 0 14px; background: transparent; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; font-family: inherit; cursor: pointer;">恢复默认</button>
+                <button type="button" style="height: 34px; padding: 0 18px; background: #2F6FDB; border: 0; border-radius: 6px; color: #FFFFFF; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;">保存</button>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

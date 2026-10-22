@@ -1,0 +1,154 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-10-22T13:30:00Z"
+  },
+  "title": "Pi-Web 界面设计",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 960,
+      "title": "对话主界面",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "SessionTree.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 1440,
+      "h": 960,
+      "title": "会话树 / 分支跳转",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Dialogs.dc.html": {
+      "x": 3040,
+      "y": 0,
+      "w": 1440,
+      "h": 960,
+      "title": "对话框：扩展 UI · Fork · 新建工作区",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "AddServer.dc.html": {
+      "x": 0,
+      "y": 1380,
+      "w": 1440,
+      "h": 960,
+      "title": "添加服务器 · 探测与离线部署",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "ServerDetail.dc.html": {
+      "x": 1520,
+      "y": 1380,
+      "w": 1440,
+      "h": 960,
+      "title": "服务器概览 · 代理 · 同步状态",
+      "expand": "fill"
+    },
+    "ServerSettings.dc.html": {
+      "x": 3040,
+      "y": 1380,
+      "w": 1440,
+      "h": 960,
+      "title": "服务器设置 · 代理范围 · 同步项",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Files.dc.html": {
+      "x": 0,
+      "y": 2760,
+      "w": 1440,
+      "h": 960,
+      "title": "工作区 · 文件浏览",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Terminal.dc.html": {
+      "x": 1520,
+      "y": 2760,
+      "w": 1440,
+      "h": 960,
+      "title": "工作区 · Web 终端",
+      "expand": "fill"
+    },
+    "Git.dc.html": {
+      "x": 3040,
+      "y": 2760,
+      "w": 1440,
+      "h": 960,
+      "title": "工作区 · Git 变更",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "SyncCenter.dc.html": {
+      "x": 0,
+      "y": 4140,
+      "w": 1440,
+      "h": 960,
+      "title": "同步中心 · OAuth 托管",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Settings.dc.html": {
+      "x": 1520,
+      "y": 4140,
+      "w": 1440,
+      "h": 960,
+      "title": "全局设置",
+      "expand": "fill"
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "SessionTree.dc.html",
+    "Dialogs.dc.html",
+    "AddServer.dc.html",
+    "ServerDetail.dc.html",
+    "ServerSettings.dc.html",
+    "Files.dc.html",
+    "Terminal.dc.html",
+    "Git.dc.html",
+    "SyncCenter.dc.html",
+    "Settings.dc.html"
+  ],
+  "notes": {
+    "rowChat": {
+      "x": 0,
+      "y": -300,
+      "text": "对话",
+      "kind": "title1",
+      "maxW": 4480
+    },
+    "rowServer": {
+      "x": 0,
+      "y": 1080,
+      "text": "服务器",
+      "kind": "title1",
+      "maxW": 4480
+    },
+    "rowWorkspace": {
+      "x": 0,
+      "y": 2460,
+      "text": "工作区",
+      "kind": "title1",
+      "maxW": 4480
+    },
+    "rowSync": {
+      "x": 0,
+      "y": 3840,
+      "text": "同步与设置",
+      "kind": "title1",
+      "maxW": 2960
+    }
+  },
+  "designSystems": []
+}

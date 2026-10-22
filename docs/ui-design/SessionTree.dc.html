@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Pi-Web 会话树</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0E1014;color:#E7E9EE;font-family:Inter,"PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;font-size:14px;-webkit-font-smoothing:antialiased}
+a{color:#8DBBFF;text-decoration:none}a:hover{color:#B7D3FF}
+pre,code{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+@keyframes pwspin{to{transform:rotate(360deg)}}
+@keyframes pwpulse{0%,100%{opacity:1}50%{opacity:.35}}
+</style>
+</helmet>
+<div style="height: 100vh; display: flex; flex-direction: column; background: #0E1014; color: #E7E9EE; overflow: auto;">
+
+  <header style="height: 48px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 16px; border-bottom: 1px solid #262C37; background: #13161C;">
+    <a href="Main.dc.html" style="display: flex; align-items: center; gap: 8px; color: #E7E9EE; font-weight: 700; font-size: 15px; letter-spacing: 0.2px;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" stroke="#6AA6FF" stroke-width="1.8"></rect><path d="M7 8h10M10 8v9M14 8v6.5c0 1.5.8 2.5 2.5 2.5" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round"></path></svg>
+      Pi-Web
+    </a>
+    <nav aria-label="位置" style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #A9B1BE; min-width: 0; flex-wrap: wrap;">
+      <a href="ServerDetail.dc.html" style="color: #A9B1BE;">gpu-01</a>
+      <span aria-hidden="true" style="color: #5B6370;">/</span>
+      <span>llm-train</span>
+      <span aria-hidden="true" style="color: #5B6370;">/</span>
+      <span style="color: #E7E9EE;">修复数据加载器的内存泄漏</span>
+    </nav>
+    <div style="flex: 1;"></div>
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+      <a href="ServerDetail.dc.html" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; font-size: 12px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6l8-3z"></path></svg>
+        隧道代理 · 3 个连接
+      </a>
+      <a href="SyncCenter.dc.html" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; font-size: 12px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+        配置已同步
+      </a>
+      <a href="Settings.dc.html" aria-label="全局设置" style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; color: #A9B1BE;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+      </a>
+    </div>
+  </header>
+
+  <div style="flex: 1; min-height: 0; display: flex; flex-wrap: wrap;">
+
+    <aside aria-label="服务器与会话" style="flex: 1 1 264px; max-width: 100%; display: flex; flex-direction: column; background: #13161C; border-right: 1px solid #262C37; min-height: 0;">
+      <div style="padding: 12px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #262C37;">
+        <label for="pw-search" style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">搜索会话</label>
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4-4"></path></svg>
+          <input id="pw-search" type="text" placeholder="名称或首条消息" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: #E7E9EE; font-size: 13px; font-family: inherit;">
+        </div>
+      </div>
+
+      <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 8px 6px; display: flex; flex-direction: column; gap: 2px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 4px;">
+          <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">服务器</span>
+          <a href="AddServer.dc.html" aria-label="添加服务器" style="display: flex; width: 24px; height: 24px; align-items: center; justify-content: center; border-radius: 4px; color: #A9B1BE;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          </a>
+        </div>
+
+        <a href="ServerDetail.dc.html" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: 6px; color: #E7E9EE; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>
+          <span style="flex: 1;">gpu-01</span>
+          <span style="font-size: 11px; font-weight: 500; color: #8A93A3;">在线 · 12ms</span>
+        </a>
+        <div style="display: flex; flex-direction: column; gap: 2px; padding-left: 18px;">
+          <div style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; color: #A9B1BE; font-size: 13px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+            <span style="flex: 1;">llm-train</span>
+            <span style="font-size: 11px; color: #8A93A3;">3</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 2px; padding-left: 20px;">
+            <a href="Main.dc.html" aria-current="page" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; background: #1F2A3D; color: #E7E9EE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #6AA6FF; animation: pwpulse 1.4s ease-in-out infinite;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">修复数据加载器的内存泄漏</span>
+              </span>
+              <span style="font-size: 11px; color: #8DBBFF; padding-left: 14px;">运行中 · bash</span>
+            </a>
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #F0A03C;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">添加 FSDP 支持</span>
+              </span>
+              <span style="font-size: 11px; color: #F0A03C; padding-left: 14px;">等待确认 · 扩展对话框</span>
+            </a>
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">重构配置系统</span>
+              </span>
+              <span style="font-size: 11px; color: #8A93A3; padding-left: 14px;">昨天 · 48 条消息</span>
+            </a>
+            <button type="button" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; background: transparent; border: 0; color: #8A93A3; font-size: 12px; font-family: inherit; cursor: pointer; text-align: left;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+              新建对话
+            </button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; color: #A9B1BE; font-size: 13px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+            <span style="flex: 1;">infra-scripts</span>
+            <span style="font-size: 11px; color: #8A93A3;">7</span>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; margin-top: 6px; color: #E7E9EE; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>
+          <span style="flex: 1;">build-arm</span>
+          <span style="font-size: 11px; font-weight: 500; color: #8A93A3;">在线 · 1 个待同步</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; color: #8A93A3; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span>
+          <span style="flex: 1;">staging-db</span>
+          <span style="font-size: 11px; font-weight: 500;">离线</span>
+        </div>
+      </div>
+
+      <div style="padding: 8px 6px; border-top: 1px solid #262C37; display: flex; flex-direction: column; gap: 2px;">
+        <a href="SyncCenter.dc.html" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+          同步中心
+        </a>
+        <a href="AddServer.dc.html" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"></rect><rect x="3" y="13" width="18" height="7" rx="2"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>
+          添加服务器
+        </a>
+      </div>
+    </aside>
+
+    <main style="flex: 999 1 560px; min-width: 0; min-height: 600px; display: flex; flex-direction: column; background: #0E1014; position: relative;">
+
+      <div aria-hidden="true" style="flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;">
+        <div style="height: 40px; flex-shrink: 0; display: flex; align-items: flex-end; gap: 4px; padding: 0 16px; border-bottom: 1px solid #262C37;">
+          <span style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; color: #E7E9EE; font-size: 13px; font-weight: 600; border-bottom: 2px solid #6AA6FF; box-sizing: border-box;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5z"></path></svg>
+            对话
+          </span>
+          <span style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; color: #A9B1BE; font-size: 13px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+            文件
+          </span>
+          <span style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; color: #A9B1BE; font-size: 13px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 9l3 3-3 3M12 15h5"></path></svg>
+            终端
+          </span>
+          <span style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; color: #A9B1BE; font-size: 13px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="2"></circle><circle cx="6" cy="18" r="2"></circle><circle cx="18" cy="9" r="2"></circle><path d="M6 8v8M18 11c0 4-6 3-11 6"></path></svg>
+            Git
+            <span style="font-size: 11px; padding: 1px 6px; border-radius: 9px; background: #2A2418; color: #F0A03C;">3</span>
+          </span>
+        </div>
+
+        <div style="flex: 1; min-height: 0; overflow: hidden; padding: 24px 0;">
+          <div style="max-width: 860px; margin: 0 auto; padding: 0 24px; display: flex; flex-direction: column; gap: 18px;">
+            <div style="align-self: flex-end; max-width: 80%; background: #1A2131; border: 1px solid #263452; border-radius: 10px; padding: 10px 14px; line-height: 1.6;">训练跑到第 3 个 epoch 后内存一直涨，帮我查一下 dataloader 是不是有泄漏</div>
+            <div style="line-height: 1.7;">先找到 Dataset 的实现位置，再看缓存逻辑。</div>
+            <div style="display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border: 1px solid #262C37; border-radius: 8px; background: #13161C;">
+              <span style="font-size: 12px; font-weight: 600; color: #A9B1BE;">bash</span>
+              <code style="flex: 1; min-width: 0; font-size: 12.5px; color: #E7E9EE; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">rg -n "class .*Dataset" src/</code>
+              <span style="font-size: 11px; color: #8A93A3;">退出码 0 · 0.3s</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border: 1px solid #262C37; border-radius: 8px; background: #13161C;">
+              <span style="font-size: 12px; font-weight: 600; color: #A9B1BE;">read</span>
+              <code style="flex: 1; min-width: 0; font-size: 12.5px; color: #E7E9EE;">src/data/loader.py</code>
+              <span style="font-size: 11px; color: #8A93A3;">第 41–72 行</span>
+            </div>
+            <div style="line-height: 1.7;">问题在 _cache：每个样本的分片都被永久缓存，并且在每个 worker 里各存一份，所以内存随 epoch 线性增长。</div>
+            <div style="display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border: 1px solid #262C37; border-radius: 8px; background: #13161C;">
+              <span style="font-size: 12px; font-weight: 600; color: #A9B1BE;">edit</span>
+              <code style="flex: 1; min-width: 0; font-size: 12.5px; color: #E7E9EE;">src/data/loader.py</code>
+              <span style="font-size: 11px; color: #7FE0D2;">+4</span>
+              <span style="font-size: 11px; color: #F4A29A;">−2</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border: 1px solid #263452; border-radius: 8px; background: #13161C;">
+              <span style="font-size: 12px; font-weight: 600; color: #8DBBFF;">bash</span>
+              <code style="flex: 1; min-width: 0; font-size: 12.5px; color: #E7E9EE;">python -m pytest tests/test_loader.py -q</code>
+              <span style="font-size: 11px; color: #8DBBFF;">运行中 12s</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="flex-shrink: 0; padding: 0 24px 16px;">
+          <div style="max-width: 860px; margin: 0 auto; height: 96px; padding: 12px 14px; border: 1px solid #33405A; border-radius: 10px; background: #13161C; color: #8A93A3; font-size: 14px; box-sizing: border-box;">继续对话…</div>
+        </div>
+      </div>
+
+      <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(8,10,14,0.72); box-sizing: border-box;">
+        <div role="dialog" aria-modal="true" aria-labelledby="pw-tree-title" style="width: 100%; max-width: 1040px; height: min(760px, 100%); display: flex; flex-direction: column; background: #13161C; border: 1px solid #33405A; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); overflow: hidden; box-sizing: border-box;">
+
+          <div style="flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #262C37;">
+            <span aria-hidden="true" style="width: 32px; height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 6px; background: #191D25; border: 1px solid #262C37; box-sizing: border-box;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="5" r="2"></circle><circle cx="6" cy="19" r="2"></circle><circle cx="18" cy="12" r="2"></circle><path d="M6 7v10M6 12h10"></path></svg>
+            </span>
+            <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+              <h2 id="pw-tree-title" style="margin: 0; font-size: 16px; font-weight: 600;">会话树</h2>
+              <span style="font-size: 12px; color: #A9B1BE; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">修复数据加载器的内存泄漏 <span style="color: #8A93A3;">· 13 个条目 · 1 个分叉点 · 2 条分支</span></span>
+            </div>
+            <a href="Main.dc.html" aria-label="关闭" style="width: 32px; height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 6px; color: #A9B1BE;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+            </a>
+          </div>
+
+          <div style="flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 16px; border-bottom: 1px solid #262C37;">
+            <div role="group" aria-label="筛选条目" style="display: flex; flex-wrap: wrap; gap: 6px;">
+              <button type="button" onClick="{{ fDefault.pick }}" aria-pressed="{{ fDefault.pressed }}" style="{{ fDefault.style }}">默认</button>
+              <button type="button" onClick="{{ fNoTools.pick }}" aria-pressed="{{ fNoTools.pressed }}" style="{{ fNoTools.style }}">隐藏工具</button>
+              <button type="button" onClick="{{ fUser.pick }}" aria-pressed="{{ fUser.pressed }}" style="{{ fUser.style }}">仅用户消息</button>
+              <button type="button" onClick="{{ fLabeled.pick }}" aria-pressed="{{ fLabeled.pressed }}" style="{{ fLabeled.style }}">仅已标记</button>
+              <button type="button" onClick="{{ fAll.pick }}" aria-pressed="{{ fAll.pressed }}" style="{{ fAll.style }}">全部</button>
+            </div>
+            <span style="flex: 1;"></span>
+            <span style="font-size: 12px; color: #8A93A3; font-family: 'JetBrains Mono', monospace;">{{ countText }}</span>
+            <div style="flex: 0 1 240px; min-width: 160px; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px; box-sizing: border-box;">
+              <label for="pw-tree-search" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">搜索条目</label>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4-4"></path></svg>
+              <input id="pw-tree-search" type="text" placeholder="消息、命令或标签" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: #E7E9EE; font-size: 13px; font-family: inherit;">
+            </div>
+          </div>
+
+          <div style="flex: 1; min-height: 0; display: flex; flex-wrap: wrap; gap: 1px; background: #262C37; overflow-y: auto;">
+
+            <section aria-label="条目树" style="flex: 3 1 420px; min-width: 0; min-height: 300px; display: flex; flex-direction: column; background: #13161C;">
+              <div aria-hidden="true" style="flex-shrink: 0; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 18px 0 16px; border-bottom: 1px solid #262C37; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">
+                <span style="flex: 1;">条目</span>
+                <span style="width: 40px; text-align: right;">tokens</span>
+                <span style="width: 38px; text-align: right;">时间</span>
+              </div>
+              <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 8px;">
+                <sc-for list="{{ rows }}" as="item" hint-placeholder-count="8">
+                  <button type="button" onClick="{{ item.pick }}" aria-pressed="{{ item.pressed }}" style="{{ item.rowStyle }}">
+                    <span aria-hidden="true" style="{{ item.gutterStyle }}">
+                      <span style="{{ item.g0Style }}"></span>
+                      <span style="{{ item.g0hStyle }}"></span>
+                      <span style="{{ item.g1Style }}"></span>
+                      <span style="{{ item.dotStyle }}"></span>
+                    </span>
+                    <span style="{{ item.tagStyle }}">{{ item.roleLabel }}</span>
+                    <span style="flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px;">
+                      <sc-if value="{{ item.hasLead }}" hint-placeholder-val="{{ false }}">
+                        <span style="{{ item.leadStyle }}">{{ item.lead }}</span>
+                      </sc-if>
+                      <span style="{{ item.textStyle }}">{{ item.text }}</span>
+                    </span>
+                    <sc-if value="{{ item.hasNote }}" hint-placeholder-val="{{ false }}">
+                      <span style="flex-shrink: 0; display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border: 1px solid #262C37; border-radius: 4px; color: #A9B1BE; font-size: 11px; box-sizing: border-box;">{{ item.note }}</span>
+                    </sc-if>
+                    <sc-if value="{{ item.hasLabel }}" hint-placeholder-val="{{ false }}">
+                      <span style="flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border: 1px solid #33405A; border-radius: 4px; background: #191D25; color: #E7E9EE; font-size: 11px; font-weight: 600; box-sizing: border-box;">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10v16l-5-4-5 4V4z"></path></svg>
+                        {{ item.label }}
+                      </span>
+                    </sc-if>
+                    <sc-if value="{{ item.running }}" hint-placeholder-val="{{ false }}">
+                      <span style="flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; color: #8DBBFF; font-size: 11px;">
+                        <span style="width: 10px; height: 10px; border: 2px solid #33405A; border-top-color: #6AA6FF; border-radius: 50%; animation: pwspin 0.9s linear infinite; box-sizing: border-box;" aria-hidden="true"></span>
+                        运行中
+                      </span>
+                    </sc-if>
+                    <sc-if value="{{ item.current }}" hint-placeholder-val="{{ false }}">
+                      <span style="flex-shrink: 0; display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border: 1px solid #2F6FDB; border-radius: 4px; background: #1A2131; color: #8DBBFF; font-size: 11px; font-weight: 600; box-sizing: border-box;">当前位置</span>
+                    </sc-if>
+                    <span style="width: 40px; flex-shrink: 0; text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: #8A93A3;">{{ item.tokens }}</span>
+                    <span style="width: 38px; flex-shrink: 0; text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: #8A93A3;">{{ item.time }}</span>
+                    <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">{{ item.pathSr }}</span>
+                  </button>
+                </sc-for>
+              </div>
+              <div style="flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 8px 16px; border-top: 1px solid #262C37; font-size: 11px; color: #8A93A3;">
+                <span style="display: flex; align-items: center; gap: 6px;"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; background: #6AA6FF;"></span>当前路径</span>
+                <span style="display: flex; align-items: center; gap: 6px;"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;"></span>其他分支</span>
+                <span style="display: flex; align-items: center; gap: 6px;"><span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 2px; background: #6AA6FF;"></span>摘要条目</span>
+                <span style="flex: 1;"></span>
+                <span>↑ ↓ 选择 · Enter 跳转 · Esc 关闭</span>
+              </div>
+            </section>
+
+            <section aria-labelledby="pw-preview-title" style="flex: 2 1 300px; min-width: 0; min-height: 300px; display: flex; flex-direction: column; background: #13161C;">
+              <div style="flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; border-bottom: 1px solid #262C37;">
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+                  <span style="{{ p.tagStyle }}">{{ p.roleLabel }}</span>
+                  <h3 id="pw-preview-title" style="margin: 0; font-size: 14px; font-weight: 600;">{{ p.kindLabel }}</h3>
+                  <sc-if value="{{ p.hasLabel }}" hint-placeholder-val="{{ false }}">
+                    <span style="display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border: 1px solid #33405A; border-radius: 4px; background: #191D25; color: #E7E9EE; font-size: 11px; font-weight: 600; box-sizing: border-box;">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10v16l-5-4-5 4V4z"></path></svg>
+                      {{ p.label }}
+                    </span>
+                  </sc-if>
+                  <span style="flex: 1;"></span>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8A93A3;">{{ p.when }}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #A9B1BE;">
+                  <span aria-hidden="true" style="{{ p.pathDotStyle }}"></span>
+                  {{ p.pathText }}
+                </div>
+              </div>
+
+              <div style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 14px 16px;">
+                <sc-if value="{{ p.isTool }}" hint-placeholder-val="{{ false }}">
+                  <pre style="margin: 0; padding: 10px 12px; border: 1px solid #262C37; border-radius: 8px; background: #0B0D11; color: #C9CFD9; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere;">{{ p.full }}</pre>
+                </sc-if>
+                <sc-if value="{{ p.notTool }}" hint-placeholder-val="{{ false }}">
+                  <div style="{{ p.boxStyle }}">{{ p.full }}</div>
+                </sc-if>
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">详情</span>
+                  <div style="display: flex; flex-direction: column;">
+                    <sc-for list="{{ p.meta }}" as="m" hint-placeholder-count="3">
+                      <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 12px;">
+                        <span style="flex-shrink: 0; color: #8A93A3;">{{ m.k }}</span>
+                        <span style="min-width: 0; text-align: right; font-family: 'JetBrains Mono', monospace; color: #C9CFD9; overflow-wrap: anywhere;">{{ m.v }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </div>
+
+              <div style="flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; padding: 12px 16px; border-top: 1px solid #262C37;">
+                <span style="font-size: 12px; line-height: 1.6; color: #A9B1BE;">{{ p.hint }}</span>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                  <sc-if value="{{ p.isUser }}" hint-placeholder-val="{{ false }}">
+                    <button type="button" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: #2F6FDB; border: 0; border-radius: 6px; color: #FFFFFF; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"></path></svg>
+                      编辑并重新发送
+                    </button>
+                  </sc-if>
+                  <sc-if value="{{ p.notUser }}" hint-placeholder-val="{{ false }}">
+                    <button type="button" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: #2F6FDB; border: 0; border-radius: 6px; color: #FFFFFF; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+                      从这里继续
+                    </button>
+                  </sc-if>
+                  <button type="button" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; font-family: inherit; cursor: pointer;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="2"></circle><circle cx="18" cy="6" r="2"></circle><circle cx="12" cy="19" r="2"></circle><path d="M6 8c0 5 6 4 6 9M18 8c0 5-6 4-6 9"></path></svg>
+                    Fork 为新会话
+                  </button>
+                  <button type="button" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; font-family: inherit; cursor: pointer;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10v16l-5-4-5 4V4z"></path></svg>
+                    {{ p.labelAction }}
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div style="flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 12px 16px; border-top: 1px solid #262C37;">
+            <div style="flex: 1 1 420px; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;">
+              <label for="pw-branch-summary" style="font-size: 12px; color: #A9B1BE;">离开当前分支时</label>
+              <select id="pw-branch-summary" style="height: 30px; padding: 0 8px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12px; font-family: inherit;">
+                <option>不生成摘要</option>
+                <option selected="selected">默认摘要</option>
+                <option>自定义摘要指令…</option>
+              </select>
+              <span style="font-size: 12px; color: #8A93A3;">树中保留所有分支，跳转不会删除任何历史。</span>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+              <span style="font-size: 12px; color: #A9B1BE;">{{ jumpText }}</span>
+              <a href="Main.dc.html" style="display: flex; align-items: center; height: 32px; padding: 0 14px; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; box-sizing: border-box;">取消</a>
+              <button type="button" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px; background: #2F6FDB; border: 0; border-radius: 6px; color: #FFFFFF; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4v8a3 3 0 0 0 3 3h10M15 11l4 4-4 4"></path></svg>
+                跳转到此处
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { filter: 'default', sel: 'b2' };
+  }
+  renderVals() {
+    const s = this.state;
+    const MODEL = 'anthropic/claude-sonnet-4-5';
+    const MONO = "font-family: 'JetBrains Mono', monospace;";
+    const entries = [
+      { id: 'e1', hex: '7f3c0a12', branch: 'main', role: 'user', time: '09:14', onPath: true, kids: 1,
+        text: '训练跑到第 3 个 epoch 后内存一直涨，帮我查一下 dataloader 是不是有泄漏',
+        full: '训练跑到第 3 个 epoch 后内存一直涨，帮我查一下 dataloader 是不是有泄漏' },
+      { id: 'e2', hex: '1b9e44d0', branch: 'main', role: 'assistant', time: '09:14', tokens: '1.2k', onPath: true, kids: 1,
+        text: '先找到 Dataset 的实现位置，再看缓存逻辑。',
+        full: '先找到 Dataset 的实现位置，再看缓存逻辑。\n\n调用工具：bash（搜索 Dataset 定义）、read（src/data/loader.py）' },
+      { id: 'e3', hex: 'c40d7a3f', branch: 'main', role: 'tool', tool: 'bash', time: '09:14', status: '退出码 0 · 0.3s', onPath: true, kids: 1,
+        text: 'rg -n "class .*Dataset" src/',
+        full: '$ rg -n "class .*Dataset" src/\nsrc/data/loader.py:41:class ShardedTextDataset(Dataset):\nsrc/data/eval.py:12:class EvalDataset(Dataset):' },
+      { id: 'e4', hex: '5a21e9b8', branch: 'main', role: 'tool', tool: 'read', time: '09:15', status: '32 行 · 1.4 KB', onPath: true, kids: 1,
+        text: 'src/data/loader.py · 第 41–72 行',
+        full: 'src/data/loader.py  第 41–72 行\n\n41  class ShardedTextDataset(Dataset):\n42      def __init__(self, shards, tokenizer):\n43          self.shards = shards\n44          self._cache = dict()\n..\n58      def __getitem__(self, idx):\n59          shard = self._load_shard(idx)\n60          self._cache[idx] = shard' },
+      { id: 'e5', hex: '0e6b3c51', branch: 'main', role: 'summary', lead: '压缩摘要', time: '09:21', note: '节省 92k tokens', onPath: true, kids: 1,
+        extra: [['节省', '92k tokens'], ['触发方式', '自动压缩']],
+        text: '已定位 ShardedTextDataset._cache 无上限增长，每个 worker 各持一份',
+        full: '上下文接近阈值，自动压缩了此前的排查过程。\n\n目标：排查训练第 3 个 epoch 后内存持续上涨。\n已确认：ShardedTextDataset.__getitem__ 把每个样本的分片写进 self._cache = dict()，没有上限；每个 DataLoader worker 各持有一份。\n已读文件：src/data/loader.py、src/data/collate.py、src/data/worker_init.py\n下一步：给出修复方案并验证。' },
+      { id: 'e6', hex: '9d4f2a76', branch: 'main', role: 'assistant', time: '09:22', tokens: '3.4k', label: '定位根因', note: '2 条分支', onPath: true, kids: 2,
+        text: '问题在 _cache：每个样本的分片都被永久缓存，并且在每个 worker 里各存一份',
+        full: '问题在 _cache：每个样本的分片都被永久缓存，并且在每个 worker 里各存一份，所以内存随 epoch 线性增长。\n\n两种改法：\n1. 按分片做 LRU 缓存，上限可配置\n2. 改为 mmap 读取，进程内不再缓存\n\n要用哪一种？' },
+      { id: 'a0', hex: 'e2c8b1f4', branch: 'A', role: 'summary', lead: '分支摘要', time: '09:38', onPath: true, kids: 1,
+        extra: [['来源分支', '方案 B'], ['摘要方式', '默认摘要']],
+        text: '离开「方案 B」：峰值内存 38 GB → 11 GB，但随机读吞吐下降约 3 倍',
+        full: '离开分支「方案 B」时生成。\n\n尝试：用 numpy.memmap 读取分片，去掉 _cache。\n结果：峰值内存 38 GB → 11 GB；shuffle 下随机读吞吐下降约 3 倍，GPU 利用率降到 60% 左右。\n结论：回到缓存方案，但要限制缓存大小。' },
+      { id: 'a1', hex: '3f9c1a2e', branch: 'A', role: 'user', time: '09:39', onPath: true, kids: 1,
+        text: '改成按分片 LRU，上限可配置，默认缓存 4 个分片',
+        full: '改成按分片 LRU，上限可配置，默认缓存 4 个分片。\n再补一个测试，确认缓存不会超过上限。' },
+      { id: 'a2', hex: 'b7d05e19', branch: 'A', role: 'assistant', time: '09:40', tokens: '2.1k', onPath: true, kids: 1,
+        text: 'edit src/data/loader.py：_cache 改为 LRUCache，按 shard_id 缓存（+4 −2）',
+        full: '已修改 src/data/loader.py（+4 −2）：\n- self._cache 改为 LRUCache(maxsize=cache_shards)\n- 按 shard_id 而不是样本 idx 缓存\n- cache_shards 默认 4，可在 data.cache_shards 中配置\n\n接下来运行 tests/test_loader.py 验证。' },
+      { id: 'a3', hex: '64ae7c02', branch: 'A', role: 'tool', tool: 'bash', time: '09:41', status: '运行中 · 12s', running: true, current: true, onPath: true, kids: 0,
+        text: 'python -m pytest tests/test_loader.py -q',
+        full: '$ python -m pytest tests/test_loader.py -q\n........                                [ 61%]\ntests/test_loader.py::test_cache_bounded RUNNING' },
+      { id: 'bs', hex: 'd18f6a3b', branch: 'B', role: 'setting', time: '09:24', onPath: false, kids: 1,
+        text: '思考级别 medium → high',
+        full: '思考级别从 medium 改为 high。\n\n这条变更只在「方案 B」分支上生效，当前路径仍为 medium。' },
+      { id: 'b1', hex: '8c2e47d9', branch: 'B', role: 'user', time: '09:24', onPath: false, kids: 1,
+        text: '换成 mmap 读取，不要缓存',
+        full: '换成 mmap 读取，不要缓存。改完用 bench/mem_profile.py 对比一下峰值内存。' },
+      { id: 'b2', hex: 'b2c41e07', branch: 'B', role: 'assistant', time: '09:26', tokens: '2.8k', label: '方案 B', onPath: false, kids: 0,
+        text: '已改为 numpy.memmap，去掉 _cache；峰值内存 38 GB → 11 GB，随机读吞吐下降约 3 倍',
+        full: '已改为 numpy.memmap 读取分片，去掉 _cache。\n\nbench/mem_profile.py 结果：\n- 峰值内存：38 GB → 11 GB\n- 随机读吞吐：1.9k → 0.6k samples/s\n\n内存问题解决了，但 shuffle 下 I/O 成了瓶颈。' }
+    ];
+
+    const roleLabels = { user: '用户', assistant: '助手', tool: '工具', summary: '摘要', setting: '设置' };
+    const tagColors = {
+      user: 'background: #1A2131; border: 1px solid #263452; color: #8DBBFF;',
+      assistant: 'background: #191D25; border: 1px solid #262C37; color: #E7E9EE;',
+      tool: 'background: #0B0D11; border: 1px solid #262C37; color: #A9B1BE;',
+      summary: 'background: transparent; border: 1px dashed #33405A; color: #A9B1BE;',
+      setting: 'background: transparent; border: 1px solid #262C37; color: #8A93A3;'
+    };
+    const tagBase = 'flex-shrink: 0; width: 34px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; font-size: 11px; font-weight: 600; box-sizing: border-box; ';
+
+    const matches = (e, f) => {
+      if (f === 'all') return true;
+      if (e.role === 'setting') return false;
+      if (f === 'notools') return e.role !== 'tool';
+      if (f === 'user') return e.role === 'user';
+      if (f === 'labeled') return !!e.label;
+      return true;
+    };
+    const vis = entries.filter(e => matches(e, s.filter));
+    const branchRank = { A: 1, B: 2 };
+    const lineBase = 'position: absolute; width: 1px; background: #262C37; ';
+    const seg = (top, bottom, x) => {
+      if (top && bottom) return lineBase + 'left: ' + x + 'px; top: 0; bottom: 0;';
+      if (top) return lineBase + 'left: ' + x + 'px; top: 0; height: 50%;';
+      if (bottom) return lineBase + 'left: ' + x + 'px; top: 50%; bottom: 0;';
+      return 'display: none;';
+    };
+    const firstMainIdx = vis.findIndex(x => x.branch === 'main');
+
+    const rows = vis.map((e, i) => {
+      const selected = e.id === s.sel;
+      const deep = e.branch !== 'main';
+      const bg = selected ? '#1F2A3D' : '#13161C';
+      let g0Style = 'display: none;';
+      let g0hStyle = 'display: none;';
+      let g1Style = 'display: none;';
+      if (!deep) {
+        g0Style = seg(i !== firstMainIdx, i < vis.length - 1, 9);
+      } else {
+        const same = vis.filter(x => x.branch === e.branch);
+        const isFirst = same[0].id === e.id;
+        const isLast = same[same.length - 1].id === e.id;
+        const laterBranch = vis.some(x => x.branch !== 'main' && branchRank[x.branch] > branchRank[e.branch]);
+        g0Style = seg(isFirst || laterBranch, laterBranch, 9);
+        if (isFirst) g0hStyle = 'position: absolute; left: 10px; top: 50%; width: 16px; height: 1px; background: #262C37;';
+        g1Style = seg(!isFirst, !isLast, 29);
+      }
+      const dotStyle = 'position: absolute; top: calc(50% - 3.5px); left: ' + (deep ? 26 : 6) + 'px; width: 7px; height: 7px; box-sizing: border-box; border-radius: ' + (e.role === 'summary' ? '2px' : '50%') + ';' + (e.onPath ? ' background: #6AA6FF;' : ' background: ' + bg + '; border: 1.5px solid #5B6370;');
+      const isTool = e.role === 'tool';
+      let textColor = '';
+      if (isTool) textColor = ' color: ' + (e.onPath ? '#C9CFD9' : '#A9B1BE') + ';';
+      if (e.role === 'setting') textColor = ' color: #A9B1BE;';
+      const textStyle = 'flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' + (isTool ? ' ' + MONO + ' font-size: 12px;' : '') + textColor;
+      const leadStyle = isTool
+        ? 'flex-shrink: 0; ' + MONO + ' font-size: 12px; font-weight: 600; color: #A9B1BE;'
+        : 'flex-shrink: 0; font-weight: 600;';
+      return {
+        id: e.id,
+        roleLabel: roleLabels[e.role],
+        text: e.text,
+        lead: isTool ? e.tool : (e.lead || ''),
+        hasLead: isTool || !!e.lead,
+        leadStyle: leadStyle,
+        textStyle: textStyle,
+        note: e.note || '',
+        hasNote: !!e.note,
+        label: e.label || '',
+        hasLabel: !!e.label,
+        running: !!e.running,
+        current: !!e.current,
+        tokens: e.tokens || '',
+        time: e.time,
+        pathSr: e.onPath ? '（当前路径）' : '（其他分支）',
+        pressed: selected ? 'true' : 'false',
+        pick: () => this.setState({ sel: e.id }),
+        rowStyle: 'width: 100%; display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 10px 0 8px; border: 0; border-radius: 6px; background: ' + (selected ? '#1F2A3D' : 'transparent') + '; color: ' + (e.onPath ? '#E7E9EE' : '#A9B1BE') + '; font-family: inherit; font-size: 13px; text-align: left; cursor: pointer; box-sizing: border-box;',
+        gutterStyle: 'position: relative; flex-shrink: 0; align-self: stretch; width: ' + (deep ? 36 : 16) + 'px;',
+        g0Style: g0Style,
+        g0hStyle: g0hStyle,
+        g1Style: g1Style,
+        dotStyle: dotStyle,
+        tagStyle: tagBase + tagColors[e.role]
+      };
+    });
+
+    const chipOn = 'height: 28px; padding: 0 10px; border: 1px solid #33405A; border-radius: 6px; background: #1F2A3D; color: #E7E9EE; font-size: 12px; font-weight: 600; font-family: inherit; cursor: pointer; box-sizing: border-box;';
+    const chipOff = 'height: 28px; padding: 0 10px; border: 1px solid #262C37; border-radius: 6px; background: transparent; color: #A9B1BE; font-size: 12px; font-weight: 500; font-family: inherit; cursor: pointer; box-sizing: border-box;';
+    const chip = (id) => ({
+      style: id === s.filter ? chipOn : chipOff,
+      pressed: id === s.filter ? 'true' : 'false',
+      pick: () => this.setState({ filter: id })
+    });
+
+    const cur = entries.find(e => e.id === s.sel) || entries[0];
+    let kindLabel = '设置变更';
+    if (cur.role === 'user') kindLabel = '用户消息';
+    if (cur.role === 'assistant') kindLabel = '助手回复';
+    if (cur.role === 'tool') kindLabel = '工具结果 · ' + cur.tool;
+    if (cur.role === 'summary') kindLabel = cur.lead;
+    const meta = [{ k: '条目 ID', v: cur.hex }];
+    if (cur.role === 'assistant') {
+      meta.push({ k: '模型', v: MODEL });
+      meta.push({ k: '输出 tokens', v: cur.tokens });
+    }
+    if (cur.role === 'tool') meta.push({ k: '结果', v: cur.status });
+    (cur.extra || []).forEach(x => meta.push({ k: x[0], v: x[1] }));
+    meta.push({ k: '子条目', v: String(cur.kids) });
+
+    let hint = '从这里继续：把当前位置移到这一条，下一条消息会从这里开出新分支。';
+    if (cur.role === 'user') hint = '编辑并重新发送：把这条消息放回输入框，提交后从它的上一条开出新分支。';
+    if (cur.current) hint = '这里就是当前位置。bash 仍在运行，结束后可直接继续对话。';
+
+    const p = {
+      roleLabel: roleLabels[cur.role],
+      tagStyle: tagBase + tagColors[cur.role],
+      kindLabel: kindLabel,
+      when: '今天 ' + cur.time,
+      label: cur.label || '',
+      hasLabel: !!cur.label,
+      labelAction: cur.label ? '编辑标签' : '添加标签',
+      pathText: cur.onPath ? '在当前路径上' : '不在当前路径 · 分支「方案 B」',
+      pathDotStyle: cur.onPath
+        ? 'width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: #6AA6FF;'
+        : 'width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;',
+      full: cur.full,
+      isTool: cur.role === 'tool',
+      notTool: cur.role !== 'tool',
+      isUser: cur.role === 'user',
+      notUser: cur.role !== 'user',
+      boxStyle: 'padding: 12px 14px; border-radius: 8px; font-size: 13px; line-height: 1.7; color: #E7E9EE; white-space: pre-line; overflow-wrap: anywhere; ' + (cur.role === 'user' ? 'background: #1A2131; border: 1px solid #263452;' : 'background: #0E1014; border: 1px solid #262C37;'),
+      meta: meta,
+      hint: hint
+    };
+
+    return {
+      rows: rows,
+      countText: '显示 ' + vis.length + ' / ' + entries.length,
+      fDefault: chip('default'),
+      fNoTools: chip('notools'),
+      fUser: chip('user'),
+      fLabeled: chip('labeled'),
+      fAll: chip('all'),
+      p: p,
+      jumpText: '目标：' + roleLabels[cur.role] + ' ' + cur.time + (cur.label ? ' · ' + cur.label : '')
+    };
+  }
+}
+</script>
+</body>
+</html>

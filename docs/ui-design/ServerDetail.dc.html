@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Pi-Web 服务器概览</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0E1014;color:#E7E9EE;font-family:Inter,"PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;font-size:14px;-webkit-font-smoothing:antialiased}
+a{color:#8DBBFF;text-decoration:none}a:hover{color:#B7D3FF}
+pre,code{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+@keyframes pwspin{to{transform:rotate(360deg)}}
+@keyframes pwpulse{0%,100%{opacity:1}50%{opacity:.35}}
+</style>
+</helmet>
+<div style="height: 100vh; display: flex; flex-direction: column; background: #0E1014; color: #E7E9EE; overflow: auto;">
+
+  <header style="height: 48px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 16px; border-bottom: 1px solid #262C37; background: #13161C;">
+    <a href="Main.dc.html" style="display: flex; align-items: center; gap: 8px; color: #E7E9EE; font-weight: 700; font-size: 15px; letter-spacing: 0.2px;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" stroke="#6AA6FF" stroke-width="1.8"></rect><path d="M7 8h10M10 8v9M14 8v6.5c0 1.5.8 2.5 2.5 2.5" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round"></path></svg>
+      Pi-Web
+    </a>
+    <nav aria-label="位置" style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #A9B1BE; min-width: 0; flex-wrap: wrap;">
+      <span>服务器</span>
+      <span aria-hidden="true" style="color: #8A93A3;">/</span>
+      <span aria-current="page" style="color: #E7E9EE;">gpu-01</span>
+    </nav>
+    <div style="flex: 1;"></div>
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+      <a href="ServerDetail.dc.html" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; font-size: 12px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6l8-3z"></path></svg>
+        隧道代理 · 3 个连接
+      </a>
+      <a href="SyncCenter.dc.html" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; font-size: 12px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+        配置已同步
+      </a>
+      <a href="Settings.dc.html" aria-label="全局设置" style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; color: #A9B1BE;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+      </a>
+    </div>
+  </header>
+
+  <div style="flex: 1; min-height: 0; display: flex; flex-wrap: wrap;">
+
+    <aside aria-label="服务器与会话" style="flex: 1 1 264px; max-width: 100%; display: flex; flex-direction: column; background: #13161C; border-right: 1px solid #262C37; min-height: 0;">
+      <div style="padding: 12px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #262C37;">
+        <label for="pw-search" style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">搜索会话</label>
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4-4"></path></svg>
+          <input id="pw-search" type="text" placeholder="名称或首条消息" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: #E7E9EE; font-size: 13px; font-family: inherit;">
+        </div>
+      </div>
+
+      <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 8px 6px; display: flex; flex-direction: column; gap: 2px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 4px;">
+          <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">服务器</span>
+          <a href="AddServer.dc.html" aria-label="添加服务器" style="display: flex; width: 24px; height: 24px; align-items: center; justify-content: center; border-radius: 4px; color: #A9B1BE;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          </a>
+        </div>
+
+        <a href="ServerDetail.dc.html" aria-current="page" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: 6px; background: #1F2A3D; color: #E7E9EE; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>
+          <span style="flex: 1;">gpu-01</span>
+          <span style="font-size: 11px; font-weight: 500; color: #A9B1BE;">在线 · 12ms</span>
+        </a>
+        <div style="display: flex; flex-direction: column; gap: 2px; padding-left: 18px;">
+          <div style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; color: #A9B1BE; font-size: 13px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+            <span style="flex: 1;">llm-train</span>
+            <span style="font-size: 11px; color: #8A93A3;">3</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 2px; padding-left: 20px;">
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #6AA6FF; animation: pwpulse 1.4s ease-in-out infinite;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">修复数据加载器的内存泄漏</span>
+              </span>
+              <span style="font-size: 11px; color: #8DBBFF; padding-left: 14px;">运行中 · bash</span>
+            </a>
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #F0A03C;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">添加 FSDP 支持</span>
+              </span>
+              <span style="font-size: 11px; color: #F0A03C; padding-left: 14px;">等待确认 · 扩展对话框</span>
+            </a>
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">重构配置系统</span>
+              </span>
+              <span style="font-size: 11px; color: #8A93A3; padding-left: 14px;">昨天 · 48 条消息</span>
+            </a>
+            <button type="button" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; background: transparent; border: 0; color: #8A93A3; font-size: 12px; font-family: inherit; cursor: pointer; text-align: left;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+              新建对话
+            </button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; color: #A9B1BE; font-size: 13px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+            <span style="flex: 1;">infra-scripts</span>
+            <span style="font-size: 11px; color: #8A93A3;">7</span>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; margin-top: 6px; color: #E7E9EE; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>
+          <span style="flex: 1;">build-arm</span>
+          <span style="font-size: 11px; font-weight: 500; color: #8A93A3;">在线 · 1 个待同步</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; color: #8A93A3; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span>
+          <span style="flex: 1;">staging-db</span>
+          <span style="font-size: 11px; font-weight: 500;">离线</span>
+        </div>
+      </div>
+
+      <div style="padding: 8px 6px; border-top: 1px solid #262C37; display: flex; flex-direction: column; gap: 2px;">
+        <a href="SyncCenter.dc.html" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+          同步中心
+        </a>
+        <a href="AddServer.dc.html" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"></rect><rect x="3" y="13" width="18" height="7" rx="2"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>
+          添加服务器
+        </a>
+      </div>
+    </aside>
+
+    <main style="flex: 999 1 560px; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #0E1014;">
+      <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 24px 0;">
+        <div style="max-width: 1180px; margin: 0 auto; padding: 0 24px; display: flex; flex-direction: column; gap: 20px;">
+
+          <div style="display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px;">
+            <div style="display: flex; flex-direction: column; gap: 6px; min-width: 0;">
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"></rect><rect x="3" y="13" width="18" height="7" rx="2"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>
+                <h1 style="margin: 0; font-size: 20px; font-weight: 600;">gpu-01</h1>
+                <span style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 11px; background: rgba(60,200,180,0.12); color: #7FE0D2; font-size: 12px; font-weight: 500;">
+                  <span style="width: 7px; height: 7px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>
+                  在线 · 12ms
+                </span>
+              </div>
+              <code style="font-size: 12.5px; color: #A9B1BE;">dev@10.0.3.21:22 · 经 bastion-gw · 分组 训练集群</code>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+              <button type="button" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; font-family: inherit; cursor: pointer;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0V7zM12 16v5"></path></svg>
+                断开连接
+              </button>
+              <button type="button" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; font-family: inherit; cursor: pointer;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6L20 8.5M20 4v4.5h-4.5"></path></svg>
+                重启 agent
+              </button>
+              <button type="button" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; font-family: inherit; cursor: pointer;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 16V8M8.5 11.5L12 8l3.5 3.5"></path></svg>
+                升级 pi
+              </button>
+              <button type="button" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; font-family: inherit; cursor: pointer;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4M9 12h6M9 16h6"></path></svg>
+                查看日志
+              </button>
+              <a href="ServerSettings.dc.html" style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; box-sizing: border-box;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+                设置
+              </a>
+              <button type="button" aria-label="更多操作" style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; cursor: pointer;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"></path></svg>
+              </button>
+            </div>
+          </div>
+
+          <div role="tablist" aria-label="服务器视图" style="display: flex; align-items: flex-end; gap: 4px; border-bottom: 1px solid #262C37; overflow-x: auto;">
+            <button type="button" role="tab" aria-selected="true" style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; background: transparent; border: 0; border-bottom: 2px solid #6AA6FF; color: #E7E9EE; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer; box-sizing: border-box; flex-shrink: 0;">概览</button>
+            <button type="button" role="tab" aria-selected="false" style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; background: transparent; border: 0; border-bottom: 2px solid transparent; color: #A9B1BE; font-size: 13px; font-family: inherit; cursor: pointer; box-sizing: border-box; flex-shrink: 0;">
+              工作区
+              <span style="font-size: 11px; padding: 1px 6px; border-radius: 9px; background: #1A1E26; color: #A9B1BE;">2</span>
+            </button>
+            <button type="button" role="tab" aria-selected="false" style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; background: transparent; border: 0; border-bottom: 2px solid transparent; color: #A9B1BE; font-size: 13px; font-family: inherit; cursor: pointer; box-sizing: border-box; flex-shrink: 0;">代理</button>
+            <button type="button" role="tab" aria-selected="false" style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; background: transparent; border: 0; border-bottom: 2px solid transparent; color: #A9B1BE; font-size: 13px; font-family: inherit; cursor: pointer; box-sizing: border-box; flex-shrink: 0;">同步</button>
+            <button type="button" role="tab" aria-selected="false" style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; background: transparent; border: 0; border-bottom: 2px solid transparent; color: #A9B1BE; font-size: 13px; font-family: inherit; cursor: pointer; box-sizing: border-box; flex-shrink: 0;">日志</button>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 16px;">
+
+            <section aria-labelledby="sd-env" style="min-width: 0; display: flex; flex-direction: column; border: 1px solid #262C37; border-radius: 8px; background: #13161C;">
+              <div style="display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border-bottom: 1px solid #262C37;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"></rect><path d="M9 1.5V4M15 1.5V4M9 20v2.5M15 20v2.5M1.5 9H4M1.5 15H4M20 9h2.5M20 15h2.5"></path><rect x="9" y="9" width="6" height="6" rx="1"></rect></svg>
+                <h2 id="sd-env" style="margin: 0; font-size: 14px; font-weight: 600;">运行环境</h2>
+              </div>
+              <dl style="margin: 0; padding: 4px 16px 8px; display: flex; flex-direction: column;">
+                <div style="display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid #262C37;">
+                  <dt style="font-size: 13px; color: #A9B1BE;">系统</dt>
+                  <dd style="margin: 0;"><code style="font-size: 12.5px; color: #E7E9EE;">Linux x86_64 · glibc 2.35</code></dd>
+                </div>
+                <div style="display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid #262C37;">
+                  <dt style="font-size: 13px; color: #A9B1BE;">Node</dt>
+                  <dd style="margin: 0;"><code style="font-size: 12.5px; color: #E7E9EE;">22.20.0</code></dd>
+                </div>
+                <div style="display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid #262C37;">
+                  <dt style="font-size: 13px; color: #A9B1BE;">pi</dt>
+                  <dd style="margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;">
+                    <code style="font-size: 12.5px; color: #E7E9EE;">1.4.0</code>
+                    <span style="font-size: 12px; color: #7FE0D2;">与 Host 一致</span>
+                  </dd>
+                </div>
+                <div style="display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid #262C37;">
+                  <dt style="font-size: 13px; color: #A9B1BE;">pi-web-agent</dt>
+                  <dd style="margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;">
+                    <code style="font-size: 12.5px; color: #E7E9EE;">0.1.0</code>
+                    <span style="font-size: 12px; color: #A9B1BE;">运行 3 天</span>
+                  </dd>
+                </div>
+                <div style="display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid #262C37;">
+                  <dt style="font-size: 13px; color: #A9B1BE;">安装目录</dt>
+                  <dd style="margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;">
+                    <code style="font-size: 12.5px; color: #E7E9EE;">~/.pi-web</code>
+                    <span style="font-size: 12px; color: #A9B1BE;">312 MB</span>
+                  </dd>
+                </div>
+                <div style="display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid #262C37;">
+                  <dt style="font-size: 13px; color: #A9B1BE;">Agent 目录</dt>
+                  <dd style="margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;">
+                    <code style="font-size: 12.5px; color: #E7E9EE;">~/.pi-web/agent</code>
+                    <span style="font-size: 12px; color: #A9B1BE;">独立</span>
+                  </dd>
+                </div>
+                <div style="display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 8px 0;">
+                  <dt style="font-size: 13px; color: #A9B1BE;">磁盘可用</dt>
+                  <dd style="margin: 0;"><code style="font-size: 12.5px; color: #E7E9EE;">118 GB</code></dd>
+                </div>
+              </dl>
+            </section>
+
+            <section aria-labelledby="sd-run" style="min-width: 0; display: flex; flex-direction: column; border: 1px solid #262C37; border-radius: 8px; background: #13161C;">
+              <div style="display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border-bottom: 1px solid #262C37;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"></path></svg>
+                <h2 id="sd-run" style="margin: 0; font-size: 14px; font-weight: 600;">运行状态</h2>
+              </div>
+              <div style="flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+                <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;">
+                  <div style="display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid #262C37; border-radius: 6px; background: #0E1014;">
+                    <span style="font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 600; color: #E7E9EE; line-height: 1.2;">2</span>
+                    <span style="font-size: 12px; line-height: 1.4; color: #A9B1BE;">运行中对话</span>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid #262C37; border-radius: 6px; background: #0E1014;">
+                    <span style="font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 600; color: #E7E9EE; line-height: 1.2;">3</span>
+                    <span style="font-size: 12px; line-height: 1.4; color: #A9B1BE;">pi 进程</span>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid #5A4220; border-radius: 6px; background: #241D12;">
+                    <span style="font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 600; color: #F7C47E; line-height: 1.2;">1</span>
+                    <span style="font-size: 12px; line-height: 1.4; color: #F7C47E;">待处理的扩展对话框</span>
+                  </div>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <h3 style="margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">活动进程</h3>
+                  <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column;">
+                    <li style="display: flex; align-items: center; gap: 10px; height: 30px; border-bottom: 1px solid #262C37; font-size: 13px;">
+                      <code style="width: 44px; flex-shrink: 0; font-size: 12px; color: #8A93A3;">48213</code>
+                      <a href="Main.dc.html" style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #E7E9EE;">修复数据加载器的内存泄漏</a>
+                      <span style="flex-shrink: 0; font-size: 12px; color: #8DBBFF;">运行中</span>
+                    </li>
+                    <li style="display: flex; align-items: center; gap: 10px; height: 30px; border-bottom: 1px solid #262C37; font-size: 13px;">
+                      <code style="width: 44px; flex-shrink: 0; font-size: 12px; color: #8A93A3;">48190</code>
+                      <a href="Main.dc.html" style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #E7E9EE;">添加 FSDP 支持</a>
+                      <span style="flex-shrink: 0; font-size: 12px; color: #F7C47E;">等待确认</span>
+                    </li>
+                    <li style="display: flex; align-items: center; gap: 10px; height: 30px; font-size: 13px;">
+                      <code style="width: 44px; flex-shrink: 0; font-size: 12px; color: #8A93A3;">47702</code>
+                      <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #A9B1BE;">infra-scripts · 更新 Ansible 清单</span>
+                      <span style="flex-shrink: 0; font-size: 12px; color: #8A93A3;">空闲 12 分钟</span>
+                    </li>
+                  </ul>
+                </div>
+
+                <div style="flex: 1;"></div>
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; color: #8A93A3;">
+                  <span>空闲回收：30 分钟未活动的会话自动退出</span>
+                  <a href="ServerSettings.dc.html" style="font-size: 12px;">修改</a>
+                </div>
+              </div>
+            </section>
+
+            <section aria-labelledby="sd-sync" style="min-width: 0; display: flex; flex-direction: column; border: 1px solid #262C37; border-radius: 8px; background: #13161C;">
+              <div style="display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border-bottom: 1px solid #262C37;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+                <h2 id="sd-sync" style="margin: 0; font-size: 14px; font-weight: 600;">配置同步</h2>
+              </div>
+              <dl style="margin: 0; padding: 4px 16px 8px; display: flex; flex-direction: column;">
+                <div style="display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid #262C37;">
+                  <dt style="font-size: 13px; color: #A9B1BE;">自动同步</dt>
+                  <dd style="margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+                    <span style="display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px; border-radius: 10px; background: rgba(60,200,180,0.12); color: #7FE0D2; font-size: 12px;">
+                      <span style="width: 6px; height: 6px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>
+                      已开启
+                    </span>
+                    <span style="font-size: 12px; color: #8A93A3;">监听 <code style="font-size: 11.5px; color: #A9B1BE;">~/.pi/agent</code></span>
+                  </dd>
+                </div>
+                <div style="display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid #262C37;">
+                  <dt style="font-size: 13px; color: #A9B1BE;">上次同步</dt>
+                  <dd style="margin: 0; font-size: 13px; color: #E7E9EE;">3 分钟前 · 自动 · 修改 2 个文件</dd>
+                </div>
+                <div style="display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 9px 0; border-bottom: 1px solid #262C37;">
+                  <dt style="font-size: 13px; color: #A9B1BE;">待同步</dt>
+                  <dd style="margin: 0; display: flex; align-items: baseline; gap: 8px;">
+                    <code style="font-size: 12.5px; color: #E7E9EE;">0</code>
+                    <span style="font-size: 12px; color: #A9B1BE;">与 Host 一致</span>
+                  </dd>
+                </div>
+                <div style="display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 9px 0;">
+                  <dt style="font-size: 13px; color: #A9B1BE;">OAuth</dt>
+                  <dd style="margin: 0; display: flex; flex-direction: column; gap: 3px;">
+                    <span style="font-size: 13px; color: #E7E9EE;"><code style="font-size: 12.5px;">anthropic</code> · access token 已推送</span>
+                    <span style="font-size: 12px; color: #A9B1BE;">剩余 42 分钟 · 由 Host 到期前刷新</span>
+                  </dd>
+                </div>
+              </dl>
+              <div style="flex: 1;"></div>
+              <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; border-top: 1px solid #262C37;">
+                <a href="SyncCenter.dc.html" style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                  打开同步中心
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+                </a>
+                <button type="button" style="display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; font-family: inherit; cursor: pointer;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+                  立即同步
+                </button>
+              </div>
+            </section>
+
+            <section aria-labelledby="sd-ws" style="grid-column: 1 / -1; min-width: 0; display: flex; flex-direction: column; border: 1px solid #262C37; border-radius: 8px; background: #13161C;">
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 44px; padding: 6px 16px; border-bottom: 1px solid #262C37; box-sizing: border-box;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+                <h2 id="sd-ws" style="margin: 0; font-size: 14px; font-weight: 600;">工作区</h2>
+                <span style="font-size: 12px; color: #8A93A3;">2 个 · 10 个会话</span>
+                <div style="flex: 1;"></div>
+                <a href="Dialogs.dc.html" style="display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 13px; box-sizing: border-box;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                  添加工作区
+                </a>
+              </div>
+              <div style="overflow-x: auto;">
+                <table style="width: 100%; min-width: 820px; border-collapse: collapse; font-size: 13px;">
+                  <thead>
+                    <tr>
+                      <th scope="col" style="text-align: left; padding: 10px 16px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3; border-bottom: 1px solid #262C37; white-space: nowrap;">工作区</th>
+                      <th scope="col" style="text-align: left; padding: 10px 16px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3; border-bottom: 1px solid #262C37; white-space: nowrap;">路径</th>
+                      <th scope="col" style="text-align: right; padding: 10px 16px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3; border-bottom: 1px solid #262C37; white-space: nowrap;">会话</th>
+                      <th scope="col" style="text-align: left; padding: 10px 16px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3; border-bottom: 1px solid #262C37; white-space: nowrap;">状态</th>
+                      <th scope="col" style="text-align: left; padding: 10px 16px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3; border-bottom: 1px solid #262C37; white-space: nowrap;">信任</th>
+                      <th scope="col" style="padding: 10px 16px; border-bottom: 1px solid #262C37;"><span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;">操作</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td style="padding: 12px 16px; border-bottom: 1px solid #262C37; white-space: nowrap;">
+                        <a href="Main.dc.html" style="display: flex; align-items: center; gap: 8px; color: #E7E9EE; font-weight: 600;">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+                          llm-train
+                        </a>
+                      </td>
+                      <td style="padding: 12px 16px; border-bottom: 1px solid #262C37; white-space: nowrap;"><code style="font-size: 12.5px; color: #C9CFD9;">/home/dev/projects/llm-train</code></td>
+                      <td style="padding: 12px 16px; border-bottom: 1px solid #262C37; text-align: right;"><code style="font-size: 12.5px; color: #E7E9EE;">3</code></td>
+                      <td style="padding: 12px 16px; border-bottom: 1px solid #262C37; white-space: nowrap;">
+                        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 12.5px;">
+                          <span style="display: flex; align-items: center; gap: 6px; color: #8DBBFF;">
+                            <span style="width: 7px; height: 7px; border-radius: 50%; background: #6AA6FF; animation: pwpulse 1.4s ease-in-out infinite;" aria-hidden="true"></span>
+                            1 个运行中
+                          </span>
+                          <span style="display: flex; align-items: center; gap: 6px; color: #F7C47E;">
+                            <span style="width: 7px; height: 7px; border-radius: 50%; background: #F0A03C;" aria-hidden="true"></span>
+                            1 个等待确认
+                          </span>
+                        </div>
+                      </td>
+                      <td style="padding: 12px 16px; border-bottom: 1px solid #262C37;">
+                        <code style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: rgba(60,200,180,0.12); color: #7FE0D2; font-size: 12px;">approve</code>
+                      </td>
+                      <td style="padding: 8px 16px; border-bottom: 1px solid #262C37;">
+                        <div style="display: flex; align-items: center; justify-content: flex-end; gap: 8px;">
+                          <a href="Main.dc.html" style="font-size: 13px;">打开</a>
+                          <button type="button" aria-label="llm-train 更多操作" style="display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; background: transparent; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; cursor: pointer;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"></path></svg>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 12px 16px; white-space: nowrap;">
+                        <a href="Main.dc.html" style="display: flex; align-items: center; gap: 8px; color: #E7E9EE; font-weight: 600;">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+                          infra-scripts
+                        </a>
+                      </td>
+                      <td style="padding: 12px 16px; white-space: nowrap;"><code style="font-size: 12.5px; color: #C9CFD9;">/home/dev/infra-scripts</code></td>
+                      <td style="padding: 12px 16px; text-align: right;"><code style="font-size: 12.5px; color: #E7E9EE;">7</code></td>
+                      <td style="padding: 12px 16px; white-space: nowrap;">
+                        <span style="display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #A9B1BE;">
+                          <span style="width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span>
+                          空闲
+                        </span>
+                      </td>
+                      <td style="padding: 12px 16px;">
+                        <code style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: #1A1E26; border: 1px solid #262C37; color: #A9B1BE; font-size: 12px;">no-approve</code>
+                      </td>
+                      <td style="padding: 8px 16px;">
+                        <div style="display: flex; align-items: center; justify-content: flex-end; gap: 8px;">
+                          <a href="Main.dc.html" style="font-size: 13px;">打开</a>
+                          <button type="button" aria-label="infra-scripts 更多操作" style="display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; background: transparent; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; cursor: pointer;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"></path></svg>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section aria-labelledby="sd-proxy" style="grid-column: 1 / -1; min-width: 0; display: flex; flex-direction: column; border: 1px solid #262C37; border-radius: 8px; background: #13161C;">
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 44px; padding: 8px 16px; border-bottom: 1px solid #262C37; box-sizing: border-box;">
+                <span style="display: flex; align-items: center; gap: 8px;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6l8-3z"></path></svg>
+                  <h2 id="sd-proxy" style="margin: 0; font-size: 14px; font-weight: 600;">隧道代理</h2>
+                </span>
+                <span style="font-size: 12px; color: #A9B1BE;">隧道 · 仅 LLM · 入口 <code style="font-size: 12px; color: #C9CFD9;">127.0.0.1:38412</code></span>
+                <div style="flex: 1;"></div>
+                <span style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #A9B1BE;">
+                  <span style="width: 7px; height: 7px; border-radius: 50%; background: #3CC8B4; animation: pwpulse 1.4s ease-in-out infinite;" aria-hidden="true"></span>
+                  活动连接
+                  <code style="font-size: 13px; font-weight: 600; color: #E7E9EE;">3</code>
+                </span>
+              </div>
+              <div style="padding: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 16px 24px;">
+                <div style="min-width: 0; display: flex; flex-direction: column; gap: 8px;">
+                  <h3 style="margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">今日流量 · 按域名</h3>
+                  <div style="overflow-x: auto; border: 1px solid #262C37; border-radius: 6px; background: #0E1014;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                      <thead>
+                        <tr>
+                          <th scope="col" style="text-align: left; padding: 8px 12px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3; border-bottom: 1px solid #262C37;">域名</th>
+                          <th scope="col" style="text-align: right; padding: 8px 12px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3; border-bottom: 1px solid #262C37;">请求</th>
+                          <th scope="col" style="text-align: right; padding: 8px 12px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3; border-bottom: 1px solid #262C37;">流量</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td style="padding: 8px 12px; border-bottom: 1px solid #262C37;"><code style="font-size: 12.5px; color: #E7E9EE;">api.anthropic.com</code></td>
+                          <td style="padding: 8px 12px; border-bottom: 1px solid #262C37; text-align: right;"><code style="font-size: 12.5px; color: #C9CFD9;">41</code></td>
+                          <td style="padding: 8px 12px; border-bottom: 1px solid #262C37; text-align: right; white-space: nowrap;"><code style="font-size: 12.5px; color: #C9CFD9;">12.4 MB</code></td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 12px; border-bottom: 1px solid #262C37;"><code style="font-size: 12.5px; color: #E7E9EE;">api.openai.com</code></td>
+                          <td style="padding: 8px 12px; border-bottom: 1px solid #262C37; text-align: right;"><code style="font-size: 12.5px; color: #C9CFD9;">3</code></td>
+                          <td style="padding: 8px 12px; border-bottom: 1px solid #262C37; text-align: right; white-space: nowrap;"><code style="font-size: 12.5px; color: #C9CFD9;">0.8 MB</code></td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 8px 12px; font-size: 12px; color: #8A93A3;">合计</td>
+                          <td style="padding: 8px 12px; text-align: right;"><code style="font-size: 12.5px; color: #A9B1BE;">44</code></td>
+                          <td style="padding: 8px 12px; text-align: right; white-space: nowrap;"><code style="font-size: 12.5px; color: #A9B1BE;">13.2 MB</code></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div style="min-width: 0; display: flex; flex-direction: column; gap: 8px;">
+                  <h3 style="margin: 0; display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #F7C47E;">
+                    <span style="width: 7px; height: 7px; border-radius: 50%; background: #F0A03C;" aria-hidden="true"></span>
+                    被拒绝的请求 · 5 次
+                  </h3>
+                  <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; border: 1px solid #262C37; border-radius: 6px; background: #0E1014;">
+                    <li style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; border-bottom: 1px solid #262C37;">
+                      <div style="flex: 1; min-width: 160px; display: flex; flex-direction: column; gap: 2px;">
+                        <code style="font-size: 12.5px; color: #E7E9EE;">pypi.org</code>
+                        <span style="font-size: 12px; color: #A9B1BE;">3 次 · 来源 bash 工具 · 最近 14:11</span>
+                      </div>
+                      <button type="button" style="height: 28px; padding: 0 10px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12px; font-family: inherit; cursor: pointer;">加入白名单</button>
+                    </li>
+                    <li style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px;">
+                      <div style="flex: 1; min-width: 160px; display: flex; flex-direction: column; gap: 2px;">
+                        <code style="font-size: 12.5px; color: #E7E9EE;">files.pythonhosted.org</code>
+                        <span style="font-size: 12px; color: #A9B1BE;">2 次 · 来源 bash 工具 · 最近 14:11</span>
+                      </div>
+                      <button type="button" style="height: 28px; padding: 0 10px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12px; font-family: inherit; cursor: pointer;">加入白名单</button>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 16px; border-top: 1px solid #262C37; font-size: 12px; color: #8A93A3;">
+                <span>白名单在 Host 端强制执行。</span>
+                <div style="flex: 1;"></div>
+                <a href="ServerSettings.dc.html" style="font-size: 12px;">代理与白名单设置</a>
+              </div>
+            </section>
+
+            <section aria-labelledby="sd-log" style="grid-column: 1 / -1; min-width: 0; display: flex; flex-direction: column; border: 1px solid #262C37; border-radius: 8px; background: #13161C; overflow: hidden;">
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 44px; padding: 6px 16px; border-bottom: 1px solid #262C37; box-sizing: border-box;">
+                <span style="display: flex; align-items: center; gap: 8px;">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4M9 12h6M9 16h6"></path></svg>
+                  <h2 id="sd-log" style="margin: 0; font-size: 14px; font-weight: 600;">最近日志</h2>
+                </span>
+                <code style="font-size: 12px; color: #8A93A3;">~/.pi-web/logs/agent.log</code>
+                <div style="flex: 1;"></div>
+                <button type="button" style="height: 28px; padding: 0 10px; background: transparent; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; font-size: 12px; font-family: inherit; cursor: pointer;">查看全部日志</button>
+              </div>
+              <pre style="margin: 0; padding: 12px 16px; font-size: 12px; line-height: 1.75; color: #C9CFD9; background: #0B0D11; white-space: pre; overflow-x: auto;"><span style="color: #8A93A3;">2026-10-19 09:41:07</span>  <span style="color: #7FE0D2;">INFO</span>  <span style="color: #8DBBFF;">agent</span>  pi-web-agent 0.1.0 started, pid 3120, socket ~/.pi-web/run/agent.sock
+<span style="color: #8A93A3;">2026-10-22 14:05:32</span>  <span style="color: #7FE0D2;">INFO</span>  <span style="color: #8DBBFF;">conv </span>  start pi --mode rpc --approve, pid 48213, cwd /home/dev/projects/llm-train
+<span style="color: #8A93A3;">2026-10-22 14:05:34</span>  <span style="color: #7FE0D2;">INFO</span>  <span style="color: #8DBBFF;">proxy</span>  CONNECT api.anthropic.com:443 allowed (pid 48213)
+<span style="color: #8A93A3;">2026-10-22 14:11:08</span>  <span style="color: #F7C47E;">WARN</span>  <span style="color: #8DBBFF;">proxy</span>  CONNECT pypi.org:443 denied: not in allowlist (scope llm-only)
+<span style="color: #8A93A3;">2026-10-22 14:29:40</span>  <span style="color: #7FE0D2;">INFO</span>  <span style="color: #8DBBFF;">sync </span>  applied 2 files: settings.json, extensions/git-checkpoint.ts (atomic rename)
+<span style="color: #8A93A3;">2026-10-22 14:30:02</span>  <span style="color: #7FE0D2;">INFO</span>  <span style="color: #8DBBFF;">conv </span>  idle-stop pid 46077 after 30m inactive, stdin closed, exit 0
+<span style="color: #8A93A3;">2026-10-22 14:31:15</span>  <span style="color: #F7C47E;">WARN</span>  <span style="color: #8DBBFF;">link </span>  bridge dropped (ssh keepalive timeout), reconnected in 2.1s, replayed 37 events
+<span style="color: #8A93A3;">2026-10-22 14:31:16</span>  <span style="color: #7FE0D2;">INFO</span>  <span style="color: #8DBBFF;">oauth</span>  push anthropic access token, expires in 42m</pre>
+            </section>
+
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

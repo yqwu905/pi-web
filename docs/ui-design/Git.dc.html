@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Pi-Web Git 变更</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0E1014;color:#E7E9EE;font-family:Inter,"PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;font-size:14px;-webkit-font-smoothing:antialiased}
+a{color:#8DBBFF;text-decoration:none}a:hover{color:#B7D3FF}
+pre,code{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+@keyframes pwspin{to{transform:rotate(360deg)}}
+@keyframes pwpulse{0%,100%{opacity:1}50%{opacity:.35}}
+</style>
+</helmet>
+<div style="height: 100vh; display: flex; flex-direction: column; background: #0E1014; color: #E7E9EE; overflow: auto;">
+
+  <header style="height: 48px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 16px; border-bottom: 1px solid #262C37; background: #13161C;">
+    <a href="Main.dc.html" style="display: flex; align-items: center; gap: 8px; color: #E7E9EE; font-weight: 700; font-size: 15px; letter-spacing: 0.2px;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" stroke="#6AA6FF" stroke-width="1.8"></rect><path d="M7 8h10M10 8v9M14 8v6.5c0 1.5.8 2.5 2.5 2.5" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round"></path></svg>
+      Pi-Web
+    </a>
+    <nav aria-label="位置" style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #A9B1BE; min-width: 0; flex-wrap: wrap;">
+      <a href="ServerDetail.dc.html" style="color: #A9B1BE;">gpu-01</a>
+      <span aria-hidden="true" style="color: #8A93A3;">/</span>
+      <span>llm-train</span>
+      <span aria-hidden="true" style="color: #8A93A3;">/</span>
+      <span style="color: #E7E9EE;">Git</span>
+    </nav>
+    <div style="flex: 1;"></div>
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+      <a href="ServerDetail.dc.html" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; font-size: 12px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6l8-3z"></path></svg>
+        隧道代理 · 3 个连接
+      </a>
+      <a href="SyncCenter.dc.html" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; font-size: 12px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+        配置已同步
+      </a>
+      <a href="Settings.dc.html" aria-label="全局设置" style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; color: #A9B1BE;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+      </a>
+    </div>
+  </header>
+
+  <div style="flex: 1; min-height: 0; display: flex; flex-wrap: wrap;">
+
+    <aside aria-label="服务器与会话" style="flex: 1 1 264px; max-width: 100%; display: flex; flex-direction: column; background: #13161C; border-right: 1px solid #262C37; min-height: 0;">
+      <div style="padding: 12px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #262C37;">
+        <label for="pw-search" style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">搜索会话</label>
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4-4"></path></svg>
+          <input id="pw-search" type="text" placeholder="名称或首条消息" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: #E7E9EE; font-size: 13px; font-family: inherit;">
+        </div>
+      </div>
+
+      <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 8px 6px; display: flex; flex-direction: column; gap: 2px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 4px;">
+          <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">服务器</span>
+          <a href="AddServer.dc.html" aria-label="添加服务器" style="display: flex; width: 24px; height: 24px; align-items: center; justify-content: center; border-radius: 4px; color: #A9B1BE;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          </a>
+        </div>
+
+        <a href="ServerDetail.dc.html" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: 6px; color: #E7E9EE; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>
+          <span style="flex: 1;">gpu-01</span>
+          <span style="font-size: 11px; font-weight: 500; color: #8A93A3;">在线 · 12ms</span>
+        </a>
+        <div style="display: flex; flex-direction: column; gap: 2px; padding-left: 18px;">
+          <a href="Git.dc.html" aria-current="page" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 6px; background: #1F2A3D; color: #E7E9EE; font-size: 13px; font-weight: 600;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+            <span style="flex: 1;">llm-train</span>
+            <span style="font-size: 11px; font-weight: 500; color: #A9B1BE;">3</span>
+          </a>
+          <div style="display: flex; flex-direction: column; gap: 2px; padding-left: 20px;">
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #6AA6FF; animation: pwpulse 1.4s ease-in-out infinite;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">修复数据加载器的内存泄漏</span>
+              </span>
+              <span style="font-size: 11px; color: #8DBBFF; padding-left: 14px;">运行中 · bash</span>
+            </a>
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #F0A03C;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">添加 FSDP 支持</span>
+              </span>
+              <span style="font-size: 11px; color: #F0A03C; padding-left: 14px;">等待确认 · 扩展对话框</span>
+            </a>
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">重构配置系统</span>
+              </span>
+              <span style="font-size: 11px; color: #8A93A3; padding-left: 14px;">昨天 · 48 条消息</span>
+            </a>
+            <button type="button" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; background: transparent; border: 0; color: #8A93A3; font-size: 12px; font-family: inherit; cursor: pointer; text-align: left;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+              新建对话
+            </button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; color: #A9B1BE; font-size: 13px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+            <span style="flex: 1;">infra-scripts</span>
+            <span style="font-size: 11px; color: #8A93A3;">7</span>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; margin-top: 6px; color: #E7E9EE; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>
+          <span style="flex: 1;">build-arm</span>
+          <span style="font-size: 11px; font-weight: 500; color: #8A93A3;">在线 · 1 个待同步</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; color: #8A93A3; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span>
+          <span style="flex: 1;">staging-db</span>
+          <span style="font-size: 11px; font-weight: 500;">离线</span>
+        </div>
+      </div>
+
+      <div style="padding: 8px 6px; border-top: 1px solid #262C37; display: flex; flex-direction: column; gap: 2px;">
+        <a href="SyncCenter.dc.html" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+          同步中心
+        </a>
+        <a href="AddServer.dc.html" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"></rect><rect x="3" y="13" width="18" height="7" rx="2"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>
+          添加服务器
+        </a>
+      </div>
+    </aside>
+
+    <main style="flex: 999 1 560px; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #0E1014;">
+      <div role="tablist" aria-label="工作区视图" style="height: 40px; flex-shrink: 0; display: flex; align-items: flex-end; gap: 4px; padding: 0 16px; border-bottom: 1px solid #262C37;">
+        <a href="Main.dc.html" role="tab" aria-selected="false" style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; color: #A9B1BE; font-size: 13px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5z"></path></svg>
+          对话
+        </a>
+        <a href="Files.dc.html" role="tab" aria-selected="false" style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; color: #A9B1BE; font-size: 13px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+          文件
+        </a>
+        <a href="Terminal.dc.html" role="tab" aria-selected="false" style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; color: #A9B1BE; font-size: 13px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 9l3 3-3 3M12 15h5"></path></svg>
+          终端
+        </a>
+        <a href="Git.dc.html" role="tab" aria-selected="true" style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; color: #E7E9EE; font-size: 13px; font-weight: 600; border-bottom: 2px solid #6AA6FF; box-sizing: border-box;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="2"></circle><circle cx="6" cy="18" r="2"></circle><circle cx="18" cy="9" r="2"></circle><path d="M6 8v8M18 11c0 4-6 3-11 6"></path></svg>
+          Git
+          <span style="font-size: 11px; font-weight: 500; padding: 1px 6px; border-radius: 9px; background: #2A2418; color: #F0A03C;">3</span>
+        </a>
+      </div>
+
+      <div style="flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 16px; border-bottom: 1px solid #262C37;">
+        <button type="button" aria-haspopup="listbox" aria-label="当前分支 main，选择分支" style="display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12.5px; font-family: 'JetBrains Mono', monospace; cursor: pointer;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="2"></circle><circle cx="6" cy="18" r="2"></circle><circle cx="18" cy="6" r="2"></circle><path d="M6 8v8M18 8c0 5-5 6-10.5 8.6"></path></svg>
+          main
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+        </button>
+        <span style="font-size: 12.5px; color: #A9B1BE;">领先 <code style="font-size: 12px; color: #C9CFD9;">origin/main</code> 2 个提交 · 落后 0</span>
+        <span style="font-size: 12px; color: #8A93A3;">上次获取 10 分钟前</span>
+        <div style="flex: 1;"></div>
+        <div role="group" aria-label="Diff 显示方式" style="display: flex; gap: 2px; padding: 2px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px;">
+          <button type="button" onClick="{{ setInline }}" aria-pressed="{{ inlinePressed }}" style="{{ inlineBtnStyle }}">行内</button>
+          <button type="button" onClick="{{ setSplit }}" aria-pressed="{{ splitPressed }}" style="{{ splitBtnStyle }}">并排</button>
+        </div>
+        <a href="Main.dc.html" style="display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; background: #2F6FDB; border-radius: 6px; color: #FFFFFF; font-size: 13px; font-weight: 600;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5z"></path></svg>
+          发给 pi 审阅
+        </a>
+        <span style="display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border: 1px solid #262C37; border-radius: 11px; font-size: 11px; color: #8A93A3;">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>
+          只读
+        </span>
+      </div>
+
+      <div style="flex: 1; min-height: 0; display: flex; flex-wrap: wrap;">
+
+        <section aria-labelledby="git-changes" style="flex: 1 1 300px; max-width: 100%; min-height: 0; overflow-y: auto; box-sizing: border-box; padding: 10px 8px 16px; background: #13161C; border-right: 1px solid #262C37; display: flex; flex-direction: column; gap: 14px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 0 0 0 8px;">
+            <h2 id="git-changes" style="margin: 0; font-size: 13px; font-weight: 600; color: #E7E9EE;">工作区变更</h2>
+            <span style="flex: 1; font-size: 12px; color: #8A93A3;">3 个文件</span>
+            <button type="button" aria-label="重新读取 git status" style="display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; background: transparent; border: 0; border-radius: 6px; color: #A9B1BE; cursor: pointer;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+            </button>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <h3 style="margin: 0; padding: 0 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">已暂存（0）</h3>
+            <p style="margin: 0; padding: 2px 8px; font-size: 12px; color: #8A93A3;">无</p>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <h3 style="margin: 0; padding: 0 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">未暂存（2）</h3>
+            <sc-for list="{{ unstaged }}" as="f" hint-placeholder-count="2">
+              <button type="button" onClick="{{ f.pick }}" aria-current="{{ f.current }}" style="{{ f.rowStyle }}">
+                <span aria-hidden="true" title="{{ f.status }}" style="{{ f.badgeStyle }}">{{ f.code }}</span>
+                <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;">{{ f.status }}</span>
+                <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', monospace; font-size: 12px;"><span style="color: #8A93A3;">{{ f.dir }}</span><span style="color: #E7E9EE;">{{ f.name }}</span></span>
+                <span style="flex-shrink: 0; min-width: 28px; text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7FE0D2;">{{ f.addText }}</span>
+                <span style="flex-shrink: 0; min-width: 24px; text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #F4A29A;">{{ f.delText }}</span>
+              </button>
+            </sc-for>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <h3 style="margin: 0; padding: 0 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">未跟踪（1）</h3>
+            <sc-for list="{{ untracked }}" as="f" hint-placeholder-count="1">
+              <button type="button" onClick="{{ f.pick }}" aria-current="{{ f.current }}" style="{{ f.rowStyle }}">
+                <span aria-hidden="true" title="{{ f.status }}" style="{{ f.badgeStyle }}">{{ f.code }}</span>
+                <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;">{{ f.status }}</span>
+                <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', monospace; font-size: 12px;"><span style="color: #8A93A3;">{{ f.dir }}</span><span style="color: #E7E9EE;">{{ f.name }}</span></span>
+                <span style="flex-shrink: 0; min-width: 28px; text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7FE0D2;">{{ f.addText }}</span>
+                <span style="flex-shrink: 0; min-width: 24px; text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #F4A29A;">{{ f.delText }}</span>
+              </button>
+            </sc-for>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 2px; padding-top: 12px; border-top: 1px solid #262C37;">
+            <h3 style="margin: 0; padding: 0 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">最近提交</h3>
+            <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px;">
+              <li style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px;">
+                <span style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                  <code style="flex-shrink: 0; width: 56px; font-size: 12px; color: #8DBBFF;">a41c9e2</code>
+                  <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: #E7E9EE;">tune lr warmup</span>
+                  <span style="flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 10.5px; line-height: 16px; padding: 0 5px; border: 1px solid #33405A; border-radius: 4px; color: #A9B1BE;">main</span>
+                </span>
+                <span style="padding-left: 64px; font-size: 11.5px; color: #8A93A3;">dev · 2 小时前 · 未推送</span>
+              </li>
+              <li style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px;">
+                <span style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                  <code style="flex-shrink: 0; width: 56px; font-size: 12px; color: #8DBBFF;">7d02b11</code>
+                  <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: #E7E9EE;">add eval dataset</span>
+                </span>
+                <span style="padding-left: 64px; font-size: 11.5px; color: #8A93A3;">dev · 昨天 · 未推送</span>
+              </li>
+              <li style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px;">
+                <span style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                  <code style="flex-shrink: 0; width: 56px; font-size: 12px; color: #8DBBFF;">3f9e8aa</code>
+                  <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: #E7E9EE;">initial training loop</span>
+                  <span style="flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 10.5px; line-height: 16px; padding: 0 5px; border: 1px solid #33405A; border-radius: 4px; color: #A9B1BE;">origin/main</span>
+                </span>
+                <span style="padding-left: 64px; font-size: 11.5px; color: #8A93A3;">dev · 3 天前</span>
+              </li>
+            </ol>
+          </div>
+        </section>
+
+        <section aria-label="Diff" style="flex: 999 1 560px; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #0B0D11;">
+          <div style="flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 44px; box-sizing: border-box; padding: 8px 16px; background: #0E1014; border-bottom: 1px solid #262C37;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+            <code style="font-size: 13px; color: #E7E9EE;">{{ file.path }}</code>
+            <span style="font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 4px; background: #191D25; border: 1px solid #262C37; color: #A9B1BE;">{{ file.stateLabel }}</span>
+            <span style="display: flex; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 12px;">
+              <span style="color: #7FE0D2;">{{ file.addText }}</span>
+              <span style="color: #F4A29A;">{{ file.delText }}</span>
+            </span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8A93A3;">{{ file.mode }}</span>
+            <span style="font-size: 12px; color: #8A93A3;">{{ file.hunkText }}</span>
+            <div style="flex: 1;"></div>
+            <a href="Files.dc.html" style="font-size: 12px;">在文件中打开</a>
+          </div>
+
+          <div tabindex="0" role="region" aria-label="{{ diffLabel }}" style="flex: 1; min-height: 0; overflow: auto; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 20px;">
+            <sc-if value="{{ isInline }}" hint-placeholder-val="{{ true }}">
+              <div style="min-width: max-content; display: flex; flex-direction: column; padding-bottom: 16px;">
+                <sc-for list="{{ inlineRows }}" as="r" hint-placeholder-count="14">
+                  <div style="{{ r.rowStyle }}">
+                    <span style="{{ r.gutStyle }}">{{ r.o }}</span>
+                    <span style="{{ r.gutStyle }}">{{ r.n }}</span>
+                    <span style="width: 20px; flex-shrink: 0; text-align: center; user-select: none;">{{ r.sign }}</span>
+                    <span style="white-space: pre; padding-right: 24px;">{{ r.text }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ isSplit }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; flex-direction: column; padding-bottom: 16px;">
+                <div style="position: sticky; top: 0; z-index: 1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); background: #13161C; border-bottom: 1px solid #262C37; font-family: Inter, system-ui, sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">
+                  <span style="padding: 6px 12px 6px 72px;">{{ file.oldLabel }}</span>
+                  <span style="padding: 6px 12px 6px 72px; border-left: 1px solid #262C37;">{{ file.newLabel }}</span>
+                </div>
+                <sc-for list="{{ splitRows }}" as="p" hint-placeholder-count="14">
+                  <sc-if value="{{ p.isHunk }}" hint-placeholder-val="{{ false }}">
+                    <div style="{{ p.hunkStyle }}">{{ p.text }}</div>
+                  </sc-if>
+                  <sc-if value="{{ p.isPair }}" hint-placeholder-val="{{ true }}">
+                    <div style="display: grid; grid-template-columns: 52px 20px minmax(0, 1fr) 52px 20px minmax(0, 1fr); min-height: 20px;">
+                      <span style="{{ p.lNoStyle }}">{{ p.lNo }}</span>
+                      <span style="{{ p.lSignStyle }}">{{ p.lSign }}</span>
+                      <span style="{{ p.lTextStyle }}">{{ p.lText }}</span>
+                      <span style="{{ p.rNoStyle }}">{{ p.rNo }}</span>
+                      <span style="{{ p.rSignStyle }}">{{ p.rSign }}</span>
+                      <span style="{{ p.rTextStyle }}">{{ p.rText }}</span>
+                    </div>
+                  </sc-if>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+
+          <div style="flex-shrink: 0; display: flex; align-items: center; gap: 12px; min-height: 28px; padding: 0 16px; background: #0E1014; border-top: 1px solid #262C37; font-size: 11px; color: #8A93A3;">
+            <code style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: #8A93A3;">{{ file.cmd }}</code>
+            <span style="flex-shrink: 0;">pi-web-agent · gpu-01</span>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { view: 'inline', sel: 'loader' };
+  }
+
+  diffData() {
+    return {
+      loader: {
+        id: 'loader', dir: 'src/data/', name: 'loader.py', code: 'M', status: '已修改', stateLabel: '未暂存',
+        mode: '100644', cmd: 'git diff -- src/data/loader.py',
+        oldLabel: '旧 · 暂存区', newLabel: '新 · 工作区',
+        hunks: [
+          { oldStart: 1, newStart: 1, ctx: '', lines: [
+            ' import os',
+            ' import torch',
+            ' from torch.utils.data import Dataset',
+            '+from cachetools import LRUCache',
+            ' ',
+            ' from .tokenize import encode_shard',
+            ' from .index import ShardIndex'
+          ] },
+          { oldStart: 41, newStart: 42, ctx: '', lines: [
+            ' class ShardedTextDataset(Dataset):',
+            '-    def __init__(self, shards, tokenizer):',
+            '+    def __init__(self, shards, tokenizer, cache_shards=8):',
+            '         self.shards = shards',
+            '-        self._cache = dict()',
+            '+        # per-worker LRU, bounded by cache_shards',
+            '+        self._cache = LRUCache(maxsize=cache_shards)',
+            '+        self._cache_shards = cache_shards',
+            '+        self._shard_len = len(shards[0])',
+            '         self.tokenizer = tokenizer',
+            ' ',
+            '     def __len__(self):'
+          ] },
+          { oldStart: 58, newStart: 62, ctx: 'class ShardedTextDataset(Dataset):', lines: [
+            '     def __getitem__(self, idx):',
+            '-        shard = self._load_shard(idx)',
+            '-        self._cache[idx] = shard',
+            '-        return self._encode(shard, idx)',
+            '+        shard_id, offset = divmod(idx, self._shard_len)',
+            '+        shard = self._cache.get(shard_id)',
+            '+        if shard is None:',
+            '+            shard = self._load_shard(shard_id)',
+            '+            self._cache[shard_id] = shard',
+            '+        return self._encode(shard, offset)',
+            ' ',
+            '     def _load_shard(self, shard_id):'
+          ] }
+        ]
+      },
+      config: {
+        id: 'config', dir: 'configs/', name: 'train.yaml', code: 'M', status: '已修改', stateLabel: '未暂存',
+        mode: '100644', cmd: 'git diff -- configs/train.yaml',
+        oldLabel: '旧 · 暂存区', newLabel: '新 · 工作区',
+        hunks: [
+          { oldStart: 10, newStart: 10, ctx: 'data:', lines: [
+            '   train_path: /data/corpus/train',
+            '   val_path: /data/corpus/val',
+            '   num_workers: 8',
+            '-  cache: true',
+            '+  cache_shards: 8',
+            '   pin_memory: true',
+            '   batch_size: 32',
+            '   seq_len: 2048'
+          ] }
+        ]
+      },
+      test: {
+        id: 'test', dir: 'tests/', name: 'test_loader_mem.py', code: 'U', status: '未跟踪', stateLabel: '未跟踪',
+        mode: '新文件 · 100644', cmd: 'git diff --no-index -- /dev/null tests/test_loader_mem.py',
+        oldLabel: '旧 · 无此文件', newLabel: '新 · 工作区',
+        hunks: [
+          { oldStart: 0, newStart: 1, ctx: '', lines: [
+            '+import tracemalloc',
+            '+',
+            '+from src.data.loader import ShardedTextDataset',
+            '+',
+            '+',
+            '+def test_memory_stays_bounded(tiny_shards, tokenizer):',
+            '+    ds = ShardedTextDataset(tiny_shards, tokenizer, cache_shards=2)',
+            '+    tracemalloc.start()',
+            '+    peaks = []',
+            '+    for _ in range(3):',
+            '+        for i in range(len(ds)):',
+            '+            ds[i]',
+            '+        peaks.append(tracemalloc.get_traced_memory()[1])',
+            '+    assert len(ds._cache) <= 2',
+            '+    assert peaks[-1] < peaks[0] * 1.1'
+          ] }
+        ]
+      }
+    };
+  }
+
+  buildRows(hunks) {
+    const TONE = {
+      ctx: 'color: #C9CFD9;',
+      del: 'background: rgba(242,118,107,0.12); color: #F4A29A;',
+      add: 'background: rgba(60,200,180,0.12); color: #7FE0D2;',
+      empty: 'background: #13161C; color: #8A93A3;'
+    };
+    const GUT = 'width: 52px; flex-shrink: 0; box-sizing: border-box; padding-right: 10px; text-align: right; user-select: none; color: #8A93A3;';
+    const GUT_INLINE = {
+      ctx: GUT,
+      del: GUT + ' background: rgba(242,118,107,0.08);',
+      add: GUT + ' background: rgba(60,200,180,0.08);'
+    };
+    const GUT_SPLIT = {
+      ctx: '',
+      del: 'background: rgba(242,118,107,0.2);',
+      add: 'background: rgba(60,200,180,0.2);',
+      empty: 'background: #13161C;'
+    };
+    const SIGN = { ctx: '', del: '−', add: '+', empty: '' };
+    const ROW = 'display: flex; align-items: flex-start; min-height: 20px; ';
+    const hunkBorder = (hi) => (hi > 0 ? 'border-top: 1px solid #262C37; ' : '') + 'border-bottom: 1px solid #262C37;';
+
+    const inline = [];
+    const split = [];
+    const blankPair = { lNo: '', lSign: '', lText: '', rNo: '', rSign: '', rText: '', lNoStyle: '', lSignStyle: '', lTextStyle: '', rNoStyle: '', rSignStyle: '', rTextStyle: '' };
+
+    const pair = (l, r) => {
+      const L = l || { k: 'empty', no: '', text: '' };
+      const R = r || { k: 'empty', no: '', text: '' };
+      const cell = (x, right) => ({
+        no: String(x.no),
+        sign: SIGN[x.k],
+        noStyle: TONE[x.k] + ' ' + GUT_SPLIT[x.k] + ' box-sizing: border-box; padding-right: 10px; text-align: right; user-select: none; color: #8A93A3;' + (right ? ' border-left: 1px solid #262C37;' : ''),
+        signStyle: TONE[x.k] + ' text-align: center; user-select: none;',
+        textStyle: TONE[x.k] + ' white-space: pre-wrap; overflow-wrap: anywhere; padding-right: 12px;'
+      });
+      const a = cell(L, false);
+      const b = cell(R, true);
+      return {
+        isHunk: false, isPair: true, text: '', hunkStyle: '',
+        lNo: a.no, lSign: a.sign, lText: L.text, lNoStyle: a.noStyle, lSignStyle: a.signStyle, lTextStyle: a.textStyle,
+        rNo: b.no, rSign: b.sign, rText: R.text, rNoStyle: b.noStyle, rSignStyle: b.signStyle, rTextStyle: b.textStyle
+      };
+    };
+
+    hunks.forEach((h, hi) => {
+      let oc = 0;
+      let nc = 0;
+      h.lines.forEach((l) => {
+        if (l[0] !== '+') oc += 1;
+        if (l[0] !== '-') nc += 1;
+      });
+      const header = '@@ -' + h.oldStart + ',' + oc + ' +' + h.newStart + ',' + nc + ' @@' + (h.ctx ? ' ' + h.ctx : '');
+      inline.push({
+        o: '', n: '', sign: '', text: header, gutStyle: GUT,
+        rowStyle: 'display: flex; align-items: center; min-height: 28px; background: #13161C; color: #8A93A3; ' + hunkBorder(hi)
+      });
+      split.push(Object.assign({}, blankPair, {
+        isHunk: true, isPair: false, text: header,
+        hunkStyle: 'display: flex; align-items: center; min-height: 28px; padding: 0 12px 0 72px; white-space: pre-wrap; background: #13161C; color: #8A93A3; ' + hunkBorder(hi)
+      }));
+
+      let o = h.oldStart;
+      let n = h.newStart;
+      let dels = [];
+      let adds = [];
+      const flush = () => {
+        const m = Math.max(dels.length, adds.length);
+        for (let i = 0; i < m; i += 1) split.push(pair(dels[i], adds[i]));
+        dels = [];
+        adds = [];
+      };
+      h.lines.forEach((l) => {
+        const t = l[0];
+        const text = l.slice(1);
+        if (t === ' ') {
+          flush();
+          inline.push({ o: String(o), n: String(n), sign: '', text: text, gutStyle: GUT_INLINE.ctx, rowStyle: ROW + TONE.ctx });
+          split.push(pair({ k: 'ctx', no: o, text: text }, { k: 'ctx', no: n, text: text }));
+          o += 1;
+          n += 1;
+        } else if (t === '-') {
+          inline.push({ o: String(o), n: '', sign: '−', text: text, gutStyle: GUT_INLINE.del, rowStyle: ROW + TONE.del });
+          dels.push({ k: 'del', no: o, text: text });
+          o += 1;
+        } else {
+          inline.push({ o: '', n: String(n), sign: '+', text: text, gutStyle: GUT_INLINE.add, rowStyle: ROW + TONE.add });
+          adds.push({ k: 'add', no: n, text: text });
+          n += 1;
+        }
+      });
+      flush();
+    });
+    return { inline: inline, split: split };
+  }
+
+  renderVals() {
+    const s = this.state;
+    const data = this.diffData();
+
+    const ROW_BTN = 'position: relative; width: 100%; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; box-sizing: border-box; border: 0; border-radius: 6px; color: #E7E9EE; font-family: inherit; text-align: left; cursor: pointer; ';
+    const BADGE = 'flex-shrink: 0; min-width: 18px; box-sizing: border-box; text-align: center; font-family: JetBrains Mono, ui-monospace, monospace; font-size: 11px; font-weight: 600; line-height: 18px; padding: 0 4px; border-radius: 4px; ';
+
+    const stats = (f) => {
+      let add = 0;
+      let del = 0;
+      f.hunks.forEach((h) => h.lines.forEach((l) => {
+        if (l[0] === '+') add += 1;
+        if (l[0] === '-') del += 1;
+      }));
+      return { add: add, del: del };
+    };
+
+    const item = (f) => {
+      const st = stats(f);
+      const selected = s.sel === f.id;
+      return {
+        id: f.id, dir: f.dir, name: f.name, code: f.code, status: f.status,
+        addText: '+' + st.add,
+        delText: st.del ? '−' + st.del : '',
+        current: selected ? 'true' : 'false',
+        pick: () => this.setState({ sel: f.id }),
+        rowStyle: ROW_BTN + (selected ? 'background: #1F2A3D;' : 'background: transparent;'),
+        badgeStyle: BADGE + (f.code === 'M' ? 'background: #2A2418; color: #F7C47E;' : 'background: rgba(60,200,180,0.12); color: #7FE0D2;')
+      };
+    };
+
+    const cur = data[s.sel] || data.loader;
+    const curStats = stats(cur);
+    const rows = this.buildRows(cur.hunks);
+    const isInline = s.view === 'inline';
+
+    const SEG = 'height: 26px; padding: 0 12px; border: 0; border-radius: 4px; font-size: 12px; font-family: inherit; cursor: pointer; ';
+    const segOn = SEG + 'background: #1F2A3D; color: #E7E9EE; font-weight: 600;';
+    const segOff = SEG + 'background: transparent; color: #A9B1BE; font-weight: 400;';
+
+    return {
+      unstaged: [item(data.loader), item(data.config)],
+      untracked: [item(data.test)],
+      file: {
+        path: cur.dir + cur.name,
+        stateLabel: cur.stateLabel,
+        addText: '+' + curStats.add,
+        delText: curStats.del ? '−' + curStats.del : '',
+        mode: cur.mode,
+        hunkText: cur.hunks.length + ' 个变更块',
+        cmd: cur.cmd,
+        oldLabel: cur.oldLabel,
+        newLabel: cur.newLabel
+      },
+      diffLabel: cur.dir + cur.name + ' 的 diff（' + (isInline ? '行内' : '并排') + '）',
+      isInline: isInline,
+      isSplit: !isInline,
+      inlineRows: rows.inline,
+      splitRows: rows.split,
+      inlinePressed: isInline ? 'true' : 'false',
+      splitPressed: isInline ? 'false' : 'true',
+      inlineBtnStyle: isInline ? segOn : segOff,
+      splitBtnStyle: isInline ? segOff : segOn,
+      setInline: () => this.setState({ view: 'inline' }),
+      setSplit: () => this.setState({ view: 'split' })
+    };
+  }
+}
+</script>
+</body>
+</html>

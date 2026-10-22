@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Pi-Web 文件浏览</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#0E1014;color:#E7E9EE;font-family:Inter,"PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;font-size:14px;-webkit-font-smoothing:antialiased}
+a{color:#8DBBFF;text-decoration:none}a:hover{color:#B7D3FF}
+pre,code{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+@keyframes pwspin{to{transform:rotate(360deg)}}
+@keyframes pwpulse{0%,100%{opacity:1}50%{opacity:.35}}
+</style>
+</helmet>
+<div style="height: 100vh; display: flex; flex-direction: column; background: #0E1014; color: #E7E9EE; overflow: auto;">
+
+  <header style="height: 48px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 16px; border-bottom: 1px solid #262C37; background: #13161C;">
+    <a href="Main.dc.html" style="display: flex; align-items: center; gap: 8px; color: #E7E9EE; font-weight: 700; font-size: 15px; letter-spacing: 0.2px;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" stroke="#6AA6FF" stroke-width="1.8"></rect><path d="M7 8h10M10 8v9M14 8v6.5c0 1.5.8 2.5 2.5 2.5" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round"></path></svg>
+      Pi-Web
+    </a>
+    <nav aria-label="位置" style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #A9B1BE; min-width: 0; flex-wrap: wrap;">
+      <a href="ServerDetail.dc.html" style="color: #A9B1BE;">gpu-01</a>
+      <span aria-hidden="true" style="color: #8A93A3;">/</span>
+      <span>llm-train</span>
+      <span aria-hidden="true" style="color: #8A93A3;">/</span>
+      <span style="color: #E7E9EE;">文件</span>
+    </nav>
+    <div style="flex: 1;"></div>
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+      <a href="ServerDetail.dc.html" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; font-size: 12px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6l8-3z"></path></svg>
+        隧道代理 · 3 个连接
+      </a>
+      <a href="SyncCenter.dc.html" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; font-size: 12px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3CC8B4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+        配置已同步
+      </a>
+      <a href="Settings.dc.html" aria-label="全局设置" style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; color: #A9B1BE;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
+      </a>
+    </div>
+  </header>
+
+  <div style="flex: 1; min-height: 0; display: flex; flex-wrap: wrap;">
+
+    <aside aria-label="服务器与会话" style="flex: 1 1 264px; max-width: 100%; display: flex; flex-direction: column; background: #13161C; border-right: 1px solid #262C37; min-height: 0;">
+      <div style="padding: 12px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #262C37;">
+        <label for="pw-search" style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">搜索会话</label>
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; background: #0E1014; border: 1px solid #262C37; border-radius: 6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4-4"></path></svg>
+          <input id="pw-search" type="text" placeholder="名称或首条消息" style="flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: #E7E9EE; font-size: 13px; font-family: inherit;">
+        </div>
+      </div>
+
+      <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 8px 6px; display: flex; flex-direction: column; gap: 2px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 4px;">
+          <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.6px; color: #8A93A3;">服务器</span>
+          <a href="AddServer.dc.html" aria-label="添加服务器" style="display: flex; width: 24px; height: 24px; align-items: center; justify-content: center; border-radius: 4px; color: #A9B1BE;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          </a>
+        </div>
+
+        <a href="ServerDetail.dc.html" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: 6px; color: #E7E9EE; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>
+          <span style="flex: 1;">gpu-01</span>
+          <span style="font-size: 11px; font-weight: 500; color: #8A93A3;">在线 · 12ms</span>
+        </a>
+        <div style="display: flex; flex-direction: column; gap: 2px; padding-left: 18px;">
+          <a href="Files.dc.html" aria-current="page" style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 6px; background: #1F2A3D; color: #E7E9EE; font-size: 13px; font-weight: 600;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+            <span style="flex: 1;">llm-train</span>
+            <span style="font-size: 11px; font-weight: 500; color: #A9B1BE;">3</span>
+          </a>
+          <div style="display: flex; flex-direction: column; gap: 2px; padding-left: 20px;">
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #6AA6FF; animation: pwpulse 1.4s ease-in-out infinite;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">修复数据加载器的内存泄漏</span>
+              </span>
+              <span style="font-size: 11px; color: #8DBBFF; padding-left: 14px;">运行中 · bash</span>
+            </a>
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #F0A03C;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">添加 FSDP 支持</span>
+              </span>
+              <span style="font-size: 11px; color: #F0A03C; padding-left: 14px;">等待确认 · 扩展对话框</span>
+            </a>
+            <a href="Main.dc.html" style="display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 6px; color: #A9B1BE;">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span>
+                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">重构配置系统</span>
+              </span>
+              <span style="font-size: 11px; color: #8A93A3; padding-left: 14px;">昨天 · 48 条消息</span>
+            </a>
+            <button type="button" style="display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; background: transparent; border: 0; color: #8A93A3; font-size: 12px; font-family: inherit; cursor: pointer; text-align: left;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+              新建对话
+            </button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; color: #A9B1BE; font-size: 13px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+            <span style="flex: 1;">infra-scripts</span>
+            <span style="font-size: 11px; color: #8A93A3;">7</span>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; margin-top: 6px; color: #E7E9EE; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #3CC8B4;" aria-hidden="true"></span>
+          <span style="flex: 1;">build-arm</span>
+          <span style="font-size: 11px; font-weight: 500; color: #8A93A3;">在线 · 1 个待同步</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; color: #8A93A3; font-weight: 600; font-size: 13px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          <span style="width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #5B6370; box-sizing: border-box;" aria-hidden="true"></span>
+          <span style="flex: 1;">staging-db</span>
+          <span style="font-size: 11px; font-weight: 500;">离线</span>
+        </div>
+      </div>
+
+      <div style="padding: 8px 6px; border-top: 1px solid #262C37; display: flex; flex-direction: column; gap: 2px;">
+        <a href="SyncCenter.dc.html" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"></path></svg>
+          同步中心
+        </a>
+        <a href="AddServer.dc.html" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 6px; color: #A9B1BE; font-size: 13px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"></rect><rect x="3" y="13" width="18" height="7" rx="2"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>
+          添加服务器
+        </a>
+      </div>
+    </aside>
+
+    <main style="flex: 999 1 560px; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #0E1014;">
+      <div role="tablist" aria-label="工作区视图" style="height: 40px; flex-shrink: 0; display: flex; align-items: flex-end; gap: 4px; padding: 0 16px; border-bottom: 1px solid #262C37;">
+        <a href="Main.dc.html" role="tab" aria-selected="false" style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; color: #A9B1BE; font-size: 13px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4V5z"></path></svg>
+          对话
+        </a>
+        <a href="Files.dc.html" role="tab" aria-selected="true" style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; color: #E7E9EE; font-size: 13px; font-weight: 600; border-bottom: 2px solid #6AA6FF; box-sizing: border-box;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+          文件
+        </a>
+        <a href="Terminal.dc.html" role="tab" aria-selected="false" style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; color: #A9B1BE; font-size: 13px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 9l3 3-3 3M12 15h5"></path></svg>
+          终端
+        </a>
+        <a href="Git.dc.html" role="tab" aria-selected="false" style="display: flex; align-items: center; gap: 6px; height: 39px; padding: 0 12px; color: #A9B1BE; font-size: 13px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="2"></circle><circle cx="6" cy="18" r="2"></circle><circle cx="18" cy="9" r="2"></circle><path d="M6 8v8M18 11c0 4-6 3-11 6"></path></svg>
+          Git
+          <span style="font-size: 11px; padding: 1px 6px; border-radius: 9px; background: #2A2418; color: #F0A03C;">3</span>
+        </a>
+      </div>
+
+      <div style="flex: 1; min-height: 0; display: flex; flex-wrap: wrap;">
+
+        <section aria-label="文件树" style="flex: 1 1 280px; max-width: 100%; min-height: 0; display: flex; flex-direction: column; background: #13161C; border-right: 1px solid #262C37;">
+          <div style="flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #262C37;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+              <code title="/home/dev/projects/llm-train" style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: #C9CFD9;">/home/dev/projects/llm-train</code>
+              <button type="button" aria-label="刷新" style="flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #A9B1BE; cursor: pointer;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66"></path><path d="M20 4v4.5h-4.5"></path></svg>
+              </button>
+            </div>
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #A9B1BE; cursor: pointer;">
+              <input type="checkbox" checked="{{ hideIgnored }}" onClick="{{ toggleIgnored }}" style="accent-color: #2F6FDB; width: 14px; height: 14px; margin: 0;">
+              <span>隐藏 <code style="font-size: 11.5px; color: #C9CFD9;">.gitignore</code> 忽略的文件</span>
+            </label>
+          </div>
+
+          <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 1px;">
+
+            <button type="button" onClick="{{ d.pi.toggle }}" aria-expanded="{{ d.pi.expanded }}" style="display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 8px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="{{ d.pi.chev }}"><path d="M6 9l6 6 6-6"></path></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+              <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">.pi</span>
+            </button>
+            <sc-if value="{{ d.pi.open }}" hint-placeholder-val="{{ false }}">
+              <button type="button" style="display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 42px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+                <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">settings.json</span>
+              </button>
+            </sc-if>
+
+            <sc-if value="{{ showIgnored }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; color: #8A93A3; font-size: 13px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#5B6370" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M9 6l6 6-6 6"></path></svg>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5B6370" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+                <span style="flex: 1; min-width: 0;">.venv</span>
+                <span style="font-size: 11px;">已忽略</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; color: #8A93A3; font-size: 13px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#5B6370" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M9 6l6 6-6 6"></path></svg>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5B6370" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+                <span style="flex: 1; min-width: 0;">checkpoints</span>
+                <span style="font-size: 11px;">已忽略</span>
+              </div>
+            </sc-if>
+
+            <button type="button" onClick="{{ d.configs.toggle }}" aria-expanded="{{ d.configs.expanded }}" style="display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 8px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="{{ d.configs.chev }}"><path d="M6 9l6 6 6-6"></path></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+              <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">configs</span>
+            </button>
+            <sc-if value="{{ d.configs.open }}" hint-placeholder-val="{{ false }}">
+              <button type="button" style="display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 42px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+                <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">eval.yaml</span>
+              </button>
+              <button type="button" style="display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 42px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+                <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">train.yaml</span>
+              </button>
+            </sc-if>
+
+            <button type="button" onClick="{{ d.src.toggle }}" aria-expanded="{{ d.src.expanded }}" style="display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 8px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="{{ d.src.chev }}"><path d="M6 9l6 6 6-6"></path></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+              <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">src</span>
+            </button>
+            <sc-if value="{{ d.src.open }}" hint-placeholder-val="{{ true }}">
+              <button type="button" onClick="{{ d.data.toggle }}" aria-expanded="{{ d.data.expanded }}" style="display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 24px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="{{ d.data.chev }}"><path d="M6 9l6 6 6-6"></path></svg>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+                <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">data</span>
+              </button>
+              <sc-if value="{{ d.data.open }}" hint-placeholder-val="{{ true }}">
+                <sc-if value="{{ showIgnored }}" hint-placeholder-val="{{ false }}">
+                  <div style="display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px 0 40px; color: #8A93A3; font-size: 13px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#5B6370" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M9 6l6 6-6 6"></path></svg>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5B6370" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+                    <span style="flex: 1; min-width: 0;">__pycache__</span>
+                    <span style="font-size: 11px;">已忽略</span>
+                  </div>
+                </sc-if>
+                <button type="button" style="display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 58px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+                  <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">__init__.py</span>
+                </button>
+                <button type="button" onClick="{{ f.loader.pick }}" aria-current="{{ f.loader.current }}" style="{{ f.loader.style }}">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+                  <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">loader.py</span>
+                  <span aria-hidden="true" title="已修改" style="flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; line-height: 16px; padding: 0 5px; border-radius: 4px; background: #3A2A12; color: #F7C47E;">M</span>
+                  <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;">已修改</span>
+                </button>
+                <button type="button" style="display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 58px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+                  <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">eval.py</span>
+                </button>
+              </sc-if>
+              <button type="button" onClick="{{ d.models.toggle }}" aria-expanded="{{ d.models.expanded }}" style="display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 24px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="{{ d.models.chev }}"><path d="M6 9l6 6 6-6"></path></svg>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+                <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">models</span>
+              </button>
+              <sc-if value="{{ d.models.open }}" hint-placeholder-val="{{ false }}">
+                <button type="button" style="display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 58px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+                  <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">__init__.py</span>
+                </button>
+                <button type="button" style="display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 58px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+                  <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">gpt.py</span>
+                </button>
+              </sc-if>
+              <button type="button" onClick="{{ f.train.pick }}" aria-current="{{ f.train.current }}" style="{{ f.train.style }}">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+                <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">train.py</span>
+              </button>
+            </sc-if>
+
+            <button type="button" onClick="{{ d.tests.toggle }}" aria-expanded="{{ d.tests.expanded }}" style="display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 8px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="{{ d.tests.chev }}"><path d="M6 9l6 6 6-6"></path></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path></svg>
+              <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">tests</span>
+            </button>
+            <sc-if value="{{ d.tests.open }}" hint-placeholder-val="{{ true }}">
+              <button type="button" style="position: relative; display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 42px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+                <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">test_loader.py</span>
+                <span aria-hidden="true" title="已修改" style="flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; line-height: 16px; padding: 0 5px; border-radius: 4px; background: #3A2A12; color: #F7C47E;">M</span>
+                <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;">已修改</span>
+              </button>
+              <button type="button" style="position: relative; display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 42px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+                <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">test_loader_mem.py</span>
+                <span aria-hidden="true" title="未跟踪" style="flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; line-height: 16px; padding: 0 5px; border-radius: 4px; background: rgba(60,200,180,0.12); color: #7FE0D2;">U</span>
+                <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;">未跟踪</span>
+              </button>
+            </sc-if>
+
+            <button type="button" style="display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 8px 0 26px; background: transparent; border: 0; border-radius: 4px; color: #C9CFD9; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+              <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">.gitignore</span>
+            </button>
+            <button type="button" onClick="{{ f.readme.pick }}" aria-current="{{ f.readme.current }}" style="{{ f.readme.style }}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+              <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">README.md</span>
+            </button>
+            <button type="button" onClick="{{ f.pyproject.pick }}" aria-current="{{ f.pyproject.current }}" style="{{ f.pyproject.style }}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A93A3" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+              <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">pyproject.toml</span>
+            </button>
+          </div>
+
+          <div style="flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 8px 12px; border-top: 1px solid #262C37; font-size: 11px; color: #8A93A3;">
+            <span>{{ ignoredNote }}</span>
+            <a href="Git.dc.html" style="font-size: 11px;">3 个文件有变更</a>
+          </div>
+        </section>
+
+        <section aria-label="文件内容" style="flex: 999 1 560px; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #0E1014;">
+          <div style="flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; padding: 10px 16px; border-bottom: 1px solid #262C37;">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 30px;">
+              <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6AA6FF" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M6 3h8l4 4v14H6V3z"></path><path d="M14 3v4h4"></path></svg>
+                <nav aria-label="文件路径" style="display: flex; align-items: center; gap: 6px; min-width: 0; font-family: 'JetBrains Mono', monospace; font-size: 13px;">
+                  <sc-for list="{{ crumbs }}" as="seg" hint-placeholder-count="3">
+                    <sc-if value="{{ seg.showSep }}" hint-placeholder-val="{{ true }}">
+                      <span aria-hidden="true" style="color: #8A93A3;">/</span>
+                    </sc-if>
+                    <span style="{{ seg.style }}">{{ seg.name }}</span>
+                  </sc-for>
+                </nav>
+                <span title="文件浏览为只读；单文件预览上限 2 MB" style="flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border: 1px solid #262C37; border-radius: 4px; font-size: 11px; color: #8A93A3;">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>
+                  只读
+                </span>
+              </div>
+              <div style="flex: 1;"></div>
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+                <a href="Main.dc.html" title="{{ mentionTitle }}" style="display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12px; box-sizing: border-box;">
+                  <span aria-hidden="true" style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; color: #6AA6FF;">@</span>
+                  在对话中引用
+                </a>
+                <button type="button" onClick="{{ copyPath }}" title="{{ fullPath }}" style="display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12px; font-family: inherit; cursor: pointer;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h8"></path></svg>
+                  <span aria-live="polite">{{ copyLabel }}</span>
+                </button>
+                <button type="button" style="display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; background: #191D25; border: 1px solid #262C37; border-radius: 6px; color: #E7E9EE; font-size: 12px; font-family: inherit; cursor: pointer;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#A9B1BE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg>
+                  下载
+                </button>
+              </div>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 24px; font-size: 12px; color: #8A93A3;">
+              <span>{{ metaText }}</span>
+              <sc-if value="{{ isLoader }}" hint-placeholder-val="{{ true }}">
+                <span style="display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px; border-radius: 4px; background: #241D12; border: 1px solid #5A4220; color: #F7C47E; font-size: 11px; font-weight: 600; box-sizing: border-box;">
+                  <span style="font-family: 'JetBrains Mono', monospace;">M</span>
+                  已修改，未暂存
+                </span>
+                <a href="Git.dc.html" style="font-size: 12px;">查看 diff</a>
+              </sc-if>
+              <div style="flex: 1;"></div>
+              <sc-if value="{{ isReadme }}" hint-placeholder-val="{{ false }}">
+                <div role="group" aria-label="README 显示方式" style="display: flex; gap: 2px; padding: 2px; border: 1px solid #262C37; border-radius: 6px; background: #13161C;">
+                  <button type="button" onClick="{{ showPreview }}" aria-pressed="{{ previewPressed }}" style="{{ previewStyle }}">预览</button>
+                  <button type="button" onClick="{{ showSource }}" aria-pressed="{{ sourcePressed }}" style="{{ sourceStyle }}">源码</button>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+
+          <div style="flex: 1; min-height: 0; display: flex; flex-direction: column; background: #0B0D11;">
+
+            <sc-if value="{{ isLoader }}" hint-placeholder-val="{{ true }}">
+              <pre style="flex: 1; min-height: 0; margin: 0; overflow: auto; display: flex; align-items: flex-start; background: #0B0D11; font-size: 12.5px; line-height: 20px; color: #C9CFD9; white-space: pre;"><span aria-hidden="true" style="position: sticky; left: 0; flex-shrink: 0; min-height: 100%; box-sizing: border-box; padding: 12px 12px 12px 16px; text-align: right; color: #8A93A3; background: #0B0D11; border-right: 1px solid #262C37; user-select: none;">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36</span><code style="flex: 1 0 auto; display: block; padding: 12px 16px; font-size: inherit;"><span style="color: #C792EA;">import</span> bisect
+<span style="color: #C792EA;">from</span> pathlib <span style="color: #C792EA;">import</span> Path
+
+<span style="color: #C792EA;">import</span> torch
+<span style="color: #C792EA;">from</span> cachetools <span style="color: #C792EA;">import</span> LRUCache
+<span style="color: #C792EA;">from</span> torch.utils.data <span style="color: #C792EA;">import</span> Dataset
+
+<span style="color: #C792EA;">from</span> .index <span style="color: #C792EA;">import</span> read_offsets
+
+
+<span style="color: #C792EA;">class</span> <span style="color: #82AAFF;">ShardedTextDataset</span>(Dataset):
+    <span style="color: #7FE0D2;">"""按分片读取 token，只缓存最近使用的分片。"""</span>
+
+    <span style="color: #C792EA;">def</span> <span style="color: #82AAFF;">__init__</span>(self, shards, tokenizer, seq_len=<span style="color: #F7C47E;">2048</span>, cache_shards=<span style="color: #F7C47E;">4</span>):
+        self.shards = [<span style="color: #82AAFF;">Path</span>(p) <span style="color: #C792EA;">for</span> p <span style="color: #C792EA;">in</span> shards]
+        self.tokenizer = tokenizer
+        self.seq_len = seq_len
+        <span style="color: #8A93A3;"># 每个 worker 最多保留 cache_shards 个分片，内存不再随 epoch 增长</span>
+        self._cache = <span style="color: #82AAFF;">LRUCache</span>(maxsize=cache_shards)
+        self._cache_shards = cache_shards
+        self._offsets = <span style="color: #82AAFF;">read_offsets</span>(self.shards, seq_len)
+
+    <span style="color: #C792EA;">def</span> <span style="color: #82AAFF;">__len__</span>(self):
+        <span style="color: #C792EA;">return</span> self._offsets[-<span style="color: #F7C47E;">1</span>]
+
+    <span style="color: #C792EA;">def</span> <span style="color: #82AAFF;">__getitem__</span>(self, idx):
+        shard_id = self.<span style="color: #82AAFF;">_shard_of</span>(idx)
+        shard = self._cache.<span style="color: #82AAFF;">get</span>(shard_id)
+        <span style="color: #C792EA;">if</span> shard <span style="color: #C792EA;">is</span> <span style="color: #C792EA;">None</span>:
+            shard = torch.<span style="color: #82AAFF;">load</span>(self.shards[shard_id], mmap=<span style="color: #C792EA;">True</span>)
+            self._cache[shard_id] = shard
+        start = (idx - self._offsets[shard_id]) * self.seq_len
+        <span style="color: #C792EA;">return</span> shard[start : start + self.seq_len]
+
+    <span style="color: #C792EA;">def</span> <span style="color: #82AAFF;">_shard_of</span>(self, idx):
+        <span style="color: #C792EA;">return</span> bisect.<span style="color: #82AAFF;">bisect_right</span>(self._offsets, idx) - <span style="color: #F7C47E;">1</span></code></pre>
+            </sc-if>
+
+            <sc-if value="{{ isTrain }}" hint-placeholder-val="{{ false }}">
+              <pre style="flex: 1; min-height: 0; margin: 0; overflow: auto; display: flex; align-items: flex-start; background: #0B0D11; font-size: 12.5px; line-height: 20px; color: #C9CFD9; white-space: pre;"><span aria-hidden="true" style="position: sticky; left: 0; flex-shrink: 0; min-height: 100%; box-sizing: border-box; padding: 12px 12px 12px 16px; text-align: right; color: #8A93A3; background: #0B0D11; border-right: 1px solid #262C37; user-select: none;">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25</span><code style="flex: 1 0 auto; display: block; padding: 12px 16px; font-size: inherit;"><span style="color: #C792EA;">import</span> argparse
+
+<span style="color: #C792EA;">import</span> yaml
+<span style="color: #C792EA;">from</span> torch.utils.data <span style="color: #C792EA;">import</span> DataLoader
+
+<span style="color: #C792EA;">from</span> data.loader <span style="color: #C792EA;">import</span> ShardedTextDataset
+<span style="color: #C792EA;">from</span> models <span style="color: #C792EA;">import</span> build_model, load_tokenizer
+
+
+<span style="color: #C792EA;">def</span> <span style="color: #82AAFF;">main</span>():
+    parser = argparse.<span style="color: #82AAFF;">ArgumentParser</span>()
+    parser.<span style="color: #82AAFF;">add_argument</span>(<span style="color: #7FE0D2;">"--config"</span>, default=<span style="color: #7FE0D2;">"configs/train.yaml"</span>)
+    args = parser.<span style="color: #82AAFF;">parse_args</span>()
+    <span style="color: #C792EA;">with</span> <span style="color: #82AAFF;">open</span>(args.config) <span style="color: #C792EA;">as</span> f:
+        cfg = yaml.<span style="color: #82AAFF;">safe_load</span>(f)
+
+    tokenizer = <span style="color: #82AAFF;">load_tokenizer</span>(cfg[<span style="color: #7FE0D2;">"tokenizer"</span>])
+    dataset = <span style="color: #82AAFF;">ShardedTextDataset</span>(tokenizer=tokenizer, **cfg[<span style="color: #7FE0D2;">"data"</span>])
+    loader = <span style="color: #82AAFF;">DataLoader</span>(dataset, batch_size=cfg[<span style="color: #7FE0D2;">"batch_size"</span>], num_workers=<span style="color: #F7C47E;">4</span>)
+    model = <span style="color: #82AAFF;">build_model</span>(cfg[<span style="color: #7FE0D2;">"model"</span>])
+    model.<span style="color: #82AAFF;">fit</span>(loader, epochs=cfg[<span style="color: #7FE0D2;">"epochs"</span>])
+
+
+<span style="color: #C792EA;">if</span> __name__ == <span style="color: #7FE0D2;">"__main__"</span>:
+    <span style="color: #82AAFF;">main</span>()</code></pre>
+            </sc-if>
+
+            <sc-if value="{{ isPyproject }}" hint-placeholder-val="{{ false }}">
+              <pre style="flex: 1; min-height: 0; margin: 0; overflow: auto; display: flex; align-items: flex-start; background: #0B0D11; font-size: 12.5px; line-height: 20px; color: #C9CFD9; white-space: pre;"><span aria-hidden="true" style="position: sticky; left: 0; flex-shrink: 0; min-height: 100%; box-sizing: border-box; padding: 12px 12px 12px 16px; text-align: right; color: #8A93A3; background: #0B0D11; border-right: 1px solid #262C37; user-select: none;">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29</span><code style="flex: 1 0 auto; display: block; padding: 12px 16px; font-size: inherit;"><span style="color: #C792EA;">[build-system]</span>
+<span style="color: #82AAFF;">requires</span> = [<span style="color: #7FE0D2;">"setuptools&gt;=69"</span>]
+<span style="color: #82AAFF;">build-backend</span> = <span style="color: #7FE0D2;">"setuptools.build_meta"</span>
+
+<span style="color: #C792EA;">[project]</span>
+<span style="color: #82AAFF;">name</span> = <span style="color: #7FE0D2;">"llm-train"</span>
+<span style="color: #82AAFF;">version</span> = <span style="color: #7FE0D2;">"0.3.0"</span>
+<span style="color: #82AAFF;">requires-python</span> = <span style="color: #7FE0D2;">"&gt;=3.10"</span>
+<span style="color: #82AAFF;">dependencies</span> = [
+    <span style="color: #7FE0D2;">"torch&gt;=2.4"</span>,
+    <span style="color: #7FE0D2;">"cachetools&gt;=5.3"</span>,
+    <span style="color: #7FE0D2;">"pyyaml&gt;=6.0"</span>,
+]
+
+<span style="color: #C792EA;">[project.optional-dependencies]</span>
+<span style="color: #8A93A3;"># 安装开发依赖：pip install -e ".[dev]"</span>
+<span style="color: #82AAFF;">dev</span> = [<span style="color: #7FE0D2;">"pytest&gt;=8.0"</span>, <span style="color: #7FE0D2;">"ruff&gt;=0.6"</span>]
+
+<span style="color: #C792EA;">[tool.setuptools]</span>
+<span style="color: #82AAFF;">package-dir</span> = { <span style="color: #7FE0D2;">""</span> = <span style="color: #7FE0D2;">"src"</span> }
+<span style="color: #82AAFF;">packages</span> = [<span style="color: #7FE0D2;">"data"</span>, <span style="color: #7FE0D2;">"models"</span>]
+<span style="color: #82AAFF;">py-modules</span> = [<span style="color: #7FE0D2;">"train"</span>]
+
+<span style="color: #C792EA;">[tool.pytest.ini_options]</span>
+<span style="color: #82AAFF;">testpaths</span> = [<span style="color: #7FE0D2;">"tests"</span>]
+<span style="color: #82AAFF;">pythonpath</span> = [<span style="color: #7FE0D2;">"src"</span>]
+
+<span style="color: #C792EA;">[tool.ruff]</span>
+<span style="color: #82AAFF;">line-length</span> = <span style="color: #F7C47E;">100</span></code></pre>
+            </sc-if>
+
+            <sc-if value="{{ readmeSource }}" hint-placeholder-val="{{ false }}">
+              <pre style="flex: 1; min-height: 0; margin: 0; overflow: auto; display: flex; align-items: flex-start; background: #0B0D11; font-size: 12.5px; line-height: 20px; color: #C9CFD9; white-space: pre;"><span aria-hidden="true" style="position: sticky; left: 0; flex-shrink: 0; min-height: 100%; box-sizing: border-box; padding: 12px 12px 12px 16px; text-align: right; color: #8A93A3; background: #0B0D11; border-right: 1px solid #262C37; user-select: none;">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18</span><code style="flex: 1 0 auto; display: block; padding: 12px 16px; font-size: inherit;"><span style="color: #82AAFF; font-weight: 600;"># llm-train</span>
+
+基于 PyTorch 的语言模型训练代码。训练数据按分片存放在 <span style="color: #7FE0D2;">`/data/shards`</span>，
+超参数集中在 <span style="color: #7FE0D2;">`configs/`</span>。
+
+<span style="color: #82AAFF; font-weight: 600;">## 快速开始</span>
+
+<span style="color: #8A93A3;">```bash</span>
+pip install -e .
+python -m train --config configs/train.yaml
+<span style="color: #8A93A3;">```</span>
+
+<span style="color: #82AAFF; font-weight: 600;">## 目录结构</span>
+
+<span style="color: #F7C47E;">-</span> <span style="color: #7FE0D2;">`src/data/`</span>：分片数据集，按分片 LRU 缓存
+<span style="color: #F7C47E;">-</span> <span style="color: #7FE0D2;">`src/models/`</span>：模型定义与 tokenizer
+<span style="color: #F7C47E;">-</span> <span style="color: #7FE0D2;">`configs/`</span>：训练与评测配置
+<span style="color: #F7C47E;">-</span> <span style="color: #7FE0D2;">`tests/`</span>：单元测试，运行 <span style="color: #7FE0D2;">`pytest tests/ -q`</span></code></pre>
+            </sc-if>
+
+            <sc-if value="{{ readmePreview }}" hint-placeholder-val="{{ false }}">
+              <div style="flex: 1; min-height: 0; overflow-y: auto; padding: 24px 32px; background: #0E1014;">
+                <article aria-label="README.md 预览" style="max-width: 760px; display: flex; flex-direction: column; gap: 14px; font-size: 14px; line-height: 1.7; color: #C9CFD9;">
+                  <h1 style="margin: 0; padding-bottom: 10px; border-bottom: 1px solid #262C37; font-size: 20px; font-weight: 600; line-height: 1.4; color: #E7E9EE;">llm-train</h1>
+                  <p style="margin: 0;">基于 PyTorch 的语言模型训练代码。训练数据按分片存放在 <code style="font-size: 12.5px; padding: 1px 5px; border-radius: 4px; background: #1A1E26; color: #E7E9EE;">/data/shards</code>，超参数集中在 <code style="font-size: 12.5px; padding: 1px 5px; border-radius: 4px; background: #1A1E26; color: #E7E9EE;">configs/</code>。</p>
+                  <h2 style="margin: 0; padding-top: 6px; font-size: 16px; font-weight: 600; line-height: 1.4; color: #E7E9EE;">快速开始</h2>
+                  <pre style="margin: 0; padding: 12px 14px; background: #0B0D11; border: 1px solid #262C37; border-radius: 8px; font-size: 12.5px; line-height: 1.6; color: #C9CFD9; white-space: pre; overflow-x: auto;">pip install -e .
+python -m train --config configs/train.yaml</pre>
+                  <h2 style="margin: 0; padding-top: 6px; font-size: 16px; font-weight: 600; line-height: 1.4; color: #E7E9EE;">目录结构</h2>
+                  <ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px;">
+                    <li><code style="font-size: 12.5px; padding: 1px 5px; border-radius: 4px; background: #1A1E26; color: #E7E9EE;">src/data/</code>：分片数据集，按分片 LRU 缓存</li>
+                    <li><code style="font-size: 12.5px; padding: 1px 5px; border-radius: 4px; background: #1A1E26; color: #E7E9EE;">src/models/</code>：模型定义与 tokenizer</li>
+                    <li><code style="font-size: 12.5px; padding: 1px 5px; border-radius: 4px; background: #1A1E26; color: #E7E9EE;">configs/</code>：训练与评测配置</li>
+                    <li><code style="font-size: 12.5px; padding: 1px 5px; border-radius: 4px; background: #1A1E26; color: #E7E9EE;">tests/</code>：单元测试，运行 <code style="font-size: 12.5px; padding: 1px 5px; border-radius: 4px; background: #1A1E26; color: #E7E9EE;">pytest tests/ -q</code></li>
+                  </ul>
+                </article>
+              </div>
+            </sc-if>
+
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      file: 'loader',
+      mdMode: 'preview',
+      hideIgnored: true,
+      copied: false,
+      open: { pi: false, configs: false, src: true, data: true, models: false, tests: true }
+    };
+  }
+  renderVals() {
+    const s = this.state;
+    const files = {
+      loader: { segs: ['src', 'data', 'loader.py'], path: 'src/data/loader.py', meta: 'Python · 36 行 · 1.3 KB · UTF-8 · 修改于 5 分钟前' },
+      readme: { segs: ['README.md'], path: 'README.md', meta: 'Markdown · 18 行 · 0.6 KB · UTF-8 · 修改于 3 天前' },
+      pyproject: { segs: ['pyproject.toml'], path: 'pyproject.toml', meta: 'TOML · 29 行 · 0.6 KB · UTF-8 · 修改于 2 周前' },
+      train: { segs: ['src', 'train.py'], path: 'src/train.py', meta: 'Python · 25 行 · 0.8 KB · UTF-8 · 修改于 3 天前' }
+    };
+    const cur = files[s.file];
+    const last = cur.segs.length - 1;
+    const crumbs = cur.segs.map((name, i) => ({
+      name: name,
+      showSep: i > 0,
+      style: i === last ? 'color: #E7E9EE; font-weight: 600; white-space: nowrap;' : 'color: #A9B1BE; white-space: nowrap;'
+    }));
+
+    const rowBase = 'position: relative; display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding-right: 8px; border: 0; border-radius: 4px; font-size: 13px; font-family: inherit; cursor: pointer; text-align: left; box-sizing: border-box; ';
+    const fileRow = (key, pad) => {
+      const on = s.file === key;
+      return {
+        style: rowBase + 'padding-left: ' + pad + 'px; ' + (on ? 'background: #1F2A3D; color: #E7E9EE; font-weight: 500;' : 'background: transparent; color: #C9CFD9;'),
+        current: on ? 'true' : 'false',
+        pick: () => this.setState({ file: key, copied: false })
+      };
+    };
+    const dir = (key) => {
+      const isOpen = !!s.open[key];
+      return {
+        open: isOpen,
+        expanded: isOpen ? 'true' : 'false',
+        chev: 'flex-shrink: 0; transition: transform 0.12s; transform: rotate(' + (isOpen ? '0' : '-90') + 'deg);',
+        toggle: () => {
+          const next = Object.assign({}, s.open);
+          next[key] = !isOpen;
+          this.setState({ open: next });
+        }
+      };
+    };
+
+    const segBtn = (on) => 'height: 24px; padding: 0 10px; border: 0; border-radius: 4px; font-size: 12px; font-family: inherit; cursor: pointer; ' + (on ? 'background: #1F2A3D; color: #E7E9EE; font-weight: 600;' : 'background: transparent; color: #A9B1BE;');
+    const isReadme = s.file === 'readme';
+    const preview = s.mdMode === 'preview';
+
+    return {
+      f: {
+        loader: fileRow('loader', 58),
+        train: fileRow('train', 42),
+        readme: fileRow('readme', 26),
+        pyproject: fileRow('pyproject', 26)
+      },
+      d: {
+        pi: dir('pi'),
+        configs: dir('configs'),
+        src: dir('src'),
+        data: dir('data'),
+        models: dir('models'),
+        tests: dir('tests')
+      },
+      crumbs: crumbs,
+      metaText: cur.meta,
+      fullPath: '/home/dev/projects/llm-train/' + cur.path,
+      mentionTitle: '在输入框插入 @' + cur.path,
+      copyLabel: s.copied ? '已复制' : '复制路径',
+      copyPath: () => this.setState({ copied: true }),
+      isLoader: s.file === 'loader',
+      isTrain: s.file === 'train',
+      isPyproject: s.file === 'pyproject',
+      isReadme: isReadme,
+      readmePreview: isReadme && preview,
+      readmeSource: isReadme && !preview,
+      previewPressed: preview ? 'true' : 'false',
+      sourcePressed: preview ? 'false' : 'true',
+      previewStyle: segBtn(preview),
+      sourceStyle: segBtn(!preview),
+      showPreview: () => this.setState({ mdMode: 'preview' }),
+      showSource: () => this.setState({ mdMode: 'source' }),
+      hideIgnored: s.hideIgnored,
+      showIgnored: !s.hideIgnored,
+      toggleIgnored: () => this.setState({ hideIgnored: !s.hideIgnored }),
+      ignoredNote: s.hideIgnored ? '已隐藏 3 项被 .gitignore 忽略的文件' : '正在显示 3 项被 .gitignore 忽略的文件'
+    };
+  }
+}
+</script>
+</body>
+</html>
