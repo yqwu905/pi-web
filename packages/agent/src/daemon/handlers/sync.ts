@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import type { Dirent, Stats } from "node:fs";
 import { chmod, copyFile, cp, lstat, mkdir, readdir, readlink, realpath, rename, rm, rmdir, symlink, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, resolve } from "node:path";
@@ -292,11 +292,30 @@ function sanitizeLabel(label: unknown): string {
 	return cleaned.slice(0, 100) || `sync-${Date.now()}`;
 }
 
-function extractTarGz(archive: string, dest: string): Promise<void> {
+const TAR_STDERR_TAIL = 16 * 1024;
+
+/**
+ * Extracts with the system tar. `-m` keeps extraction time as mtime: archive mtimes come from
+ * the host, and a host clock ahead of the server makes GNU tar warn once per file ("time stamp
+ * … in the future"). Content is verified by sha256 afterwards, so mtimes carry no meaning here.
+ * Success is decided by the exit code; stderr is only kept as a bounded tail for the error message.
+ */
+export function extractTarGz(archive: string, dest: string, tarCommand = "tar"): Promise<void> {
 	return new Promise((resolvePromise, reject) => {
-		execFile("tar", ["-xzf", archive, "-C", dest, "--no-same-owner"], { maxBuffer: 1024 * 1024 }, (err, _stdout, stderr) => {
-			if (err) reject(new AgentError("EXTRACT_FAILED", `解压同步归档失败：${String(stderr).trim() || err.message}`));
-			else resolvePromise();
+		const child = spawn(tarCommand, ["-xzmf", archive, "-C", dest, "--no-same-owner"], { stdio: ["ignore", "ignore", "pipe"] });
+		let tail = "";
+		child.stderr.setEncoding("utf8");
+		child.stderr.on("data", (chunk: string) => {
+			tail = (tail + chunk).slice(-TAR_STDERR_TAIL);
+		});
+		child.on("error", (err) => reject(new AgentError("EXTRACT_FAILED", `解压同步归档失败：${err.message}`)));
+		child.on("close", (code, signal) => {
+			if (code === 0) {
+				resolvePromise();
+				return;
+			}
+			const detail = tail.trim() || (signal ? `tar 被信号 ${signal} 终止` : `tar 退出码 ${code}`);
+			reject(new AgentError("EXTRACT_FAILED", `解压同步归档失败：${detail}`));
 		});
 	});
 }

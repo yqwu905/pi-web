@@ -1,11 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readFile, readlink, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readlink, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SyncApplyParams } from "@pi-web/shared";
 import { ensureRemoteDirs, type RemotePaths, remotePaths } from "../src/daemon/paths.js";
-import { isExcluded, SyncHandler } from "../src/daemon/handlers/sync.js";
+import { extractTarGz, isExcluded, SyncHandler } from "../src/daemon/handlers/sync.js";
 import { cleanupTempDirs, tempDir } from "./helpers.js";
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -22,13 +22,15 @@ async function put(rel: string, content: string): Promise<void> {
 }
 
 /** Builds a tar.gz with the given files (relative paths) the way the host does. */
-async function archive(files: Record<string, string | { link: string }>): Promise<string> {
+async function archive(files: Record<string, string | { link: string }>, options?: { mtime?: Date }): Promise<string> {
 	const src = await tempDir("pwa-src-");
 	for (const [rel, content] of Object.entries(files)) {
 		const file = join(src, rel);
 		await mkdir(dirname(file), { recursive: true });
-		if (typeof content === "string") await writeFile(file, content);
-		else await symlink(content.link, file);
+		if (typeof content === "string") {
+			await writeFile(file, content);
+			if (options?.mtime) await utimes(file, options.mtime, options.mtime);
+		} else await symlink(content.link, file);
 	}
 	const out = join(paths.incomingDir, `${Math.random().toString(16).slice(2)}.tar.gz`);
 	execFileSync("tar", ["-czf", out, "-C", src, ...Object.keys(files)]);
@@ -289,5 +291,41 @@ describe("sync.apply", () => {
 		expect(result.backupDir).toBe(join(shared, ".pi-web-backup", "shared"));
 		expect(await readFile(join(shared, ".pi-web-backup", "shared", "auth.json"), "utf8")).toBe('{"real":"refresh"}');
 		await expect(stat(join(paths.backupDir, "shared"))).rejects.toThrow();
+	});
+});
+
+describe("archive extraction", () => {
+	it("applies archives whose mtimes are ahead of the server clock (host clock skew)", async () => {
+		const future = new Date(Date.now() + 24 * 3600_000);
+		const files: Record<string, string> = {};
+		for (let i = 0; i < 50; i++) files[`extensions/skew/f${i}.ts`] = `export const v = ${i};\n`;
+		const archivePath = await archive(files, { mtime: future });
+		const result = await sync.apply({
+			archivePath,
+			writes: Object.entries(files).map(([path, content]) => ({ path, sha256: sha(content) })),
+			deletes: [],
+			backupLabel: "skew",
+		});
+		expect(result.errors).toEqual([]);
+		expect(result.written).toBe(50);
+		// Extraction time is used as mtime, not the host's future timestamp.
+		expect((await stat(join(agentDir, "extensions/skew/f0.ts"))).mtimeMs).toBeLessThan(future.getTime() - 3600_000);
+	});
+
+	it("decides by tar's exit code, however much it writes to stderr", async () => {
+		const dir = await tempDir("pwa-faketar-");
+		const ok = join(dir, "tar-ok");
+		const fail = join(dir, "tar-fail");
+		// > 2 MiB of warnings, like GNU tar's per-file "time stamp ... in the future" lines.
+		const noisy = 'i=0; while [ $i -lt 40000 ]; do echo "tar: some/file-$i: time stamp is 54 s in the future" >&2; i=$((i+1)); done';
+		await writeFile(ok, `#!/bin/sh\n${noisy}\nexit 0\n`);
+		await writeFile(fail, `#!/bin/sh\n${noisy}\necho "tar: Unexpected EOF in archive" >&2\nexit 2\n`);
+		await chmod(ok, 0o755);
+		await chmod(fail, 0o755);
+		await expect(extractTarGz("/dev/null", dir, ok)).resolves.toBeUndefined();
+		await expect(extractTarGz("/dev/null", dir, fail)).rejects.toMatchObject({
+			code: "EXTRACT_FAILED",
+			message: expect.stringContaining("Unexpected EOF in archive"),
+		});
 	});
 });
