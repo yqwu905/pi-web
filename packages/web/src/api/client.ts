@@ -20,6 +20,7 @@ import type {
 	ConversationRpcResponse,
 	ConversationSnapshot,
 	ConversationUiResponseRequest,
+	ConversationUiResponseResult,
 	ConversationView,
 	ConvReplayResult,
 	CreateServerRequest,
@@ -298,7 +299,7 @@ export const getConversationSnapshot = (convId: string, signal?: AbortSignal) =>
 export const conversationRpc = (convId: string, req: ConversationRpcRequest) =>
 	post<ConversationRpcResponse & { seq?: number }>(`/conversations/${enc(convId)}/rpc`, req);
 export const conversationUiResponse = (convId: string, req: ConversationUiResponseRequest) =>
-	post<Ok>(`/conversations/${enc(convId)}/ui-response`, req);
+	post<ConversationUiResponseResult>(`/conversations/${enc(convId)}/ui-response`, req);
 export const navigateConversation = (convId: string, req: NavigateRequest) =>
 	post<CompanionActionResponse>(`/conversations/${enc(convId)}/navigate`, req);
 export const labelConversationEntry = (convId: string, req: LabelRequest) =>

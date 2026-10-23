@@ -109,7 +109,7 @@ R/trash/sessions/
   - 返回 `{...response, seq: 读到 response 时的 lastSeq}`。
   - new_session、switch_session、fork、clone 成功后：重新 `get_state`，更新 sessionFile 索引，并转发一条 `pi_web_session_changed` 记录。
 - `conv.snapshot`：在总预算 `CONV_SNAPSHOT_TIMEOUT_MS`（120s）内依次 `get_state`、`get_messages`（**记录此 response 被读到时的 seq 和 tracker 状态**）、`get_session_stats`（失败可忽略）。组装并返回 ConvSnapshot：runningTools 取 tracker.tools 中 status==="running" 的项。
-- `conv.uiResponse`：写入 stdin，从 pendingUi 中移除，转发 `pi_web_ui_resolved`，重新计算状态。
+- `conv.uiResponse`：写入 stdin，从 pendingUi 中移除，转发 `pi_web_ui_resolved`，重新计算状态；返回 `delivered`：对话框已不在 pendingUi（已被回答）或已过 pi 的 timeout 时为 false。
 - `conv.companion`：
   - 生成 reqId，发送 prompt `/pi-web-<action> <JSON.stringify({reqId,...args})>`。扩展命令在 streaming 期间也会立即执行。
   - 等待 setStatus(`pi-web:result`) 中 reqId 匹配的 JSON；navigate 和 reload（先等待 pi 空闲）的总超时为 10 分钟，label 为 60s（`companionActionTimeout`，包括首次的 get_commands 检查）。
@@ -486,6 +486,8 @@ logs/pi-web.log
     - pending 对话框以模态呈现，有 timeout 时显示倒计时：截止时间从 pi 发出请求时算起（实时事件到达时记录；快照带 agent 计算的 `uiRemainingMs`），到 0 后禁用回答按钮；
     - confirm 默认聚焦“拒绝”，对话框出现后 400ms 内的确认操作被忽略（防止原本给输入框的 Enter 误点“允许”）；
     - 回答请求失败时把对话框放回并重新同步（pi 仍在等待）；
+    - 标题可以多行（如 rpiv-ask-user-question 把选项列表、预览拼进标题）：第一个非空行作为标题，其余部分以等宽字体、保留换行和缩进显示在标题下方（最多 30vh，可滚动），并作为对话框的 aria 描述（`logic/dialog-title.ts`）；
+    - 自定义回答：问答类扩展在 RPC 模式下常用 `select(问题, [...选项, "Type something."])`，选中后再用 `input()`/`editor()` 要文字。select 含这类选项（`logic/free-answer.ts` 的 `isFreeInputOption`：Type something / Other / Custom / Something else / 自定义 / 其他 / 输入… 等，以及 rpiv-ask-user-question 各语言的“Type something.”（如“输入内容”），忽略大小写和前面的编号、符号）时，高亮该选项会在它下方显示“自定义回答”输入框（点击或方向键选中即聚焦，在选项列表里直接打字会跳到输入框，Esc 回到列表；对话框出现后 400ms 内的按键及紧随其后的连续按键被忽略，防止原本给输入框的文字变成回答）。带文字提交时，先用该选项的原文回答 select，同时为本对话登记一个待用回答（`decideAutoAnswer`）：同一对话之后新到的第一个请求若是 input/editor 且在 60 秒内，就直接用这段文字回答、不显示对话框（不受 400ms 限制；已被其他标签页回答或已超时的不答）；若它是别的对话框或 60 秒内没有请求，就丢弃并提示“扩展没有请求文字输入，你输入的内容未被使用”。select 的回答未送达 pi（`delivered: false`，如已在其他标签页回答）时也丢弃并提示。空文字提交与普通选择相同；提交失败时对话框连同已输入的文字一起放回；
     - notify 显示为 toast；
   - 流式渲染：message_update / tool_execution_update 立即应用到状态，但每帧最多通知一次；正在生成的回复的 Markdown 最多每 120ms 重新解析；write/edit 参数生成期间只显示纯文本尾部，参数完整后才高亮和计算 diff；大参数的部分 JSON 在增长超过 1/16 后才重新解析；
   - 只读 ↔ 实时切换时保留消息：进程退出后在会话文件加载完成前显示最后的实时状态，恢复会话时在快照到达前显示会话文件内容；
@@ -579,7 +581,7 @@ GET    /conversations                          → { conversations: Conversation
 POST   /workspaces/:wsId/conversations OpenConversationRequest → ConversationView
 GET    /conversations/:convId/snapshot         → ConversationSnapshot
 POST   /conversations/:convId/rpc ConversationRpcRequest → RpcResponse (& seq)
-POST   /conversations/:convId/ui-response ConversationUiResponseRequest → { ok: true }
+POST   /conversations/:convId/ui-response ConversationUiResponseRequest → { ok: true, delivered }
 POST   /conversations/:convId/navigate NavigateRequest → CompanionActionResponse
 POST   /conversations/:convId/label LabelRequest → CompanionActionResponse
 POST   /conversations/:convId/reload           → CompanionActionResponse
@@ -614,4 +616,4 @@ WebSocket：`/ws`（话题见 `api.ts`，含归档变化的 `sessions`），`/ws
 
 以上流程已自动化为 API 级 E2E：`npm run build && npm run e2e:api`（`e2e/api-e2e.mjs`，需 root + OpenSSH；`E2E_KEEP=1` 保留临时目录，`E2E_VERBOSE=1` 打印全部事件）。它像浏览器一样驱动 REST + `/ws` + `/ws/term`，并额外覆盖扩展对话框（ui-response）、提示模板/技能展开、write 工具、abort、归档会话（列表标记、运行中 409、恢复、删除时清除记录、断开连接时归档）、Pi-Web 重启后的事件补发与卸载。
 
-浏览器 E2E：`npm run build && npm run e2e:ui`（`e2e/ui-e2e.mjs`，与 API E2E 共用 `e2e/lib/env.mjs` 中的环境：sshd fixture、mock LLM、Host agent 目录、数据目录）。用 Playwright 驱动 Chromium（1440×960）走完添加服务器向导（连接 → 主机指纹 → 探测 → 离线部署 → 同步）、新建工作区（目录选择器 + 新建文件夹）、对话（流式回复、bash 工具卡片、信息面板、会话树与标签、模型/思考选择、`/` 补全与提示模板、刷新恢复、离开再返回）、归档（侧栏归档、已归档分组、打开归档会话、发送时自动恢复）、文件/Git/终端、同步中心（预览、手动同步）、全局设置、服务器设置，以及断开/重连。每一步截图到 `e2e/screenshots/`，出现页面异常、未预期的 console.error、失败的 `/api` 请求或整页滚动即判失败。需要全局或本地安装的 `playwright` 包与 `PLAYWRIGHT_BROWSERS_PATH` 下的 Chromium；`E2E_HOLD=1` 在结束后保留环境便于手动调试。
+浏览器 E2E：`npm run build && npm run e2e:ui`（`e2e/ui-e2e.mjs`，与 API E2E 共用 `e2e/lib/env.mjs` 中的环境：sshd fixture、mock LLM、Host agent 目录、数据目录）。用 Playwright 驱动 Chromium（1440×960）走完添加服务器向导（连接 → 主机指纹 → 探测 → 离线部署 → 同步）、新建工作区（目录选择器 + 新建文件夹）、对话（流式回复、bash 工具卡片、信息面板、会话树与标签、模型/思考选择、`/` 补全与提示模板、刷新恢复、离开再返回）、扩展对话框（在 select 的选项列表里直接输入自定义回答、普通选项、空回答后由扩展自己的 input 询问、打开时仍在输入的按键被忽略、提交失败后带文字放回、扩展随后不要文字时丢弃并提示，以及按 rpiv-ask-user-question 的 RPC 格式提问时的多行标题、直接输入和它自己的 input）、归档（侧栏归档、已归档分组、打开归档会话、发送时自动恢复）、文件/Git/终端、同步中心（预览、手动同步）、全局设置、服务器设置，以及断开/重连。每一步截图到 `e2e/screenshots/`，出现页面异常、未预期的 console.error、失败的 `/api` 请求或整页滚动即判失败。需要全局或本地安装的 `playwright` 包与 `PLAYWRIGHT_BROWSERS_PATH` 下的 Chromium；`E2E_HOLD=1` 在结束后保留环境便于手动调试。

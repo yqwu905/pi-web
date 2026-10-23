@@ -1,6 +1,7 @@
 import type {
 	CompanionActionResponse,
 	ConversationSnapshot,
+	ConversationUiResponseResult,
 	ConversationView,
 	ConvReplayResult,
 	ExtensionUIResponse,
@@ -81,9 +82,9 @@ export function conversationRoutes(app: FastifyInstance, ctx: AppContext): void 
 		return conversations().rpc(request.params.convId, command as unknown as RpcCommand, timeoutMs);
 	});
 
-	app.post<ConvParams>("/conversations/:convId/ui-response", async (request) => {
-		await conversations().uiResponse(request.params.convId, parseUiResponse(request.body));
-		return { ok: true as const };
+	app.post<ConvParams>("/conversations/:convId/ui-response", async (request): Promise<ConversationUiResponseResult> => {
+		const { delivered } = await conversations().uiResponse(request.params.convId, parseUiResponse(request.body));
+		return { ok: true, delivered };
 	});
 
 	app.post<ConvParams>("/conversations/:convId/navigate", async (request): Promise<CompanionActionResponse> => {

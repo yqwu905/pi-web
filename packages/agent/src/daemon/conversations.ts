@@ -29,6 +29,7 @@ import {
 	type ConvStatus,
 	type ConvStopParams,
 	type ConvUiResponseParams,
+	type ConvUiResponseResult,
 	createConversationState,
 	defaultCommandTimeout,
 	EXTENSION_UI_DIALOG_METHODS,
@@ -461,14 +462,17 @@ export class ConversationManager {
 		};
 	}
 
-	uiResponse(params: ConvUiResponseParams): { ok: true } {
+	uiResponse(params: ConvUiResponseParams): ConvUiResponseResult {
 		const conv = this.requireLive(params?.convId);
 		const response = params.response;
 		if (!isPlainObject(response) || typeof response.id !== "string") throw new AgentError("BAD_PARAMS", "无效的对话框响应");
-		if (!conv.info.pendingUi.some((r) => r.id === response.id)) return { ok: true };
+		if (!conv.info.pendingUi.some((r) => r.id === response.id)) return { ok: true, delivered: false };
+		// pi already took the default answer of a timed dialog and ignores a late one.
+		const dialog = conv.dialogs.get(response.id);
+		const late = dialog?.timeoutMs !== undefined && Date.now() - dialog.requestedAt >= dialog.timeoutMs;
 		this.write(conv, { ...response, type: "extension_ui_response" }, true);
 		this.resolveUi(conv, response.id);
-		return { ok: true };
+		return { ok: true, delivered: !late };
 	}
 
 	replay(params: ConvReplayParams): ConvReplayResult {

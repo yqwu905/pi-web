@@ -1,6 +1,7 @@
 import type { ExtensionUIRequest, ExtensionUIResponse } from "@pi-web/shared";
 import { Check, Clock, TriangleAlert } from "lucide-react";
-import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type FormEvent, Fragment, type KeyboardEvent, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { errorMessage } from "../../../api/client";
 import { invalidateSessions } from "../../../api/hooks";
 import { Button, Field, Input, LoadingBlock, Modal, Textarea, toast } from "../../../components/ui";
@@ -8,6 +9,8 @@ import { cn } from "../../../lib/cn";
 import { formatTokens } from "../../../lib/format";
 import { type ConversationHandle, dialogDeadline } from "../../../stores/conversation";
 import { firstSeen, useNow } from "../hooks";
+import { splitDialogTitle } from "../logic/dialog-title";
+import { AUTO_ANSWER_TTL_MS, type PendingAutoAnswer, answerExcerpt, decideAutoAnswer, isFreeInputOption } from "../logic/free-answer";
 import { DeleteSessionModal, type DeleteSessionTarget } from "./DeleteSessionModal";
 
 export type DialogRequest = Extract<ExtensionUIRequest, { method: "select" | "confirm" | "input" | "editor" }>;
@@ -40,26 +43,63 @@ function optionClass(selected: boolean, bordered: boolean) {
 /** Activations right after an unsolicited dialog opened are ignored: an Enter meant for the composer must not answer it. */
 const ARM_DELAY_MS = 400;
 
-export function ExtensionUiDialog({ request, onRespond }: { request: DialogRequest; onRespond: (response: ExtensionUIResponse) => Promise<void> }) {
+/** A key press that types one character (typing it in a select's option list starts a free-text answer). */
+function isTypedCharacter(e: KeyboardEvent): boolean {
+	return !e.ctrlKey && !e.metaKey && !e.altKey && !e.nativeEvent.isComposing && e.key !== " " && [...e.key].length === 1;
+}
+
+/** What the user typed before a submission failed; the dialog comes back with it. */
+export interface DialogDraft {
+	text: string;
+	/** Select: the free-input option the text belonged to. */
+	option?: string;
+}
+
+export function ExtensionUiDialog({
+	request,
+	onRespond,
+	onAnswerText,
+	draft,
+}: {
+	request: DialogRequest;
+	onRespond: (response: ExtensionUIResponse) => Promise<unknown>;
+	/**
+	 * Answers a select with a free-input option ("Type something.") plus the text typed into the
+	 * inline field under it, for the extension's follow-up input request. Enables that field.
+	 */
+	onAnswerText?: (response: ExtensionUIResponse, text: string) => Promise<void>;
+	draft?: DialogDraft;
+}) {
+	const freeInput = request.method === "select" && onAnswerText ? request.options.map(isFreeInputOption) : [];
 	const [busy, setBusy] = useState(false);
-	const [selected, setSelected] = useState(0);
-	const [value, setValue] = useState(request.method === "editor" ? (request.prefill ?? "") : "");
+	const [selected, setSelected] = useState(() => (request.method === "select" && draft?.option !== undefined ? Math.max(0, request.options.indexOf(draft.option)) : 0));
+	// input / editor: the answer; select: the free-text answer in the inline field.
+	const [value, setValue] = useState(draft?.text ?? (request.method === "editor" ? (request.prefill ?? "") : ""));
 	const [openedAt] = useState(() => Date.now());
+	/**
+	 * Select: keys typed in the option list are ignored until then. Each ignored key restarts the
+	 * wait, so the rest of something being typed elsewhere (the composer) when the dialog opened is
+	 * dropped instead of starting a free-text answer.
+	 */
+	const typingArmedAt = useRef(openedAt + ARM_DELAY_MS);
+	const optionIdBase = useId();
 	// pi's timer started when it asked (possibly before this tab saw the dialog, or while another dialog was shown).
 	const deadline = request.timeout ? (dialogDeadline(request.id) ?? firstSeen.get(`ui:${request.id}`) + request.timeout) : null;
 	const now = useNow(250, Boolean(request.timeout));
 	const remaining = deadline !== null ? Math.max(0, deadline - now) : null;
 	const expired = remaining === 0;
 	const listRef = useRef<HTMLDivElement>(null);
+	const fieldRef = useRef<HTMLInputElement>(null);
+	const { heading, detail } = splitDialogTitle(request.title);
 
-	const respond = async (response: ExtensionUIResponse) => {
+	const respond = async (response: ExtensionUIResponse, text?: string) => {
 		if (busy) return;
 		// pi already took the default answer; the dialog closes once that arrives.
 		if (expired && !("cancelled" in response)) return;
 		if (!("cancelled" in response) && Date.now() - openedAt < ARM_DELAY_MS) return;
 		setBusy(true);
 		try {
-			await onRespond(response);
+			await (text !== undefined && onAnswerText ? onAnswerText(response, text) : onRespond(response));
 		} catch (e) {
 			toast.error(errorMessage(e), { title: "无法提交回复" });
 			setBusy(false);
@@ -67,14 +107,43 @@ export function ExtensionUiDialog({ request, onRespond }: { request: DialogReque
 	};
 	const cancel = () => void respond({ type: "extension_ui_response", id: request.id, cancelled: true });
 	const submitValue = (v: string) => void respond({ type: "extension_ui_response", id: request.id, value: v });
+	/** Select: a free-input option with text typed is answered together with that text. */
+	const submitOption = (i: number) => {
+		if (request.method !== "select" || i >= request.options.length) return;
+		const option = request.options[i];
+		if (freeInput[i] && value.trim()) void respond({ type: "extension_ui_response", id: request.id, value: option }, value);
+		else submitValue(option);
+	};
+
+	const focusSelected = () => listRef.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus();
+	/** Highlights option i and focuses it, or the inline field when it is a free-input option. */
+	const highlight = (i: number) => {
+		flushSync(() => setSelected(i));
+		if (freeInput[i]) fieldRef.current?.focus();
+		else focusSelected();
+	};
+	// Typing in the option list goes to the highlighted free-input option, else the last one.
+	const freeIndex = freeInput[selected] ? selected : freeInput.lastIndexOf(true);
+	const typeIntoField = (text: string) => {
+		flushSync(() => {
+			setSelected(freeIndex);
+			setValue((v) => v + text);
+		});
+		const field = fieldRef.current;
+		field?.focus();
+		field?.setSelectionRange(field.value.length, field.value.length);
+	};
 
 	useEffect(() => {
-		if (request.method === "select") listRef.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus();
-	}, [request.method, selected]);
+		if (request.method !== "select") return;
+		if (draft && fieldRef.current) fieldRef.current.focus();
+		else focusSelected();
+		// Only when the dialog opens: later moves focus with the highlight.
+	}, [request.method]);
 
 	let hint: string;
 	if (remaining !== null) hint = remaining > 0 ? `${Math.ceil(remaining / 1000)} 秒后自动${request.method === "confirm" ? "拒绝" : "取消"}` : "已超时，pi 已按默认处理";
-	else if (request.method === "select") hint = "↑ ↓ 选择 · Enter 确定";
+	else if (request.method === "select") hint = freeIndex >= 0 ? "↑ ↓ 选择 · Enter 确定 · 直接输入可自定义回答" : "↑ ↓ 选择 · Enter 确定";
 	else if (request.method === "editor") hint = "Ctrl+Enter 保存 · Esc 取消";
 	else if (request.method === "input") hint = "Enter 确定 · Esc 取消";
 	else hint = "Esc 拒绝";
@@ -84,20 +153,63 @@ export function ExtensionUiDialog({ request, onRespond }: { request: DialogReque
 	switch (request.method) {
 		case "select":
 			body = (
-				<div ref={listRef} role="group" aria-label={request.title} className="flex max-h-[50vh] flex-col gap-1.5 overflow-y-auto">
+				<div ref={listRef} role="group" aria-label={heading} className="flex max-h-[50vh] flex-col gap-1.5 overflow-y-auto">
 					{request.options.map((option, i) => (
-						<button
-							key={`${i}-${option}`}
-							type="button"
-							aria-pressed={i === selected}
-							onClick={() => setSelected(i)}
-							onDoubleClick={() => submitValue(option)}
-							onKeyDown={(e) => listKeys(e, request.options.length, selected, setSelected, () => submitValue(request.options[selected]))}
-							className={cn(optionClass(i === selected, true), "min-h-[34px] py-1.5 font-mono text-mono")}
-						>
-							<span className="min-w-0 flex-1 break-words">{option}</span>
-							{i === selected && <Check size={14} strokeWidth={2.2} className="shrink-0 text-accent" aria-hidden="true" />}
-						</button>
+						<Fragment key={`${i}-${option}`}>
+							<button
+								type="button"
+								id={`${optionIdBase}-${i}`}
+								aria-pressed={i === selected}
+								onClick={() => highlight(i)}
+								onDoubleClick={() => submitOption(i)}
+								onKeyDown={(e) => {
+									const typed = isTypedCharacter(e) || e.key === "Process";
+									if (freeIndex >= 0 && (typed || e.key === " ") && Date.now() < typingArmedAt.current) {
+										typingArmedAt.current = Date.now() + ARM_DELAY_MS;
+										if (e.key !== "Process") e.preventDefault();
+										return;
+									}
+									if (freeIndex >= 0 && typed) {
+										// An IME keystroke ("Process") is left to the browser: the composition continues in the field.
+										if (e.key !== "Process") e.preventDefault();
+										typeIntoField(e.key === "Process" ? "" : e.key);
+										return;
+									}
+									listKeys(e, request.options.length, selected, highlight, () => submitOption(selected));
+								}}
+								className={cn(optionClass(i === selected, true), "min-h-[34px] py-1.5 font-mono text-mono")}
+							>
+								<span className="min-w-0 flex-1 break-words">{option}</span>
+								{i === selected && <Check size={14} strokeWidth={2.2} className="shrink-0 text-accent" aria-hidden="true" />}
+							</button>
+							{freeInput[i] && i === selected && (
+								<Input
+									ref={fieldRef}
+									mono
+									aria-label="自定义回答"
+									aria-describedby={`${optionIdBase}-${i}`}
+									placeholder="输入你的回答，Enter 提交"
+									value={value}
+									onChange={(e) => setValue(e.target.value)}
+									onKeyDown={(e) => {
+										if (e.nativeEvent.isComposing) return;
+										if (e.key === "Enter") {
+											e.preventDefault();
+											submitOption(i);
+										} else if (e.key === "Escape") {
+											// Back to the list; Esc there cancels the dialog.
+											e.preventDefault();
+											focusSelected();
+										} else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+											e.preventDefault();
+											const count = request.options.length;
+											highlight(e.key === "ArrowDown" ? (i + 1) % count : (i - 1 + count) % count);
+										}
+									}}
+									className="shrink-0 border-border-strong"
+								/>
+							)}
+						</Fragment>
 					))}
 				</div>
 			);
@@ -106,7 +218,7 @@ export function ExtensionUiDialog({ request, onRespond }: { request: DialogReque
 					<Button onClick={cancel} disabled={busy}>
 						取消
 					</Button>
-					<Button variant="primary" onClick={() => submitValue(request.options[selected])} loading={busy} disabled={request.options.length === 0 || expired}>
+					<Button variant="primary" onClick={() => submitOption(selected)} loading={busy} disabled={request.options.length === 0 || expired}>
 						确定
 					</Button>
 				</>
@@ -135,7 +247,7 @@ export function ExtensionUiDialog({ request, onRespond }: { request: DialogReque
 						submitValue(value);
 					}}
 				>
-					<Input mono aria-label={request.title} value={value} placeholder={request.placeholder} onChange={(e) => setValue(e.target.value)} />
+					<Input mono aria-label={heading} value={value} placeholder={request.placeholder} onChange={(e) => setValue(e.target.value)} />
 				</form>
 			);
 			footer = (
@@ -154,7 +266,7 @@ export function ExtensionUiDialog({ request, onRespond }: { request: DialogReque
 				<Textarea
 					mono
 					rows={8}
-					aria-label={request.title}
+					aria-label={heading}
 					value={value}
 					onChange={(e) => setValue(e.target.value)}
 					onKeyDown={(e) => {
@@ -186,7 +298,8 @@ export function ExtensionUiDialog({ request, onRespond }: { request: DialogReque
 			closeOnOverlay={false}
 			hideClose={request.method === "confirm"}
 			role={request.method === "confirm" ? "alertdialog" : "dialog"}
-			title={request.title}
+			title={heading}
+			description={detail ? <span className="block max-h-[30vh] overflow-y-auto font-mono text-mono break-words whitespace-pre-wrap">{detail}</span> : undefined}
 			icon={request.method === "confirm" ? <TriangleAlert className="text-warning" strokeWidth={1.8} /> : undefined}
 			titleAside={
 				<span className="flex h-5 shrink-0 items-center rounded-sm border border-border bg-chip px-1.5 text-2xs text-fg-3">扩展</span>
@@ -202,6 +315,83 @@ export function ExtensionUiDialog({ request, onRespond }: { request: DialogReque
 		>
 			{body}
 		</Modal>
+	);
+}
+
+const NO_DIALOGS: readonly DialogRequest[] = [];
+
+/**
+ * The conversation's pending extension dialog. A select answered with typed text leaves a pending
+ * auto-answer: the extension's next input/editor request of this conversation gets that text
+ * without being shown; if it asks for something else (or nothing within a minute) the text is dropped.
+ */
+export function ExtensionUiDialogs({ conv }: { conv: ConversationHandle }) {
+	const pending = conv.isLive ? (conv.state.ui.pending as DialogRequest[]) : NO_DIALOGS;
+	const { convId, uiResponse } = conv;
+	const [autoAnswer, setAutoAnswer] = useState<PendingAutoAnswer | null>(null);
+	/** Bumped when a waiting auto-answer reaches its deadline. */
+	const [expiryTick, setExpiryTick] = useState(0);
+	const [draft, setDraft] = useState<(DialogDraft & { id: string }) | null>(null);
+	const latestPending = useRef(pending);
+	useLayoutEffect(() => {
+		latestPending.current = pending;
+	});
+
+	const dialogs = useMemo(() => pending.map((r) => ({ id: r.id, method: r.method, deadline: dialogDeadline(r.id) })), [pending]);
+	// The request about to be answered is never rendered (no flash).
+	const decision = autoAnswer ? decideAutoAnswer(autoAnswer, convId, dialogs, Date.now()) : null;
+	const hiddenId = decision?.action === "answer" ? decision.dialogId : null;
+
+	useEffect(() => {
+		if (!autoAnswer) return;
+		const now = Date.now();
+		const next = decideAutoAnswer(autoAnswer, convId, dialogs, now);
+		if (next.action === "wait") {
+			const timer = setTimeout(() => setExpiryTick((n) => n + 1), autoAnswer.createdAt + AUTO_ANSWER_TTL_MS - now);
+			return () => clearTimeout(timer);
+		}
+		setAutoAnswer(null);
+		if (next.action === "drop") {
+			toast.warning(`扩展没有请求文字输入，你输入的内容未被使用：“${answerExcerpt(autoAnswer.text)}”`);
+			return;
+		}
+		const { text } = autoAnswer;
+		// Shown with the text filled in if the answer fails and the request comes back.
+		setDraft({ id: next.dialogId, text });
+		uiResponse({ type: "extension_ui_response", id: next.dialogId, value: text }).catch((e: unknown) => toast.error(errorMessage(e), { title: "无法提交回复" }));
+	}, [autoAnswer, expiryTick, convId, dialogs, uiResponse]);
+
+	const answerText = useCallback(
+		async (response: ExtensionUIResponse, text: string) => {
+			if (!convId) {
+				await uiResponse(response);
+				return;
+			}
+			// Registered before the answer is sent: the follow-up request can arrive before the POST returns.
+			const entry: PendingAutoAnswer = { convId, text, seenIds: [...latestPending.current.map((r) => r.id), response.id], createdAt: Date.now() };
+			const forget = () => setAutoAnswer((current) => (current === entry ? null : current));
+			setAutoAnswer(entry);
+			setDraft({ id: response.id, text, option: "value" in response ? response.value : undefined });
+			let delivered: boolean;
+			try {
+				delivered = await uiResponse(response);
+			} catch (e) {
+				forget();
+				throw e;
+			}
+			// Answered in another tab or timed out: no follow-up request of this select will come.
+			if (!delivered) {
+				forget();
+				toast.warning(`对话框已被回答或已超时，你输入的内容未被使用：“${answerExcerpt(text)}”`);
+			}
+		},
+		[convId, uiResponse],
+	);
+
+	const request = pending.find((r) => r.id !== hiddenId);
+	if (!request) return null;
+	return (
+		<ExtensionUiDialog key={request.id} request={request} onRespond={uiResponse} onAnswerText={answerText} draft={draft?.id === request.id ? draft : undefined} />
 	);
 }
 

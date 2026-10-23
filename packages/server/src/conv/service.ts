@@ -349,9 +349,10 @@ class ConversationRegistry implements ConversationService {
 		return client.call("conv.send", params, { timeoutMs: effective + LINK_MARGIN_MS });
 	}
 
-	async uiResponse(convId: string, response: ExtensionUIResponse): Promise<void> {
+	async uiResponse(convId: string, response: ExtensionUIResponse): Promise<{ delivered: boolean }> {
 		const entry = this.requireEntry(convId);
-		await this.requireClient(entry.serverId).call("conv.uiResponse", { convId, response });
+		const result = await this.requireClient(entry.serverId).call("conv.uiResponse", { convId, response });
+		return { delivered: result?.delivered !== false };
 	}
 
 	async companion(

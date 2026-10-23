@@ -14,7 +14,7 @@ import { useConversationView } from "../../stores/convs";
 import { useServer } from "../../stores/servers";
 import { ConnectButton } from "../workspace/WorkspaceGate";
 import { Composer, type ComposerHandle } from "./components/Composer";
-import { CompactDialog, DeleteSessionDialog, type DialogRequest, ExtensionUiDialog, ForkDialog, RenameDialog } from "./components/Dialogs";
+import { CompactDialog, DeleteSessionDialog, ExtensionUiDialogs, ForkDialog, RenameDialog } from "./components/Dialogs";
 import { InfoPanel } from "./components/InfoPanel";
 import { MessageList } from "./components/MessageList";
 import type { BashRunView } from "./components/MessageViews";
@@ -305,7 +305,6 @@ function ChatView({
 	const [dialog, setDialog] = useState<"tree" | "fork" | "compact" | "rename" | "delete" | null>(null);
 	const closeDialog = useCallback(() => setDialog(null), []);
 
-	const pendingDialog = conv.isLive ? (state.ui.pending[0] as DialogRequest | undefined) : undefined;
 	const sessionName = state.sessionName ?? conv.session?.name ?? "";
 
 	// ---------- archive ----------
@@ -475,7 +474,7 @@ function ChatView({
 				title={sessionName || sessionTitle(conv.session)}
 				onDeleted={() => navigate(paths.chat(workspaceId), { replace: true })}
 			/>
-			{pendingDialog && <ExtensionUiDialog key={pendingDialog.id} request={pendingDialog} onRespond={conv.uiResponse} />}
+			<ExtensionUiDialogs conv={conv} />
 		</div>
 	);
 }

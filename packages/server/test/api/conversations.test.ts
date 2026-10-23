@@ -78,7 +78,7 @@ describe("conversation routes", () => {
 		];
 		for (const body of cases) {
 			const res = await t.request("POST", `/api/conversations/${convId}/ui-response`, body);
-			expect(res.json()).toEqual({ ok: true });
+			expect(res.json()).toEqual({ ok: true, delivered: true });
 		}
 		expect(agent.callsOf("conv.uiResponse").map((p) => p.response)).toEqual([
 			{ type: "extension_ui_response", id: "u1", value: "picked" },
@@ -86,6 +86,10 @@ describe("conversation routes", () => {
 			{ type: "extension_ui_response", id: "u3", cancelled: true },
 		]);
 		expect((await t.request("POST", `/api/conversations/${convId}/ui-response`, { response: { id: "u4" } })).statusCode).toBe(400);
+		// The agent did not pass it to pi (answered elsewhere, timed out).
+		agent.handle("conv.uiResponse", () => ({ ok: true, delivered: false }));
+		const dropped = await t.request("POST", `/api/conversations/${convId}/ui-response`, { response: { id: "u5", value: "late" } });
+		expect(dropped.json()).toEqual({ ok: true, delivered: false });
 	});
 
 	it("runs companion actions", async () => {

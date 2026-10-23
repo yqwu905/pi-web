@@ -271,6 +271,11 @@ export type ConversationRpcResponse = RpcResponse;
 export interface ConversationUiResponseRequest {
 	response: ExtensionUIResponse;
 }
+export interface ConversationUiResponseResult {
+	ok: true;
+	/** False when pi will not use the answer: the dialog was already answered (e.g. in another tab), dropped or timed out. */
+	delivered: boolean;
+}
 
 export interface NavigateRequest {
 	targetId: string;

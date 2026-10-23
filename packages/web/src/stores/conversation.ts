@@ -530,7 +530,8 @@ export interface ConversationHandle {
 	prompt(message: string, options?: PromptOptions): Promise<RpcResponse>;
 	rpc(command: RpcCommand, timeoutMs?: number): Promise<RpcResponse & { seq?: number }>;
 	call<C extends RpcCommand>(command: C, timeoutMs?: number): Promise<CommandData<C>>;
-	uiResponse(response: ExtensionUIResponse): Promise<void>;
+	/** Resolves to false when pi will not use the answer (the dialog was already answered elsewhere or timed out). */
+	uiResponse(response: ExtensionUIResponse): Promise<boolean>;
 	dismissNotification(id: string): void;
 	resync(): Promise<void>;
 	refreshState(): Promise<RpcSessionState | null>;
@@ -715,7 +716,8 @@ export function useConversation(params: UseConversationParams): ConversationHand
 		const request = entry.getView().state.ui.pending.find((r) => r.id === response.id);
 		entry.mutateState((s) => resolveUiRequest(s, response.id));
 		try {
-			await conversationUiResponse(convId, { response });
+			const result = await conversationUiResponse(convId, { response });
+			return result.delivered !== false;
 		} catch (error) {
 			// pi still waits for an answer: bring the dialog back (and reconcile with the agent).
 			if (request) {

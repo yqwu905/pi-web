@@ -380,7 +380,7 @@ export function preflight() {
 
 /**
  * Creates the temp dir with the host agent dir (the host's ~/.pi/agent stand-in: mock provider,
- * default model, an extension with two commands, a skill, a prompt template and auth.json).
+ * default model, an extension with five commands, a skill, a prompt template and auth.json).
  */
 export async function prepareHostAgentDir(prefix = "pi-web-e2e-") {
 	const tmp = await mkdtemp(path.join(os.tmpdir(), prefix));
@@ -419,6 +419,42 @@ export async function prepareHostAgentDir(prefix = "pi-web-e2e-") {
 			"\t\thandler: async (_args: string, ctx: any) => {",
 			'\t\t\tconst ok = await ctx.ui.confirm("E2E 确认", "继续吗？");',
 			'\t\t\tctx.ui.notify(`e2e confirmed: ${ok}`, "info");',
+			"\t\t},",
+			"\t});",
+			// A question with a free-text option, the way question-style extensions ask in RPC mode.
+			'\tpi.registerCommand("e2e-question", {',
+			'\t\tdescription: "E2E select with a free-text option",',
+			"\t\thandler: async (_args: string, ctx: any) => {",
+			'\t\t\tconst choice = await ctx.ui.select("你更喜欢哪种语言？", ["Rust", "Go", "Type something."]);',
+			'\t\t\tconst answer = choice === "Type something." ? await ctx.ui.input("你更喜欢哪种语言？", "输入语言") : choice;',
+			'\t\t\tctx.ui.notify(`回答：${answer}`, "info");',
+			"\t\t},",
+			"\t});",
+			// A free-text option followed by something else than a text request.
+			'\tpi.registerCommand("e2e-other", {',
+			'\t\tdescription: "E2E select whose free-text option leads to a confirm",',
+			"\t\thandler: async (_args: string, ctx: any) => {",
+			'\t\t\tconst choice = await ctx.ui.select("下一步做什么？", ["继续", "Other"]);',
+			'\t\t\tconst ok = choice === "Other" ? await ctx.ui.confirm("E2E 其他", "打开其他选项？") : true;',
+			'\t\t\tctx.ui.notify(`下一步：${choice} ${ok}`, "info");',
+			"\t\t},",
+			"\t});",
+			// A question the way rpiv-ask-user-question asks in RPC mode (zh locale): "N. label — description" options,
+			// a preview folded into the title and "N. 输入内容", which asks again with an input repeating the options.
+			'\tpi.registerCommand("e2e-rpiv", {',
+			'\t\tdescription: "E2E question in rpiv-ask-user-question\'s RPC format",',
+			"\t\thandler: async (_args: string, ctx: any) => {",
+			'\t\t\tconst question = "[运行时] 选哪个运行时？";',
+			'\t\t\tconst lines = ["1. Rust — 系统编程", "2. Go — 云原生"];',
+			"\t\t\tconst other = `${lines.length + 1}. 输入内容`;",
+			'\t\t\tconst title = `${question}\\n\\n--- 1. Rust preview ---\\nfn main() {\\n    println!("hi");\\n}`;',
+			"\t\t\tfor (;;) {",
+			"\t\t\t\tconst chosen = await ctx.ui.select(title, [...lines, other]);",
+			'\t\t\t\tif (chosen !== other) return ctx.ui.notify(`rpiv 回答：${chosen}`, "info");',
+			'\t\t\t\tconst typed = await ctx.ui.input(`${question}\\n\\n${lines.join("\\n")}\\n\\n输入你的回答：`, "");',
+			"\t\t\t\tif (typed == null || typed.trim().length === 0) continue;",
+			'\t\t\t\treturn ctx.ui.notify(`rpiv 回答：${typed}`, "info");',
+			"\t\t\t}",
 			"\t\t},",
 			"\t});",
 			"}",

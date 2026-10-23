@@ -547,6 +547,228 @@ async function main() {
 		await shot("chat-back");
 	});
 
+	// ---------------------------------------------------------------- extension dialogs
+	const S3b = "extension dialogs";
+	const QUESTION = "你更喜欢哪种语言？";
+	const questionDialog = () => page.getByRole("dialog", { name: QUESTION });
+	const notUsedToast = () => page.getByText("扩展没有请求文字输入");
+	/** Runs /e2e-question (or `command`) and waits for its select; resolves once the dialog accepts answers (400 ms arm delay). */
+	async function askQuestion(command = "/e2e-question", name = QUESTION) {
+		await composer().fill(command);
+		await composer().press("Enter");
+		await page.getByRole("dialog", { name }).getByRole("group", { name }).waitFor({ timeout: 20_000 });
+		const shownAt = Date.now();
+		return () => sleep(Math.max(0, shownAt + 500 - Date.now()));
+	}
+	/** Records whether the extension's own input dialog (placeholder "输入语言", or `selector`) is ever added to the page. */
+	const watchInputDialog = (selector = 'input[placeholder="输入语言"]') =>
+		page.evaluate((selector) => {
+			window.__inputDialogSeen = false;
+			window.__inputDialogObserver?.disconnect();
+			const seen = (node) => node instanceof Element && (node.matches(selector) || node.querySelector(selector) !== null);
+			window.__inputDialogObserver = new MutationObserver((records) => {
+				if (records.some((r) => [...r.addedNodes].some(seen))) window.__inputDialogSeen = true;
+			});
+			window.__inputDialogObserver.observe(document.body, { childList: true, subtree: true });
+		}, selector);
+	const inputDialogSeen = () => page.evaluate(() => window.__inputDialogSeen);
+
+	await uiStep(S3b, 'select with "Type something.": typing in the option list answers with the text in one step', async () => {
+		const armed = await askQuestion();
+		const dialog = questionDialog();
+		const group = dialog.getByRole("group", { name: QUESTION });
+		await group.getByRole("button", { name: "Rust", pressed: true }).waitFor();
+		await dialog.getByText("直接输入可自定义回答").waitFor();
+		await waitUntil("focus on the option list", () => page.evaluate(() => document.activeElement?.getAttribute("aria-pressed") === "true"), { timeoutMs: 5000 });
+		// Keys right after the dialog opened are ignored (typed for the composer).
+		await armed();
+		// No click on the option: the typed text moves to the inline field under "Type something.".
+		await page.keyboard.type("Zig");
+		const field = dialog.getByLabel("自定义回答");
+		await field.waitFor();
+		assert((await field.inputValue()) === "Zig", "the typed text is in the inline field", await field.inputValue());
+		assert(await field.evaluate((el) => el === document.activeElement), "the inline field has the focus");
+		await group.getByRole("button", { name: "Type something.", pressed: true }).waitFor();
+		const description = await field.evaluate((el) => document.getElementById(el.getAttribute("aria-describedby") ?? "")?.textContent);
+		assert(description === "Type something.", "the inline field is described by its option", description);
+		await shot("extension-select-free-text");
+		await watchInputDialog();
+		await page.keyboard.press("Enter");
+		await page.getByText("回答：Zig").waitFor({ timeout: 15_000 });
+		await dialog.waitFor({ state: "detached" });
+		assert((await page.getByRole("dialog").count()) === 0, "no input dialog remains");
+		assert(!(await inputDialogSeen()), "the extension's input dialog was answered without being shown");
+		assert((await notUsedToast().count()) === 0, "the typed text was used");
+	});
+
+	await uiStep(S3b, 'select: picking "Go" answers as before', async () => {
+		const armed = await askQuestion();
+		const dialog = questionDialog();
+		await dialog.getByRole("group", { name: QUESTION }).getByRole("button", { name: "Go" }).click();
+		assert((await dialog.getByLabel("自定义回答").count()) === 0, "no inline field for a regular option");
+		await armed();
+		await dialog.getByRole("button", { name: "确定" }).click();
+		await page.getByText("回答：Go").waitFor({ timeout: 15_000 });
+		await dialog.waitFor({ state: "detached" });
+		assert((await page.getByRole("dialog").count()) === 0, "no dialog remains");
+	});
+
+	await uiStep(S3b, 'select: clicking "Type something." focuses the inline field; empty Enter shows the extension\'s own input', async () => {
+		const armed = await askQuestion();
+		const dialog = questionDialog();
+		await dialog.getByRole("group", { name: QUESTION }).getByRole("button", { name: "Type something." }).click();
+		const field = dialog.getByLabel("自定义回答");
+		await waitUntil("inline field focused", () => field.evaluate((el) => el === document.activeElement), { timeoutMs: 5000 });
+		await armed();
+		await field.press("Enter");
+		const input = dialog.getByPlaceholder("输入语言");
+		await input.waitFor({ timeout: 15_000 });
+		await sleep(500);
+		await input.fill("Kotlin");
+		await input.press("Enter");
+		await page.getByText("回答：Kotlin").waitFor({ timeout: 15_000 });
+		await dialog.waitFor({ state: "detached" });
+		assert((await notUsedToast().count()) === 0, "no dropped-text toast");
+	});
+
+	await uiStep(S3b, "select: the rest of a message typed into the composer when it opens is ignored", async () => {
+		await composer().fill("/e2e-question");
+		await composer().press("Enter");
+		// Keep typing (spaces included) as if writing a message: the question opens in the middle of it.
+		const group = questionDialog().getByRole("group", { name: QUESTION });
+		const text = "please use rust ";
+		let openedAt = 0;
+		for (let i = 0, end = Date.now() + 20_000; Date.now() < end; i++) {
+			await page.keyboard.type(text[i % text.length]);
+			await sleep(60);
+			if (!openedAt && (await group.count()) > 0) openedAt = Date.now();
+			if (openedAt && Date.now() - openedAt > 1200) break;
+		}
+		assert(openedAt, "the question opened");
+		const dialog = questionDialog();
+		assert((await dialog.getByLabel("自定义回答").count()) === 0, "no free-text answer was started");
+		await group.getByRole("button", { name: "Rust", pressed: true }).waitFor();
+		assert(await page.evaluate(() => document.activeElement?.getAttribute("aria-pressed") === "true"), "focus stays on the option list");
+		await dialog.getByRole("button", { name: "取消" }).click();
+		await dialog.waitFor({ state: "detached" });
+		await page.getByText("回答：undefined").waitFor({ timeout: 15_000 });
+		await composer().fill("");
+	});
+
+	await uiStep(
+		S3b,
+		"select: a failed answer brings the question back with the typed text",
+		async () => {
+			const armed = await askQuestion();
+			const dialog = questionDialog();
+			await waitUntil("focus on the option list", () => page.evaluate(() => document.activeElement?.getAttribute("aria-pressed") === "true"), { timeoutMs: 5000 });
+			await armed();
+			const route = "**/api/conversations/*/ui-response";
+			let failed = 0;
+			await page.route(route, (r) => {
+				failed++;
+				return r.abort("failed");
+			});
+			try {
+				await page.keyboard.type("Nim");
+				await dialog.getByLabel("自定义回答").waitFor();
+				await page.keyboard.press("Enter");
+				await page.getByText("无法提交回复").first().waitFor({ timeout: 10_000 });
+			} finally {
+				await page.unroute(route);
+			}
+			assert(failed === 1, "one answer failed", failed);
+			const field = dialog.getByLabel("自定义回答");
+			await field.waitFor();
+			assert((await field.inputValue()) === "Nim", "the question is back with the typed text", await field.inputValue());
+			await dialog.getByRole("group", { name: QUESTION }).getByRole("button", { name: "Type something.", pressed: true }).waitFor();
+			await waitUntil("inline field focused", () => field.evaluate((el) => el === document.activeElement), { timeoutMs: 5000 });
+			await sleep(500);
+			await field.press("Enter");
+			await page.getByText("回答：Nim").waitFor({ timeout: 15_000 });
+			await dialog.waitFor({ state: "detached" });
+			assert((await page.getByRole("dialog").count()) === 0, "no input dialog remains");
+		},
+		{ allow: [/ui-response/, /ERR_FAILED/] },
+	);
+
+	await uiStep(S3b, "select: typed text is dropped with a notice when the extension asks for something else", async () => {
+		const OTHER = "下一步做什么？";
+		await composer().fill("/e2e-other");
+		await composer().press("Enter");
+		const dialog = page.getByRole("dialog", { name: OTHER });
+		await dialog.getByRole("group", { name: OTHER }).waitFor({ timeout: 20_000 });
+		const shownAt = Date.now();
+		await waitUntil("focus on the option list", () => page.evaluate(() => document.activeElement?.getAttribute("aria-pressed") === "true"), { timeoutMs: 5000 });
+		await sleep(Math.max(0, shownAt + 500 - Date.now()));
+		await page.keyboard.type("hello");
+		const field = dialog.getByLabel("自定义回答");
+		await field.waitFor();
+		assert((await field.inputValue()) === "hello", "the typed text is in the inline field", await field.inputValue());
+		await page.keyboard.press("Enter");
+		// The extension's follow-up is a confirm: it is shown, not answered with the text.
+		const confirm = page.getByRole("alertdialog", { name: "E2E 其他" });
+		await confirm.waitFor({ timeout: 15_000 });
+		await notUsedToast().filter({ hasText: "“hello”" }).waitFor({ timeout: 5000 });
+		await shot("extension-free-text-dropped");
+		await sleep(500);
+		await confirm.getByRole("button", { name: "允许" }).click();
+		await page.getByText("下一步：Other true").waitFor({ timeout: 15_000 });
+		await confirm.waitFor({ state: "detached" });
+	});
+
+	const RPIV_QUESTION = "[运行时] 选哪个运行时？";
+	const rpivDialog = () => page.getByRole("dialog", { name: RPIV_QUESTION });
+	/** innerText of what describes the dialog (the title lines after the first). */
+	const dialogDetail = async (dialog) => page.locator(`[id="${await dialog.getAttribute("aria-describedby")}"]`).innerText();
+
+	await uiStep(S3b, 'rpiv-ask-user-question: multi-line title, typing answers with "3. 输入内容" in one step', async () => {
+		const armed = await askQuestion("/e2e-rpiv", RPIV_QUESTION);
+		const dialog = rpivDialog();
+		const group = dialog.getByRole("group", { name: RPIV_QUESTION });
+		await group.getByRole("button", { name: "1. Rust — 系统编程", pressed: true }).waitFor();
+		// The preview folded into the title is shown under the heading with its line breaks and indentation.
+		const detail = await dialogDetail(dialog);
+		assert(detail === '--- 1. Rust preview ---\nfn main() {\n    println!("hi");\n}', "title lines after the first shown as is", detail);
+		await dialog.getByText("直接输入可自定义回答").waitFor();
+		await waitUntil("focus on the option list", () => page.evaluate(() => document.activeElement?.getAttribute("aria-pressed") === "true"), { timeoutMs: 5000 });
+		await armed();
+		await page.keyboard.type("Odin");
+		const field = dialog.getByLabel("自定义回答");
+		await field.waitFor();
+		assert((await field.inputValue()) === "Odin", "the typed text is in the inline field", await field.inputValue());
+		await group.getByRole("button", { name: "3. 输入内容", pressed: true }).waitFor();
+		await shot("extension-rpiv-question");
+		await watchInputDialog(`input[aria-label="${RPIV_QUESTION}"]`);
+		await page.keyboard.press("Enter");
+		await page.getByText("rpiv 回答：Odin").waitFor({ timeout: 15_000 });
+		await dialog.waitFor({ state: "detached" });
+		assert((await page.getByRole("dialog").count()) === 0, "no input dialog remains");
+		assert(!(await inputDialogSeen()), "rpiv's input dialog was answered without being shown");
+		// The previous step's notice may still be shown.
+		assert((await notUsedToast().filter({ hasText: "“Odin”" }).count()) === 0, "the typed text was used");
+	});
+
+	await uiStep(S3b, 'rpiv-ask-user-question: empty Enter on "3. 输入内容" shows its input with the options in the title', async () => {
+		const armed = await askQuestion("/e2e-rpiv", RPIV_QUESTION);
+		const dialog = rpivDialog();
+		await dialog.getByRole("group", { name: RPIV_QUESTION }).getByRole("button", { name: "3. 输入内容" }).click();
+		const field = dialog.getByLabel("自定义回答");
+		await waitUntil("inline field focused", () => field.evaluate((el) => el === document.activeElement), { timeoutMs: 5000 });
+		await armed();
+		await field.press("Enter");
+		const input = dialog.getByRole("textbox", { name: RPIV_QUESTION });
+		await input.waitFor({ timeout: 15_000 });
+		const detail = await dialogDetail(dialog);
+		assert(detail === "1. Rust — 系统编程\n2. Go — 云原生\n\n输入你的回答：", "the options and the prompt are shown one per line", detail);
+		await shot("extension-rpiv-input");
+		await sleep(500);
+		await input.fill("Elixir");
+		await input.press("Enter");
+		await page.getByText("rpiv 回答：Elixir").waitFor({ timeout: 15_000 });
+		await dialog.waitFor({ state: "detached" });
+	});
+
 	// ---------------------------------------------------------------- archive
 	const S3a = "archive";
 	const archivedToggle = () => sidebar().getByRole("button", { name: /^已归档（\d+）$/ });

@@ -187,9 +187,11 @@ describe("ConversationManager with fake pi", () => {
 		const snap = await h.manager.snapshot({ convId: "u" });
 		expect(snap.ui.pending.map((r) => r.id)).toEqual([uiId]);
 
-		h.manager.uiResponse({ convId: "u", response: { type: "extension_ui_response", id: uiId, confirmed: true } });
+		expect(h.manager.uiResponse({ convId: "u", response: { type: "extension_ui_response", id: uiId, confirmed: true } })).toEqual({ ok: true, delivered: true });
 		expect(h.manager.get("u")?.pendingUi).toEqual([]);
 		expect(h.events.some((e) => e.record.type === "pi_web_ui_resolved" && (e.record as { id: string }).id === uiId)).toBe(true);
+		// Answered already (e.g. in another tab): nothing reaches pi.
+		expect(h.manager.uiResponse({ convId: "u", response: { type: "extension_ui_response", id: uiId, confirmed: false } })).toEqual({ ok: true, delivered: false });
 		await waitFor(() => h.events.find((e) => e.record.type === "agent_settled"));
 		await waitFor(() => h.manager.get("u")?.status === "idle");
 
@@ -201,6 +203,16 @@ describe("ConversationManager with fake pi", () => {
 			() => h.events.find((e) => e.record.type === "pi_web_ui_resolved" && (e.record as { id: string }).id === timedId),
 			4000,
 		);
+		expect(h.manager.get("u")?.pendingUi).toEqual([]);
+
+		// Answered after pi's timeout (200ms) but while still pending here: pi ignores it.
+		await waitFor(() => h.manager.get("u")?.status === "idle");
+		await h.manager.send({ convId: "u", command: { type: "prompt", message: "ask-timeout" } });
+		const late = await waitFor(() => h.events.filter((e) => e.record.type === "extension_ui_request").at(2));
+		const lateId = (late.record as { id: string }).id;
+		await new Promise((r) => setTimeout(r, 400));
+		expect(h.manager.get("u")?.pendingUi.map((r) => r.id)).toEqual([lateId]);
+		expect(h.manager.uiResponse({ convId: "u", response: { type: "extension_ui_response", id: lateId, confirmed: true } })).toEqual({ ok: true, delivered: false });
 		expect(h.manager.get("u")?.pendingUi).toEqual([]);
 	});
 

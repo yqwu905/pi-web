@@ -1071,7 +1071,12 @@ async function main() {
 		const answered = await api.post(`/conversations/${liveConvId}/ui-response`, {
 			response: { type: "extension_ui_response", id: dialog.record.id, confirmed: true },
 		});
-		assert(answered.ok === true, "ui-response", answered);
+		assert(answered.ok === true && answered.delivered === true, "ui-response", answered);
+		// A second answer (another tab) is not passed to pi, and says so.
+		const again = await api.post(`/conversations/${liveConvId}/ui-response`, {
+			response: { type: "extension_ui_response", id: dialog.record.id, confirmed: false },
+		});
+		assert(again.ok === true && again.delivered === false, "a repeated ui-response is not delivered", again);
 		const res = await pending;
 		assert(res.success === true, "the extension command completed", res);
 		const notify = await events.waitFor(liveTopic(), (e) => e.record.type === "extension_ui_request" && e.record.method === "notify", {

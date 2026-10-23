@@ -181,6 +181,14 @@ export interface ConvUiResponseParams {
 	convId: string;
 	response: ExtensionUIResponse;
 }
+export interface ConvUiResponseResult {
+	ok: true;
+	/**
+	 * False when pi will not use the answer: the dialog was no longer pending (answered elsewhere,
+	 * dropped) or its timeout had passed. Absent from older agents.
+	 */
+	delivered?: boolean;
+}
 
 export interface ConvReplayParams {
 	convId: string;
@@ -469,7 +477,7 @@ export interface AgentMethodMap {
 	"conv.list": [Record<string, never> | undefined, { conversations: ConvInfo[] }];
 	"conv.send": [ConvSendParams, ConvSendResult];
 	"conv.snapshot": [ConvSnapshotParams, ConvSnapshot];
-	"conv.uiResponse": [ConvUiResponseParams, { ok: true }];
+	"conv.uiResponse": [ConvUiResponseParams, ConvUiResponseResult];
 	"conv.replay": [ConvReplayParams, ConvReplayResult];
 	"conv.stop": [ConvStopParams, { ok: true }];
 	"conv.companion": [ConvCompanionParams, ConvCompanionResult];

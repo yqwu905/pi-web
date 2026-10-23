@@ -332,7 +332,8 @@ export interface ConversationService {
 	open(workspaceId: string, request: OpenConversationRequest): Promise<ConversationView>;
 	snapshot(convId: string): Promise<ConversationSnapshot>;
 	rpc(convId: string, command: RpcCommand, timeoutMs?: number): Promise<RpcResponse & { seq?: number }>;
-	uiResponse(convId: string, response: ExtensionUIResponse): Promise<void>;
+	/** `delivered` is false when pi will not use the answer (the dialog was already answered elsewhere or timed out). */
+	uiResponse(convId: string, response: ExtensionUIResponse): Promise<{ delivered: boolean }>;
 	companion(
 		convId: string,
 		action: "navigate" | "label" | "reload",
