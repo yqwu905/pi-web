@@ -1,17 +1,21 @@
+import type { SessionSummary } from "@pi-web/shared";
+import { useQueries } from "@tanstack/react-query";
 import { MessageSquarePlus, Server } from "lucide-react";
 import { Navigate } from "react-router";
-import { useAllWorkspaces } from "../api/hooks";
+import { sessionsQueryOptions, useAllWorkspaces } from "../api/hooks";
 import { ButtonLink } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/Display";
 import { LoadingBlock } from "../components/ui/Spinner";
 import { paths } from "../lib/routes";
-import { mostRecentConversation, useConvsStore, useLiveConversations } from "../stores/convs";
+import { pickResumeTarget } from "../lib/sessions";
+import { useConvsStore, useLiveConversations } from "../stores/convs";
 import { useServers, useServersStore } from "../stores/servers";
 import { useUiStore } from "../stores/ui";
 
 /**
- * Route "/": continues the last opened conversation (or the most recently active live one);
- * otherwise an empty state that points to adding a server or picking a workspace.
+ * Route "/": continues the last opened conversation (or the most recently active live one),
+ * skipping archived sessions; otherwise an empty state that points to adding a server or
+ * picking a workspace.
  */
 export default function HomePage() {
 	const serversReady = useServersStore((s) => s.loaded || s.error !== null);
@@ -21,16 +25,24 @@ export default function HomePage() {
 	const lastVisited = useUiStore((s) => s.lastVisited);
 	const workspaces = useAllWorkspaces();
 
-	if (!serversReady || !convsReady || workspaces.isLoading) return <LoadingBlock />;
+	// Session lists of the candidate workspaces (where reachable) tell which candidates are archived.
+	const online = new Set(servers.filter((s) => s.status.connection === "connected").map((s) => s.config.id));
+	const candidateIds = [...new Set([lastVisited?.workspaceId, ...live.map((c) => c.workspaceId)])].filter(
+		(id): id is string => Boolean(id) && (workspaces.data ?? []).some((w) => w.config.id === id && online.has(w.config.serverId)),
+	);
+	const lists = useQueries({
+		queries: candidateIds.map((id) => ({ ...sessionsQueryOptions(id), retry: false })),
+		combine: (results) => ({
+			loading: results.some((r) => r.isLoading),
+			byWorkspace: Object.fromEntries(results.map((r, i) => [candidateIds[i], r.data])) as Record<string, SessionSummary[] | undefined>,
+		}),
+	});
+
+	if (!serversReady || !convsReady || workspaces.isLoading || lists.loading) return <LoadingBlock />;
 
 	const workspaceIds = new Set((workspaces.data ?? []).map((w) => w.config.id));
-	if (lastVisited && workspaceIds.has(lastVisited.workspaceId)) {
-		return <Navigate to={paths.chat(lastVisited.workspaceId, lastVisited.sessionId)} replace />;
-	}
-	const recent = mostRecentConversation(live);
-	if (recent?.workspaceId && recent.info.sessionId) {
-		return <Navigate to={paths.chat(recent.workspaceId, recent.info.sessionId)} replace />;
-	}
+	const target = pickResumeTarget(lastVisited, workspaceIds, live, lists.byWorkspace);
+	if (target) return <Navigate to={paths.chat(target.workspaceId, target.sessionId)} replace />;
 
 	if (servers.length === 0) {
 		return (

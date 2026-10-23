@@ -547,6 +547,114 @@ async function main() {
 		await shot("chat-back");
 	});
 
+	// ---------------------------------------------------------------- archive
+	const S3a = "archive";
+	const archivedToggle = () => sidebar().getByRole("button", { name: /^已归档（\d+）$/ });
+	const archivedGroup = () => sidebar().getByRole("group", { name: "已归档的会话" });
+	/** Opacity of an element times its ancestors' (what is actually seen). */
+	const seenOpacity = (locator) =>
+		locator.evaluate((el) => {
+			let opacity = 1;
+			for (let node = el; node; node = node.parentElement) opacity *= Number(getComputedStyle(node).opacity);
+			return opacity;
+		});
+	const focused = () =>
+		page.evaluate(() => ({
+			tag: document.activeElement?.tagName ?? null,
+			label: document.activeElement?.getAttribute("aria-label") ?? null,
+			archivedToggle: document.activeElement?.hasAttribute("data-archived-toggle") ?? false,
+			sessionFile: document.activeElement?.getAttribute("data-session-file") ?? null,
+		}));
+
+	await uiStep(S3a, "归档 from the sidebar: the session leaves the list for the collapsed 已归档 group", async () => {
+		// From another page, so the archived session is not the open one.
+		await page.getByRole("navigation", { name: "位置" }).getByRole("link", { name: SERVER_NAME, exact: true }).click();
+		await page.waitForURL(new RegExp(`/servers/${serverId}$`));
+		const row = sidebar().getByRole("link", { name: /你好/ }).first();
+		const archive = sidebar().getByRole("button", { name: "归档会话 你好" });
+		await archive.waitFor({ state: "attached" });
+		// At rest the row actions are hidden, a disabled one too (while the session runs it must not
+		// cover the title or the 未读 badge with a faded icon).
+		const viewport = page.viewportSize();
+		await page.mouse.move(viewport.width - 20, viewport.height - 20);
+		assert((await seenOpacity(archive)) === 0, "archive button hidden at rest", await seenOpacity(archive));
+		await archive.evaluate((el) => el.setAttribute("disabled", ""));
+		assert((await seenOpacity(archive)) === 0, "a disabled archive button stays hidden at rest", await seenOpacity(archive));
+		await row.hover();
+		assert((await seenOpacity(archive)) === 0.5, "a disabled archive button shows faded on hover", await seenOpacity(archive));
+		await archive.evaluate((el) => el.removeAttribute("disabled"));
+		await archive.waitFor();
+		await shot("sidebar-archive-button");
+		await archive.click();
+		await page.getByText("会话已归档，可在“已归档”中找回").waitFor();
+		await waitUntil("session left the active list", async () => (await sidebar().getByRole("link", { name: /你好/ }).count()) === 0, { timeoutMs: 10_000 });
+		assert((await archivedToggle().innerText()).trim() === "已归档（1）", "已归档 group with one session", await archivedToggle().innerText());
+		assert((await archivedToggle().getAttribute("aria-expanded")) === "false", "the group starts collapsed");
+		const { sessions } = await api.get(`/workspaces/${workspaceId}/sessions`);
+		assert(sessions.length === 1 && typeof sessions[0].archivedAt === "number", "the host marks the session archived", sessions);
+		await shot("sidebar-archived");
+	});
+
+	await uiStep(S3a, "已归档: open the archived session read-only with the 此会话已归档 banner", async () => {
+		await archivedToggle().click();
+		const row = archivedGroup().getByRole("link", { name: /你好/ });
+		await row.getByText(/^归档于 /).waitFor();
+		await archivedGroup().getByRole("button", { name: "恢复会话 你好" }).waitFor();
+		await archivedGroup().getByRole("button", { name: "删除会话 你好" }).waitFor();
+		await row.click();
+		await page.waitForURL(new RegExp(`/w/${workspaceId}/chat/${sessionId}$`));
+		await page.getByText("此会话已归档", { exact: true }).waitFor();
+		await messages().getByText("收到：你好").waitFor({ timeout: 30_000 });
+		await infoPanel().getByRole("button", { name: "恢复会话" }).waitFor();
+		await shot("chat-archived");
+		// The tree mounts again on the open archived session (as the mobile drawer does): the group is open.
+		await sidebar().getByRole("button", { name: `收起 ${SERVER_NAME}` }).click();
+		await sidebar().getByRole("button", { name: `展开 ${SERVER_NAME}` }).click();
+		await archivedGroup().getByRole("link", { name: /你好/ }).waitFor();
+		assert((await archivedToggle().getAttribute("aria-expanded")) === "true", "已归档 group open on the archived session after a remount");
+	});
+
+	await uiStep(S3a, "sending in the archived session restores it first, then the reply arrives", async () => {
+		await composer().fill("归档后继续");
+		await composer().press("Enter");
+		await messages().getByText("收到：归档后继续").waitFor({ timeout: 60_000 });
+		await page.getByText("此会话已归档", { exact: true }).waitFor({ state: "detached", timeout: 10_000 });
+		await sidebar().getByRole("link", { name: /你好/ }).first().waitFor();
+		await waitUntil("已归档 group gone", async () => (await archivedToggle().count()) === 0, { timeoutMs: 10_000 });
+		await infoPanel().getByRole("button", { name: "归档会话" }).waitFor();
+		const { sessions } = await api.get(`/workspaces/${workspaceId}/sessions`);
+		assert(sessions.every((s) => s.archivedAt === undefined), "the host no longer marks the session", sessions);
+		await shot("chat-unarchived");
+	});
+
+	await uiStep(S3a, "keyboard: archive and restore from the sidebar keep the focus; 已归档 comes back collapsed", async () => {
+		await page.getByRole("navigation", { name: "位置" }).getByRole("link", { name: SERVER_NAME, exact: true }).click();
+		await page.waitForURL(new RegExp(`/servers/${serverId}$`));
+		const { sessions } = await api.get(`/workspaces/${workspaceId}/sessions`);
+		const file = sessions[0]?.file;
+		const archive = sidebar().getByRole("button", { name: "归档会话 你好" });
+		await archive.focus();
+		await page.keyboard.press("Enter");
+		await archivedToggle().waitFor();
+		// The group was expanded before its last session was restored; it reappears collapsed.
+		assert((await archivedToggle().getAttribute("aria-expanded")) === "false", "已归档 group collapsed again");
+		await waitUntil("focus on the 已归档 toggle (the focused row left the list)", async () => (await focused()).archivedToggle, { timeoutMs: 5000 }).catch(
+			async (err) => {
+				throw new Error(`${err.message}; focused: ${JSON.stringify(await focused())}`);
+			},
+		);
+		await page.keyboard.press("Enter");
+		const restore = archivedGroup().getByRole("button", { name: "恢复会话 你好" });
+		await restore.focus();
+		await page.keyboard.press("Enter");
+		await waitUntil("已归档 group gone", async () => (await archivedToggle().count()) === 0, { timeoutMs: 10_000 });
+		await waitUntil("focus on the restored row", async () => ((await focused()).sessionFile === file ? true : null), { timeoutMs: 5000 });
+		const row = sidebar().getByRole("link", { name: /你好/ }).first();
+		await row.click();
+		await page.waitForURL(new RegExp(`/w/${workspaceId}/chat/${sessionId}$`));
+		await infoPanel().getByRole("button", { name: "归档会话" }).waitFor();
+	});
+
 	// ---------------------------------------------------------------- files / git / terminal
 	const S4 = "files+git+terminal";
 

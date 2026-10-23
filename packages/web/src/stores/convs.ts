@@ -73,16 +73,6 @@ export function useConversationView(convId: string | null | undefined): Conversa
 	return useConvsStore((s) => (convId ? s.byId[convId] : undefined));
 }
 
-/** Most recently active live conversation (HomePage redirect). */
-export function mostRecentConversation(list: readonly ConversationView[]): ConversationView | undefined {
-	let best: ConversationView | undefined;
-	for (const c of list) {
-		if (!c.workspaceId || !c.info.sessionId) continue;
-		if (!best || c.info.lastActivityAt > best.info.lastActivityAt) best = c;
-	}
-	return best;
-}
-
 /** Initial load + "convs" topic + reload after WS reconnects. Mount once (AppShell). */
 export function useConvsLiveSync(): void {
 	useEffect(() => {

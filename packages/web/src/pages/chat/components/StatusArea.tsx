@@ -1,8 +1,9 @@
 import type { ConversationState } from "@pi-web/shared";
-import { RotateCw, X } from "lucide-react";
+import { Archive, ArchiveRestore, RotateCw, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button, IconButton, Spinner } from "../../../components/ui";
 import { cn } from "../../../lib/cn";
+import { formatRelativeTime } from "../../../lib/format";
 import { firstSeen, useNow } from "../hooks";
 import { stripAnsi } from "../logic/composer";
 
@@ -114,5 +115,19 @@ export function ExitedBanner({ exited, onDismiss }: { exited: NonNullable<Conver
 				</details>
 			)}
 		</Banner>
+	);
+}
+
+/** Top of an archived session's chat: archived sessions are hidden in Pi-Web until restored (sending restores too). */
+export function ArchivedBanner({ archivedAt, restoring, onRestore }: { archivedAt: number; restoring: boolean; onRestore: () => void }) {
+	return (
+		<div role="status" className="flex shrink-0 items-center gap-2.5 border-b border-border bg-panel px-4 py-2 sm:px-6">
+			<Archive size={14} strokeWidth={1.8} className="shrink-0 text-fg-3" aria-hidden="true" />
+			<span className="text-sm font-semibold text-fg">此会话已归档</span>
+			<span className="min-w-0 flex-1 truncate text-xs text-fg-3">归档于 {formatRelativeTime(archivedAt)} · 发送消息会自动恢复</span>
+			<Button size="sm" variant="outline" icon={<ArchiveRestore size={13} strokeWidth={1.8} />} loading={restoring} onClick={onRestore}>
+				恢复
+			</Button>
+		</div>
 	);
 }

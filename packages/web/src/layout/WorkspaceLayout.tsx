@@ -6,7 +6,7 @@ import { ButtonLink } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/Display";
 import { LoadingBlock } from "../components/ui/Spinner";
 import { parseRoute, paths } from "../lib/routes";
-import { findSessionById } from "../lib/sessions";
+import { canRememberSession, findSessionById, isArchived } from "../lib/sessions";
 import { useConvsStore } from "../stores/convs";
 import { WorkspaceTabs } from "../pages/workspace/WorkspaceTabs";
 import { useUiStore } from "../stores/ui";
@@ -21,19 +21,28 @@ export function WorkspaceLayout() {
 	const sessionId = route.kind === "workspace" ? route.sessionId : undefined;
 	const { workspace, isLoading, error } = useWorkspace(workspaceId);
 	const rememberSession = useUiStore((s) => s.rememberSession);
+	const sessions = useWorkspaceSessions(workspaceId);
+	// Archived sessions are viewed but not remembered: the 对话 tab, "/" and the Files/Git links skip
+	// them. So the session is remembered once the list told (or failed to tell) whether it is archived.
+	const remember = canRememberSession(sessionId, sessions);
 
 	useEffect(() => {
-		if (sessionId) rememberSession(workspaceId, sessionId);
-	}, [workspaceId, sessionId, rememberSession]);
+		if (remember && sessionId) rememberSession(workspaceId, sessionId);
+	}, [workspaceId, sessionId, remember, rememberSession]);
 
 	// A remembered session that no longer exists (deleted, e.g. from another tab) is forgotten
 	// once the session list says so, unless a live conversation serves it (not listed yet).
-	const sessions = useWorkspaceSessions(workspaceId);
+	// So is one that was archived meanwhile.
 	const lastSession = useUiStore((s) => s.lastSession[workspaceId]);
 	const convsById = useConvsStore((s) => s.byId);
 	useEffect(() => {
-		if (!lastSession || lastSession === sessionId || !sessions.isSuccess) return;
-		if (findSessionById(sessions.data, lastSession)) return;
+		if (!lastSession || !sessions.isSuccess) return;
+		const remembered = findSessionById(sessions.data, lastSession);
+		if (remembered) {
+			if (isArchived(remembered)) useUiStore.getState().forgetSession(workspaceId, lastSession);
+			return;
+		}
+		if (lastSession === sessionId) return;
 		if (Object.values(convsById).some((c) => c.info.sessionId === lastSession && c.info.status !== "exited")) return;
 		useUiStore.getState().forgetSession(workspaceId, lastSession);
 	}, [lastSession, sessionId, sessions.isSuccess, sessions.data, convsById, workspaceId]);

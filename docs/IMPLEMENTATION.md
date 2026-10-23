@@ -386,6 +386,16 @@ logs/pi-web.log
   - 再用 `createReadStream` 读取，读取结束后删除远端文件；
   - 文件名取会话名或 id。
 
+### 3.8a 归档会话（`src/core/archive.ts`）
+- 归档只在 Pi-Web 中隐藏会话：标记保存在 Host，不调用 agent，服务器上的会话文件不动；服务器离线时也能归档和恢复。
+- 存储：Store 的 keyed state（`state.json`，原子写入），键 `archived:<serverId>`，值为 `{ [会话文件绝对路径]: { archivedAt, cwd? } }`；没有记录时删除该键。重复归档保留第一次的 archivedAt。
+- 列表：`GET /workspaces/:wsId/sessions` 和 `GET /servers/:id/workspaces`（刷新会话数）在 `sessions.list` 成功后给已归档的会话填上 `SessionSummary.archivedAt`（agent 从不设置它）。Host 记住每个工作区最近一次成功列出的会话文件，工作区的 sessionCount 在生成视图时按当前归档记录计算、只计未归档的会话，所以归档和恢复（包括离线时）立即反映在 `GET /workspaces` 等的会话数上。离线时列表的行为不变（仍需 agent，不另做缓存）。
+- 清理：
+  - `DELETE /sessions` 成功后删除该会话的记录；`DELETE /servers/:id` 删除 `archived:<id>`；
+  - 列表成功时，把出现在列表中的记录标上该工作区路径 `cwd`；之后同一工作区的成功列表读到了该文件所在的目录（列表中有同目录的其他会话）却没有该文件时，带此 `cwd` 的记录被删除（会话文件已不存在）。只删除在这次 `sessions.list` 开始之前归档的记录，避免与刚出现的会话竞争；列表失败时不清理。agent 列出的目录随配置变化（agentDirMode、`sessionDir`、`PI_CODING_AGENT_SESSION_DIR`），列表中没有该目录的会话（包括空列表）时保留记录：旧文件可能还在，换回原目录后仍是归档状态。
+- 运行中（ConversationService 中 `info.sessionFile === file` 且状态为 running 或 waiting_ui）的会话不能归档：409 `BUSY`“会话正在运行，无法归档”。空闲的进程可以继续运行。
+- 变化时发布 WS 话题 `sessions`：`SessionsTopicEvent { serverId, file, archivedAt | null, deleted? }`（归档、恢复，以及删除了已归档的会话，后者带 `deleted: true`）。网页只更新该服务器的工作区的缓存列表；删除事件只触发重新获取，不会把会话当作恢复显示到活动列表中。
+
 ### 3.9 HTTP / WS（Fastify）
 - 路由表见第 5 节。错误统一返回 `ApiErrorBody`：ApiError 按其 status，参数校验失败返回 400，其余返回 500。
 - 安全：
@@ -426,6 +436,7 @@ logs/pi-web.log
   ```
   src/main.tsx  src/App.tsx(路由)  src/styles.css
   src/api/{client.ts,ws.ts,hooks.ts}        REST 封装(类型取自 shared/api)、WS 单连接+话题引用计数+自动重连、useTopic
+  src/api/archive.ts                         归档/恢复：立即更新缓存的会话列表再重新获取，"sessions" 话题同步其他标签页
   src/stores/{servers.ts,convs.ts,toasts.ts,conversation.ts}
   src/components/ui/*                        Button/IconButton/Input/Select/Textarea/Checkbox/Radio/Switch/Segmented/Card/Badge/StatusDot/Modal/Tabs/Toast/Spinner/ProgressBar/EmptyState/KeyValue
   src/components/{Markdown,CodeBlock,DiffView,JsonView}.tsx
@@ -437,7 +448,7 @@ logs/pi-web.log
   src/lib/{format.ts,diff-parse.ts}
   ```
 - 路由：
-  - `/` 重定向到最近一个对话，没有时进入空状态页
+  - `/` 重定向到最近一个对话（跳过已归档的会话），没有时进入空状态页
   - `/servers/new`、`/servers/:serverId`、`/servers/:serverId/settings`
   - `/w/:workspaceId/chat`（新对话）、`/w/:workspaceId/chat/:sessionId`（sessionId 取文件名中的 uuid 部分，通过 sessions 列表映射到文件）
   - `/w/:workspaceId/files`、`/w/:workspaceId/terminal`、`/w/:workspaceId/git`
@@ -468,7 +479,8 @@ logs/pi-web.log
   - 控件：
     - 模型选择（get_available_models + set_model）、思考级别（get_available_thinking_levels）；
     - 右侧面板：上下文占用条和用量（get_session_stats，运行结束后刷新）、会话路径；
-    - 操作：树视图、Fork（get_fork_messages + fork）、Clone、压缩（可附带指令）、导出 HTML、重命名、自动压缩和自动重试开关；
+    - 操作：树视图、Fork（get_fork_messages + fork）、Clone、压缩（可附带指令）、导出 HTML、重命名、归档/恢复、删除、自动压缩和自动重试开关；
+  - 归档：侧栏的活动列表和会话数不含已归档的会话，它们在每个工作区下默认折叠的“已归档（N）”分组中（打开、恢复、删除）；已归档的会话顶部显示“此会话已归档”和“恢复”；发送消息（含 steer/follow-up、`!cmd`）前先 `POST /sessions/unarchive`，失败时提示且不发送；已归档的会话不会被记为工作区的上一个会话（对话标签页、首页、“在对话中引用”的目标）；
     - configStale 时显示“配置已更新”卡片，提供“重新加载”（companion reload）。
   - 扩展 UI：
     - pending 对话框以模态呈现，有 timeout 时显示倒计时：截止时间从 pi 发出请求时算起（实时事件到达时记录；快照带 agent 计算的 `uiRemainingMs`），到 0 后禁用回答按钮；
@@ -557,7 +569,11 @@ GET    /workspaces/:wsId/git/diff?path=&area=&context= → GitDiffResponse
 GET    /workspaces/:wsId/git/log?limit=        → GitLogResponse
 
 GET    /sessions/read?serverId=&file=          → SessionFileResponse
-DELETE /sessions?serverId=&file=               → { trashedTo }
+DELETE /sessions?serverId=&file=               → { trashedTo }          (同时删除归档记录)
+POST   /sessions/archive   ArchiveSessionRequest → ArchiveSessionResponse { ok, archivedAt }
+                            （只在 Host 上标记，不需要 agent；file 必须是规范化的 .jsonl 绝对路径，否则 400；
+                             服务器不存在 404；该会话的进程 running/waiting_ui 时 409 BUSY）
+POST   /sessions/unarchive ArchiveSessionRequest → { ok: true }
 
 GET    /conversations                          → { conversations: ConversationView[] }
 POST   /workspaces/:wsId/conversations OpenConversationRequest → ConversationView
@@ -583,7 +599,7 @@ GET    /cache                                  → CacheResponse
 DELETE /cache/:name                            → { ok: true }
 POST   /cache/import-node?fileName=  (raw body) → CacheEntry
 ```
-WebSocket：`/ws`（话题见 `api.ts`），`/ws/term`（见 `api.ts` 末尾）。
+WebSocket：`/ws`（话题见 `api.ts`，含归档变化的 `sessions`），`/ws/term`（见 `api.ts` 末尾）。
 
 ---
 
@@ -596,6 +612,6 @@ WebSocket：`/ws`（话题见 `api.ts`），`/ws/term`（见 `api.ts` 末尾）�
 5. 验证 fork/tree/label/reload、文件浏览、git、终端；
 6. 验证自动同步和 OAuth 推送（用伪造的 oauth 条目验证变换）。
 
-以上流程已自动化为 API 级 E2E：`npm run build && npm run e2e:api`（`e2e/api-e2e.mjs`，需 root + OpenSSH；`E2E_KEEP=1` 保留临时目录，`E2E_VERBOSE=1` 打印全部事件）。它像浏览器一样驱动 REST + `/ws` + `/ws/term`，并额外覆盖扩展对话框（ui-response）、提示模板/技能展开、write 工具、abort、Pi-Web 重启后的事件补发与卸载。
+以上流程已自动化为 API 级 E2E：`npm run build && npm run e2e:api`（`e2e/api-e2e.mjs`，需 root + OpenSSH；`E2E_KEEP=1` 保留临时目录，`E2E_VERBOSE=1` 打印全部事件）。它像浏览器一样驱动 REST + `/ws` + `/ws/term`，并额外覆盖扩展对话框（ui-response）、提示模板/技能展开、write 工具、abort、归档会话（列表标记、运行中 409、恢复、删除时清除记录、断开连接时归档）、Pi-Web 重启后的事件补发与卸载。
 
-浏览器 E2E：`npm run build && npm run e2e:ui`（`e2e/ui-e2e.mjs`，与 API E2E 共用 `e2e/lib/env.mjs` 中的环境：sshd fixture、mock LLM、Host agent 目录、数据目录）。用 Playwright 驱动 Chromium（1440×960）走完添加服务器向导（连接 → 主机指纹 → 探测 → 离线部署 → 同步）、新建工作区（目录选择器 + 新建文件夹）、对话（流式回复、bash 工具卡片、信息面板、会话树与标签、模型/思考选择、`/` 补全与提示模板、刷新恢复、离开再返回）、文件/Git/终端、同步中心（预览、手动同步）、全局设置、服务器设置，以及断开/重连。每一步截图到 `e2e/screenshots/`，出现页面异常、未预期的 console.error、失败的 `/api` 请求或整页滚动即判失败。需要全局或本地安装的 `playwright` 包与 `PLAYWRIGHT_BROWSERS_PATH` 下的 Chromium；`E2E_HOLD=1` 在结束后保留环境便于手动调试。
+浏览器 E2E：`npm run build && npm run e2e:ui`（`e2e/ui-e2e.mjs`，与 API E2E 共用 `e2e/lib/env.mjs` 中的环境：sshd fixture、mock LLM、Host agent 目录、数据目录）。用 Playwright 驱动 Chromium（1440×960）走完添加服务器向导（连接 → 主机指纹 → 探测 → 离线部署 → 同步）、新建工作区（目录选择器 + 新建文件夹）、对话（流式回复、bash 工具卡片、信息面板、会话树与标签、模型/思考选择、`/` 补全与提示模板、刷新恢复、离开再返回）、归档（侧栏归档、已归档分组、打开归档会话、发送时自动恢复）、文件/Git/终端、同步中心（预览、手动同步）、全局设置、服务器设置，以及断开/重连。每一步截图到 `e2e/screenshots/`，出现页面异常、未预期的 console.error、失败的 `/api` 请求或整页滚动即判失败。需要全局或本地安装的 `playwright` 包与 `PLAYWRIGHT_BROWSERS_PATH` 下的 Chromium；`E2E_HOLD=1` 在结束后保留环境便于手动调试。

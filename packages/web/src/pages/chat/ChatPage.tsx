@@ -2,6 +2,7 @@ import type { BashResult } from "@pi-web/shared";
 import { CircleAlert, CloudOff, MessageSquarePlus, PanelRightOpen } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
+import { setSessionArchived } from "../../api/archive";
 import { errorMessage } from "../../api/client";
 import { invalidateSessions } from "../../api/hooks";
 import { ButtonLink, Callout, EmptyState, IconButton, LoadingBlock, toast } from "../../components/ui";
@@ -18,7 +19,7 @@ import { InfoPanel } from "./components/InfoPanel";
 import { MessageList } from "./components/MessageList";
 import type { BashRunView } from "./components/MessageViews";
 import { SessionTreeModal } from "./components/SessionTreeModal";
-import { CompactingBanner, ErrorBanner, ExitedBanner, ExtensionStatuses, ExtensionWidgets, RetryBanner } from "./components/StatusArea";
+import { ArchivedBanner, CompactingBanner, ErrorBanner, ExitedBanner, ExtensionStatuses, ExtensionWidgets, RetryBanner } from "./components/StatusArea";
 import { useMediaMinWidth, useStoredState } from "./hooks";
 import { buildDisplayItems, hasRunningTool } from "./logic/messages";
 
@@ -307,6 +308,37 @@ function ChatView({
 	const pendingDialog = conv.isLive ? (state.ui.pending[0] as DialogRequest | undefined) : undefined;
 	const sessionName = state.sessionName ?? conv.session?.name ?? "";
 
+	// ---------- archive ----------
+
+	// Archiving only hides the session in Pi-Web (host-side mark); sending restores it first.
+	const archivedAt = conv.session?.archivedAt;
+	const archiveServerId = conv.serverId;
+	const archiveFile = conv.session?.file;
+	const [archiveBusy, setArchiveBusy] = useState(false);
+	const setArchived = useCallback(
+		async (archived: boolean): Promise<boolean> => {
+			if (!archiveServerId || !archiveFile) return false;
+			setArchiveBusy(true);
+			try {
+				await setSessionArchived(archiveServerId, archiveFile, archived);
+				return true;
+			} catch (e) {
+				toast.error(errorMessage(e), { title: archived ? "归档失败" : "恢复会话失败" });
+				return false;
+			} finally {
+				setArchiveBusy(false);
+			}
+		},
+		[archiveServerId, archiveFile],
+	);
+	const restoreBeforeSend = useCallback(() => setArchived(false), [setArchived]);
+	const toggleArchived = () => {
+		const archive = archivedAt === undefined;
+		void setArchived(archive).then((ok) => {
+			if (ok) toast.success(archive ? "会话已归档" : "会话已恢复");
+		});
+	};
+
 	// ---------- render ----------
 
 	let placeholder: ReactNode;
@@ -373,6 +405,7 @@ function ChatView({
 	return (
 		<div className="relative flex min-h-0 flex-1">
 			<section aria-label="对话" className="flex min-w-0 flex-1 flex-col bg-bg">
+				{archivedAt !== undefined && <ArchivedBanner archivedAt={archivedAt} restoring={archiveBusy} onRestore={toggleArchived} />}
 				<MessageList
 					items={items}
 					workspaceId={workspaceId}
@@ -408,6 +441,7 @@ function ChatView({
 							onBash={runBash}
 							bashRunning={bashRunning}
 							onAbortBash={abortBash}
+							beforeSend={archivedAt !== undefined ? restoreBeforeSend : undefined}
 						/>
 						{conv.isLive && <ExtensionWidgets widgets={state.ui.widgets} placement="belowEditor" />}
 					</div>
@@ -423,6 +457,9 @@ function ChatView({
 					onOpenCompact={() => setDialog("compact")}
 					onOpenRename={() => setDialog("rename")}
 					onOpenDelete={() => setDialog("delete")}
+					archived={archivedAt !== undefined}
+					archiveBusy={archiveBusy}
+					onToggleArchive={toggleArchived}
 					className={wide ? "w-[288px] shrink-0" : "absolute inset-y-0 right-0 z-20 w-[300px] max-w-[90%] shadow-pop"}
 				/>
 			)}

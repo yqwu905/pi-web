@@ -16,6 +16,7 @@ import type {
 	UpdateServerRequest,
 } from "@pi-web/shared";
 import type { FastifyInstance } from "fastify";
+import { forgetArchivedServer } from "../core/archive.js";
 import { secretKeys } from "../core/secrets.js";
 import { createServerConfig, mergeServerConfig, secretChange } from "../core/store.js";
 import { ApiError } from "../core/types.js";
@@ -296,6 +297,7 @@ export function serverRoutes(app: FastifyInstance, ctx: AppContext, options: Ser
 		for (const ws of ctx.store.listWorkspaces(server.id)) await ctx.store.deleteWorkspace(ws.id);
 		await ctx.secrets.delete(secretKeys.serverSecret(server.id));
 		await ctx.secrets.delete(secretKeys.proxyToken(server.id));
+		await forgetArchivedServer(ctx.store, server.id);
 		await ctx.store.deleteServer(server.id);
 		return { ok: true as const };
 	});

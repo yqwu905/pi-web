@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { posix as posixPath } from "node:path";
-import type { SessionListResponse, WorkspaceConfig, WorkspaceView } from "@pi-web/shared";
+import type { SessionListResponse, SessionSummary, WorkspaceConfig, WorkspaceView } from "@pi-web/shared";
 import type { FastifyInstance } from "fastify";
+import { activeSessionCount, applyArchiveMarks } from "../core/archive.js";
 import { ApiError } from "../core/types.js";
 import type { AppContext } from "../core/types.js";
 import {
@@ -45,9 +46,23 @@ function parseDefaults(body: Json): WorkspaceConfig["defaults"] | undefined {
 }
 
 export function workspaceRoutes(app: FastifyInstance, ctx: AppContext): void {
-	/** Last known session count per workspace id, from the agent's session lists. */
-	const sessionCounts = new Map<string, number>();
-	const view = (w: WorkspaceConfig) => workspaceView(ctx, w, sessionCounts.get(w.id));
+	/**
+	 * Session files per workspace id from the agent's last successful list. The count is taken when
+	 * a view is built, so archiving or restoring (also while offline) shows at once.
+	 */
+	const listedFiles = new Map<string, string[]>();
+	const sessionCount = (w: WorkspaceConfig) => {
+		const files = listedFiles.get(w.id);
+		return files ? activeSessionCount(ctx.store, w.serverId, files) : undefined;
+	};
+	const view = (w: WorkspaceConfig) => workspaceView(ctx, w, sessionCount(w));
+
+	/** A workspace's sessions with their archive marks (`sessions.list` must have succeeded). */
+	const markArchived = async (workspace: WorkspaceConfig, sessions: SessionSummary[], listedSince: number) => {
+		const marked = await applyArchiveMarks(ctx.store, workspace.serverId, workspace.path, sessions, listedSince);
+		listedFiles.set(workspace.id, marked.map((s) => s.file));
+		return marked;
+	};
 
 	/** Refreshes the counts of a server's workspaces over an existing agent link (cached on the agent). */
 	const refreshSessionCounts = async (serverId: string, workspaces: WorkspaceConfig[]): Promise<void> => {
@@ -56,8 +71,9 @@ export function workspaceRoutes(app: FastifyInstance, ctx: AppContext): void {
 		await Promise.all(
 			workspaces.map(async (w) => {
 				try {
+					const listedSince = Date.now();
 					const result = await client.call("sessions.list", { cwd: w.path }, { timeoutMs: SESSION_COUNT_TIMEOUT_MS });
-					sessionCounts.set(w.id, result.sessions.length);
+					await markArchived(w, result.sessions, listedSince);
 				} catch {
 					// keep the last known count
 				}
@@ -136,15 +152,15 @@ export function workspaceRoutes(app: FastifyInstance, ctx: AppContext): void {
 	app.delete<WsParams>("/workspaces/:wsId", async (request) => {
 		const workspace = requireWorkspace(ctx, request.params.wsId);
 		await ctx.store.deleteWorkspace(workspace.id);
-		sessionCounts.delete(workspace.id);
+		listedFiles.delete(workspace.id);
 		return { ok: true as const };
 	});
 
 	app.get<WsParams>("/workspaces/:wsId/sessions", async (request): Promise<SessionListResponse> => {
 		const workspace = requireWorkspace(ctx, request.params.wsId);
 		const client = await requireAgent(ctx, workspace.serverId);
+		const listedSince = Date.now();
 		const result = await client.call("sessions.list", { cwd: workspace.path });
-		sessionCounts.set(workspace.id, result.sessions.length);
-		return { sessions: result.sessions };
+		return { sessions: await markArchived(workspace, result.sessions, listedSince) };
 	});
 }

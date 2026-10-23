@@ -570,6 +570,50 @@ async function main() {
 		assert(texts.includes("收到：你好"), "first reply persisted", texts);
 	});
 
+	/** The host's archive records of the server (state.json, written before the route answers). */
+	const archiveRecords = async () => JSON.parse(await readFile(path.join(dataDir, "state.json"), "utf8"))[`archived:${serverId}`] ?? {};
+
+	await step(S3, "archive: a session is hidden by a host-side mark, refused while running, restored", async () => {
+		assert(originalSessionFile && forkFile, "no sessions to archive (earlier conversation steps failed)");
+		events.subscribe("sessions");
+		const fromIndex = events.list("sessions").length;
+		const archived = await api.post("/sessions/archive", { serverId, file: originalSessionFile });
+		assert(archived.ok === true && typeof archived.archivedAt === "number", "archive", archived);
+		await events.waitFor("sessions", (e) => e.file === originalSessionFile && e.archivedAt === archived.archivedAt, {
+			fromIndex,
+			timeoutMs: 5000,
+			what: "sessions topic event for the archive",
+		});
+		const { sessions } = await api.get(`/workspaces/${wsId}/sessions`);
+		assert(sessions.find((s) => s.file === originalSessionFile)?.archivedAt === archived.archivedAt, "the list marks the archived session", sessions);
+		assert(sessions.find((s) => s.file === forkFile)?.archivedAt === undefined, "other sessions are not marked", sessions);
+		const { workspaces } = await api.get(`/servers/${serverId}/workspaces`);
+		const ws = workspaces.find((w) => w.config.id === wsId);
+		assert(ws?.sessionCount === sessions.length - 1, `workspace sessionCount ${ws?.sessionCount} skips the archived session (${sessions.length} listed)`, ws);
+		// Only Pi-Web hides it: the file stays where pi's own /resume finds it, and the mark lives on the host.
+		assert(runAsTestUser(`test -f '${originalSessionFile}' && echo yes`).stdout.trim() === "yes", "the session file is left in place");
+		assert((await archiveRecords())[originalSessionFile]?.archivedAt === archived.archivedAt, "archive record persisted in state.json");
+
+		// The session of a running conversation cannot be archived (the fork is served by the main conversation).
+		const run = prompt("run: sleep 3; echo archive-busy");
+		run.catch(() => {}); // awaited below; a failure before that must not be unhandled
+		await waitUntil("conversation running", async () => (await api.get("/conversations")).conversations.find((c) => c.convId === convId)?.info.status === "running", {
+			timeoutMs: 15_000,
+		});
+		const busy = await api.call("POST", "/sessions/archive", { serverId, file: forkFile }, { expectStatus: 409 });
+		assert(busy?.error?.code === "BUSY" && busy.error.message === "会话正在运行，无法归档", "archive while running → 409 BUSY", busy);
+		await run;
+		assert((await archiveRecords())[forkFile] === undefined, "nothing recorded for the refused archive");
+
+		const restored = await api.post("/sessions/unarchive", { serverId, file: originalSessionFile });
+		assert(restored.ok === true, "unarchive", restored);
+		const after = await api.get(`/workspaces/${wsId}/sessions`);
+		assert(after.sessions.every((s) => s.archivedAt === undefined), "no session is archived after the restore", after.sessions);
+		assert((await archiveRecords())[originalSessionFile] === undefined, "archive record removed");
+		const bad = await api.call("POST", "/sessions/archive", { serverId, file: "relative.jsonl" }, { expectStatus: 400 });
+		assert(bad?.error?.code === "BAD_REQUEST", "relative path → 400", bad);
+	});
+
 	await step(S3, "export a session as JSONL, then delete it to the trash (stopping its process first)", async () => {
 		const view = await api.post(`/workspaces/${wsId}/conversations`, {});
 		const cid = view.convId;
@@ -592,8 +636,20 @@ async function main() {
 		const fromIndex = events.list(`conv:${cid}`).length;
 		await api.post(`/conversations/${cid}/stop`, {});
 		await events.waitFor(`conv:${cid}`, (e) => e.record.type === "pi_web_exit", { fromIndex, timeoutMs: 20_000 });
+		// Archived first: deleting the session also drops its archive record.
+		await api.post("/sessions/archive", { serverId, file });
+		assert((await archiveRecords())[file], "the throwaway session is archived");
+		events.subscribe("sessions");
+		const sessionsFrom = events.list("sessions").length;
 		const trashed = await api.call("DELETE", deleteUrl);
 		assert(trashed?.trashedTo?.startsWith(`${fixture.home}/.pi-web/trash/sessions/`), "moved to the trash", trashed);
+		assert((await archiveRecords())[file] === undefined, "deleting the session removed its archive record");
+		// Told as a deletion, not a restore (the web must not show it as active meanwhile).
+		await events.waitFor("sessions", (e) => e.file === file && e.archivedAt === null && e.deleted === true, {
+			fromIndex: sessionsFrom,
+			timeoutMs: 5000,
+			what: "sessions topic event for the deletion",
+		});
 		assert(runAsTestUser(`test -f '${trashed.trashedTo}' && echo yes`).stdout.trim() === "yes", "trashed file exists", trashed);
 		const { sessions } = await api.get(`/workspaces/${wsId}/sessions`);
 		assert(!sessions.some((s) => s.file === file), "deleted session no longer listed", sessions);
@@ -880,6 +936,29 @@ async function main() {
 		})();
 		const reply = run.filter((e) => e.record.type === "message_end" && e.record.message.role === "assistant").at(-1);
 		assert(reply && textOf(reply.record.message.content) === "收到：重连后", "conversation works after reconnect", reply?.record);
+	});
+
+	await step(S8, "archive works while the server is disconnected; the mark shows after reconnecting", async () => {
+		assert(forkFile, "no fork session (conversation section failed)");
+		const down = await api.post(`/servers/${serverId}/disconnect`);
+		assert(down.status.connection === "disconnected", "disconnected", down.status);
+		let archived;
+		try {
+			archived = await api.post("/sessions/archive", { serverId, file: forkFile });
+			assert(archived.ok === true && typeof archived.archivedAt === "number", "archive while disconnected", archived);
+			// Listing still needs the agent (unchanged offline behavior).
+			const offline = await api.call("GET", `/workspaces/${wsId}/sessions`, undefined, { expectStatus: 409 });
+			assert(offline?.error?.code === "NOT_CONNECTED", "session list while disconnected → 409 NOT_CONNECTED", offline);
+		} finally {
+			const up = await api.post(`/servers/${serverId}/connect`);
+			assert(up.status.connection === "connected", "reconnected", up.status);
+		}
+		await waitUntil("agent after reconnect", async () => ((await api.get(`/servers/${serverId}`)).status.agent ? true : null));
+		const { sessions } = await api.get(`/workspaces/${wsId}/sessions`);
+		assert(sessions.find((s) => s.file === forkFile)?.archivedAt === archived.archivedAt, "the offline archive shows in the list", sessions);
+		await api.post("/sessions/unarchive", { serverId, file: forkFile });
+		const after = await api.get(`/workspaces/${wsId}/sessions`);
+		assert(after.sessions.every((s) => s.archivedAt === undefined), "restored", after.sessions);
 	});
 
 	// ---------------------------------------------------------------- host restart

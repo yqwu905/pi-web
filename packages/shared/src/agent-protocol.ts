@@ -252,6 +252,8 @@ export interface SessionSummary {
 	firstMessage: string;
 	/** convId of the live process serving this file, if any. */
 	runningConvId?: string;
+	/** Set by the host (never the agent) when the session is archived in Pi-Web: when, ms since epoch. */
+	archivedAt?: number;
 }
 export interface SessionsListParams {
 	cwd: string;

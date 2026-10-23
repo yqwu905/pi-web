@@ -216,6 +216,21 @@ export type GitLogResponse = GitLogResult;
 export type SessionListResponse = { sessions: SessionSummary[] };
 export type SessionFileResponse = SessionsReadResult;
 
+/**
+ * POST /api/sessions/archive and /api/sessions/unarchive. Archiving only hides the session in
+ * Pi-Web: the mark lives on the host and the session file on the server is left untouched.
+ */
+export interface ArchiveSessionRequest {
+	serverId: string;
+	/** Absolute path of the session file on the server. */
+	file: string;
+}
+export interface ArchiveSessionResponse {
+	ok: true;
+	/** Archive time (archive only). */
+	archivedAt?: number;
+}
+
 // ---------- conversations ----------
 
 /** A live conversation process on a server, as known by the host. */
@@ -396,6 +411,7 @@ export interface CacheResponse {
  * - "sync"                  → SyncTopicEvent
  * - "oauth"                 → OAuthStatusResponse
  * - `proxy:${serverId}`     → ProxyStats
+ * - "sessions"              → SessionsTopicEvent (a session was archived, restored, or deleted while archived)
  */
 export type WsTopic = string;
 
@@ -415,6 +431,15 @@ export type WsServerMessage =
 	| { type: "event"; topic: WsTopic; data: unknown }
 	| { type: "pong" }
 	| { type: "error"; message: string };
+
+/** A session's archive mark changed; `archivedAt` is null once it is restored or deleted. */
+export interface SessionsTopicEvent {
+	serverId: string;
+	file: string;
+	archivedAt: number | null;
+	/** The archived session was deleted (its file moved to the trash), not restored. */
+	deleted?: true;
+}
 
 export type ConvTopicEvent = ConvEvent;
 export type ServersTopicEvent = ServerRuntimeStatus;

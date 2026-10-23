@@ -29,11 +29,12 @@ Open `/dev/ui` in the running app to see every shared component (`src/pages/dev/
 |---|---|
 | Any REST route | `api.*` / named functions in `api/client.ts`. They throw `ApiError {status, code, message}`. Show errors with `errorMessage(e)`. |
 | Download URLs | `workspaceDownloadUrl(wsId, path)`, `conversationExportUrl(convId)`, `saveBlob(blob, name)` |
-| WS topic | `useTopic<T>(topic, handler)`. Topics are listed in `@pi-web/shared/api.ts`: `servers`, `convs`, `conv:<id>`, `deploy:<id>`, `sync`, `oauth`, `proxy:<id>`. Subscriptions are ref-counted and re-subscribed after reconnects. |
+| WS topic | `useTopic<T>(topic, handler)`. Topics are listed in `@pi-web/shared/api.ts`: `servers`, `convs`, `conv:<id>`, `deploy:<id>`, `sync`, `oauth`, `proxy:<id>`, `sessions`. Subscriptions are ref-counted and re-subscribed after reconnects. |
 | Resync after WS drop | `useWsReconnect(cb)`, `useWsStatus()` |
 | Servers (live status) | `useServers()`, `useServer(id)`, `refreshServers()`, `useServersStore.getState().upsertServer(view)` |
 | Live conversations | `useConversations()`, `useLiveConversations(wsId?)`, `useConversationView(convId)`, `refreshConversations()` |
 | Workspaces / sessions | `useAllWorkspaces()`, `useWorkspace(id)`, `useServerWorkspaces(serverId)`, `useWorkspaceSessions(wsId)` (refetched automatically on `convs` events), `useSessionById(wsId, sessionId)` |
+| Archive / restore a session | `setSessionArchived(serverId, file, archived)` from `api/archive.ts` (updates cached lists at once, works offline). Archived summaries carry `archivedAt`; `splitArchived`, `isArchived` in `lib/sessions.ts` |
 | Meta, settings, sync, git | `useMeta()`, `useSettings()`, `useSyncStatus()` (kept live by the `sync` topic), `useGitStatus(wsId)` |
 | After a mutation | `invalidateServers()`, `invalidateWorkspaces(serverId?)`, `invalidateSessions(wsId)`, `invalidateSettings()`, `invalidateSync()`, `invalidateGitStatus(wsId)`. Query keys live in `api/queryClient.ts` (`queryKeys`). |
 | Toasts | `toast.info/success/warning/error(message, { title?, source? })` |

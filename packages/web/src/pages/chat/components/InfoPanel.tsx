@@ -1,9 +1,10 @@
-import { Copy as CopyIcon, Download, FileDown, GitFork, Layers, ListTree, PanelRightClose, Pencil, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Copy as CopyIcon, Download, FileDown, GitFork, Layers, ListTree, PanelRightClose, Pencil, Trash2 } from "lucide-react";
 import { type ReactNode, useId, useMemo, useState } from "react";
 import { downloadWorkspaceFile, errorMessage, exportConversation, reloadConversation, saveBlob } from "../../../api/client";
 import { Button, Callout, IconButton, ProgressBar, SectionLabel, toast } from "../../../components/ui";
 import { cn } from "../../../lib/cn";
 import { formatCost, formatNumber, formatTokens, tildify } from "../../../lib/format";
+import { archiveBlockedReason } from "../../../lib/sessions";
 import type { ConversationHandle } from "../../../stores/conversation";
 import { useServer } from "../../../stores/servers";
 import { contextSummary, usageFromMessages, usageFromStats } from "../logic/usage";
@@ -20,12 +21,30 @@ export interface InfoPanelProps {
 	onOpenCompact: () => void;
 	onOpenRename: () => void;
 	onOpenDelete: () => void;
+	/** The session is archived (hidden in Pi-Web). */
+	archived: boolean;
+	archiveBusy: boolean;
+	onToggleArchive: () => void;
 	className?: string;
 }
 
-function ActionButton({ icon, children, onClick, loading, disabled }: { icon?: ReactNode; children: ReactNode; onClick: () => void; loading?: boolean; disabled?: boolean }) {
+function ActionButton({
+	icon,
+	children,
+	onClick,
+	loading,
+	disabled,
+	title,
+}: {
+	icon?: ReactNode;
+	children: ReactNode;
+	onClick: () => void;
+	loading?: boolean;
+	disabled?: boolean;
+	title?: string;
+}) {
 	return (
-		<Button variant="outline" size="md" className="w-full text-xs" icon={icon} onClick={onClick} loading={loading} disabled={disabled}>
+		<Button variant="outline" size="md" className="w-full text-xs" icon={icon} onClick={onClick} loading={loading} disabled={disabled} title={title}>
 			{children}
 		</Button>
 	);
@@ -42,7 +61,19 @@ function ToggleRow({ label, checked, onChange, disabled }: { label: string; chec
 }
 
 /** Right-hand 会话信息 panel: context bar, usage, session file and session actions. */
-export function InfoPanel({ conv, onClose, onOpenTree, onOpenFork, onOpenCompact, onOpenRename, onOpenDelete, className }: InfoPanelProps) {
+export function InfoPanel({
+	conv,
+	onClose,
+	onOpenTree,
+	onOpenFork,
+	onOpenCompact,
+	onOpenRename,
+	onOpenDelete,
+	archived,
+	archiveBusy,
+	onToggleArchive,
+	className,
+}: InfoPanelProps) {
 	const server = useServer(conv.serverId);
 	const [busy, setBusy] = useState<"clone" | "export" | "jsonl" | "reload" | null>(null);
 	const [, setRetryTick] = useState(0);
@@ -115,6 +146,9 @@ export function InfoPanel({ conv, onClose, onOpenTree, onOpenFork, onOpenCompact
 			setRetryTick((t) => t + 1);
 		})().catch((e: unknown) => toast.error(errorMessage(e), { title: "设置失败" }));
 	};
+
+	// Restoring is always possible; archiving waits until the conversation is idle.
+	const archiveBlocked = archived ? null : archiveBlockedReason(conv.isLive ? conv.info?.status : undefined);
 
 	const home = server?.config.deployed?.home;
 	const sessionPath = conv.sessionFile ? tildify(conv.sessionFile, home) : null;
@@ -224,6 +258,15 @@ export function InfoPanel({ conv, onClose, onOpenTree, onOpenFork, onOpenCompact
 					</ActionButton>
 					<ActionButton icon={<Pencil size={13} strokeWidth={1.8} />} onClick={onOpenRename} disabled={conv.mode === "new"}>
 						重命名
+					</ActionButton>
+					<ActionButton
+						icon={archived ? <ArchiveRestore size={13} strokeWidth={1.8} /> : <Archive size={13} strokeWidth={1.8} />}
+						onClick={onToggleArchive}
+						loading={archiveBusy}
+						disabled={!conv.session || Boolean(archiveBlocked)}
+						title={archiveBlocked ?? undefined}
+					>
+						{archived ? "恢复会话" : "归档会话"}
 					</ActionButton>
 					<ActionButton icon={<Trash2 size={13} strokeWidth={1.8} />} onClick={onOpenDelete} disabled={!conv.sessionFile}>
 						删除会话

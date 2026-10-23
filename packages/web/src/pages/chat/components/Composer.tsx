@@ -145,6 +145,8 @@ export interface ComposerProps {
 	onBash: (command: string, excludeFromContext: boolean) => void;
 	bashRunning: boolean;
 	onAbortBash: () => void;
+	/** Runs before a message or "!cmd" is sent (e.g. restore an archived session); false cancels the send. */
+	beforeSend?: () => Promise<boolean>;
 }
 
 /**
@@ -152,7 +154,7 @@ export interface ComposerProps {
  * Enter = send/steer, Alt+Enter = follow-up, Shift+Enter = newline, Esc = take back the
  * queue and abort; model and thinking selectors; queued messages with 撤回.
  */
-export function Composer({ conv, draftKey, ref, onBash, bashRunning, onAbortBash }: ComposerProps) {
+export function Composer({ conv, draftKey, ref, onBash, bashRunning, onAbortBash, beforeSend }: ComposerProps) {
 	const id = useId();
 	const [text, setText] = useState(() => loadDraft(draftKey).text);
 	const [cursor, setCursor] = useState(0);
@@ -279,13 +281,18 @@ export function Composer({ conv, draftKey, ref, onBash, bashRunning, onAbortBash
 		if (sending) return;
 		const input = classifyInput(text, images.length);
 		if (input.kind === "empty") return;
+		// First send (a user gesture): ask once whether runs may notify when they finish or need input.
+		if (input.kind !== "bash") requestNotificationPermission();
+		if (beforeSend) {
+			setSending(true);
+			const proceed = await beforeSend().finally(() => setSending(false));
+			if (!proceed) return;
+		}
 		if (input.kind === "bash") {
 			onBash(input.command, input.excludeFromContext);
 			setText("");
 			return;
 		}
-		// First send (a user gesture): ask once whether runs may notify when they finish or need input.
-		requestNotificationPermission();
 		const draft = text;
 		const pending = images;
 		const inputs = rpcState?.model?.input;

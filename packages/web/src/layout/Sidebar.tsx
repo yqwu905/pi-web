@@ -1,7 +1,9 @@
 import type { ConversationView, ServerView, SessionSummary, WorkspaceView } from "@pi-web/shared";
-import { ChevronDown, ChevronRight, Folder, FolderPlus, Plus, RefreshCw, Search, Server as ServerIcon, Settings2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Archive, ArchiveRestore, ChevronDown, ChevronRight, Folder, FolderPlus, Plus, RefreshCw, Search, Server as ServerIcon, Settings2, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
+import { setSessionArchived } from "../api/archive";
+import { errorMessage, stopConversation } from "../api/client";
 import { useAllWorkspaces, useServerWorkspaces, useWorkspaceSessions } from "../api/hooks";
 import { StatusDot } from "../components/ui/Display";
 import { IconButton } from "../components/ui/IconButton";
@@ -9,16 +11,40 @@ import { Spinner } from "../components/ui/Spinner";
 import { cn } from "../lib/cn";
 import { formatRelativeTime } from "../lib/format";
 import { parseRoute, paths } from "../lib/routes";
-import { liveConversationForSession, matchesSessionQuery, sessionRouteId, sessionTitle, unlistedConversations } from "../lib/sessions";
+import {
+	archiveBlockedReason,
+	isArchived,
+	liveConversationForSession,
+	matchesSessionQuery,
+	sessionRouteId,
+	sessionTitle,
+	sidebarSessionGroups,
+	unlistedConversations,
+} from "../lib/sessions";
+import { DeleteSessionModal } from "../pages/chat/components/DeleteSessionModal";
 import { NewWorkspaceDialog } from "../pages/workspace/NewWorkspaceDialog";
 import { WorkspaceSettingsDialog } from "../pages/workspace/WorkspaceSettingsDialog";
 import { convStatusDisplay, serverStatusDisplay } from "../lib/status";
 import { useAttentionStore } from "../stores/attention";
 import { useLiveConversations } from "../stores/convs";
 import { useServers, useServersStore } from "../stores/servers";
+import { toast } from "../stores/toasts";
 import { useUiStore } from "../stores/ui";
 
 const SESSIONS_PREVIEW = 8;
+/**
+ * Session row actions: shown on hover and keyboard focus (always on touch screens). The opacity is
+ * on this wrapper, not the buttons, so a disabled button (IconButton's disabled:opacity-50) stays hidden too.
+ */
+const ROW_ACTIONS =
+	"absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover/session:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100";
+
+/**
+ * Archiving or restoring from a row moves the row (and its focused button) to the other list.
+ * The row reports the move before it starts; once it has rendered, focus that dropped to <body>
+ * goes to the moved row, the 已归档 toggle or the workspace row instead.
+ */
+type TrackFocus = (move: { file: string; archived: boolean } | null) => void;
 
 interface SidebarContext {
 	query: string;
@@ -31,14 +57,18 @@ interface SidebarContext {
 
 function SessionRow({
 	workspaceId,
+	serverId,
 	session,
 	conv,
 	active,
+	trackFocus,
 }: {
 	workspaceId: string;
+	serverId: string;
 	session?: SessionSummary;
 	conv?: ConversationView;
 	active: boolean;
+	trackFocus: TrackFocus;
 }) {
 	const live = convStatusDisplay(conv?.info.status);
 	const running = conv?.info.status === "running" || conv?.info.status === "starting";
@@ -56,36 +86,155 @@ function SessionRow({
 				? `${formatRelativeTime(session.modifiedMs)} · ${session.messageCount} 条消息`
 				: (live?.text ?? "");
 	const to = routeId ? paths.chat(workspaceId, routeId) : paths.chat(workspaceId);
+	const archiveBlocked = archiveBlockedReason(conv?.info.status);
+	const [archiving, setArchiving] = useState(false);
+	const archive = async () => {
+		if (!session || archiving) return;
+		setArchiving(true);
+		trackFocus({ file: session.file, archived: true });
+		try {
+			await setSessionArchived(serverId, session.file, true);
+			toast.success("会话已归档，可在“已归档”中找回");
+		} catch (e) {
+			trackFocus(null);
+			toast.error(errorMessage(e), { title: "归档失败" });
+		} finally {
+			setArchiving(false);
+		}
+	};
 	return (
-		<Link
-			to={to}
-			aria-current={active ? "page" : undefined}
-			className={cn(
-				"flex flex-col gap-0.5 rounded-md px-2 py-1.5",
-				active ? "bg-selected text-fg hover:text-fg" : "text-fg-2 hover:bg-raised hover:text-fg",
-			)}
-		>
-			<span className="flex items-center gap-1.5 text-sm">
-				<StatusDot
-					tone={running ? "accent" : waiting ? "warning" : "neutral"}
-					pulse={running}
-					hollow={!running && !waiting}
-					srLabel={live?.text}
-				/>
-				<span className="min-w-0 flex-1 truncate">{title}</span>
-				{unread && !active && (
-					<span
-						className="shrink-0 rounded-sm bg-selected px-1 text-2xs leading-4 text-accent"
-						title={unread === "waiting" ? "等待你的确认" : "有新的回复"}
-					>
-						未读
-					</span>
+		<div className="group/session relative">
+			<Link
+				to={to}
+				aria-current={active ? "page" : undefined}
+				data-session-file={session?.file}
+				className={cn(
+					"flex flex-col gap-0.5 rounded-md px-2 py-1.5",
+					active ? "bg-selected text-fg hover:text-fg" : "text-fg-2 hover:bg-raised hover:text-fg",
+					session && "group-hover/session:pr-7 group-has-[:focus-visible]/session:pr-7 [@media(hover:none)]:pr-7",
 				)}
-			</span>
-			{subtitle && (
-				<span className={cn("truncate pl-3.5 text-2xs", running ? "text-link" : waiting ? "text-warning" : "text-fg-3")}>{subtitle}</span>
+			>
+				<span className="flex items-center gap-1.5 text-sm">
+					<StatusDot
+						tone={running ? "accent" : waiting ? "warning" : "neutral"}
+						pulse={running}
+						hollow={!running && !waiting}
+						srLabel={live?.text}
+					/>
+					<span className="min-w-0 flex-1 truncate">{title}</span>
+					{unread && !active && (
+						<span
+							className="shrink-0 rounded-sm bg-selected px-1 text-2xs leading-4 text-accent"
+							title={unread === "waiting" ? "等待你的确认" : "有新的回复"}
+						>
+							未读
+						</span>
+					)}
+				</span>
+				{subtitle && (
+					<span className={cn("truncate pl-3.5 text-2xs", running ? "text-link" : waiting ? "text-warning" : "text-fg-3")}>{subtitle}</span>
+				)}
+			</Link>
+			{session && (
+				<div className={ROW_ACTIONS}>
+					{/* Not disabled while archiving: a disabled button would drop the keyboard focus. */}
+					<IconButton
+						aria-label={`归档会话 ${title}`}
+						title={archiveBlocked ?? undefined}
+						size="xs"
+						variant="subtle"
+						disabled={Boolean(archiveBlocked)}
+						onClick={() => void archive()}
+					>
+						<Archive size={12} strokeWidth={2} />
+					</IconButton>
+				</div>
 			)}
-		</Link>
+		</div>
+	);
+}
+
+/** A row of the 已归档 group: opens the session (read-only until a message is sent), 恢复 and 删除. */
+function ArchivedSessionRow({
+	workspaceId,
+	serverId,
+	session,
+	conv,
+	active,
+	trackFocus,
+}: {
+	workspaceId: string;
+	serverId: string;
+	session: SessionSummary;
+	conv?: ConversationView;
+	active: boolean;
+	trackFocus: TrackFocus;
+}) {
+	const navigate = useNavigate();
+	const title = sessionTitle(session);
+	const routeId = sessionRouteId(session);
+	const [restoring, setRestoring] = useState(false);
+	const [deleteOpen, setDeleteOpen] = useState(false);
+	const restore = async () => {
+		if (restoring) return;
+		setRestoring(true);
+		trackFocus({ file: session.file, archived: false });
+		try {
+			await setSessionArchived(serverId, session.file, false);
+			toast.success("会话已恢复");
+		} catch (e) {
+			trackFocus(null);
+			toast.error(errorMessage(e), { title: "恢复失败" });
+		} finally {
+			setRestoring(false);
+		}
+	};
+	const convId = conv?.convId;
+	return (
+		<div className="group/session relative">
+			<Link
+				to={paths.chat(workspaceId, routeId)}
+				aria-current={active ? "page" : undefined}
+				className={cn(
+					"flex flex-col gap-0.5 rounded-md px-2 py-1.5 group-hover/session:pr-12 group-has-[:focus-visible]/session:pr-12 [@media(hover:none)]:pr-12",
+					active ? "bg-selected text-fg hover:text-fg" : "text-fg-3 hover:bg-raised hover:text-fg",
+				)}
+			>
+				<span className="flex items-center gap-1.5 text-sm">
+					<Archive size={11} strokeWidth={2} className="shrink-0 text-fg-3" aria-hidden="true" />
+					<span className="min-w-0 flex-1 truncate">{title}</span>
+				</span>
+				<span className="truncate pl-[17px] text-2xs text-fg-3">归档于 {formatRelativeTime(session.archivedAt)}</span>
+			</Link>
+			<div className={ROW_ACTIONS}>
+				<IconButton aria-label={`恢复会话 ${title}`} size="xs" variant="subtle" onClick={() => void restore()}>
+					<ArchiveRestore size={12} strokeWidth={2} />
+				</IconButton>
+				<IconButton aria-label={`删除会话 ${title}`} size="xs" variant="subtle" onClick={() => setDeleteOpen(true)}>
+					<Trash2 size={12} strokeWidth={2} />
+				</IconButton>
+			</div>
+			{deleteOpen && (
+				<DeleteSessionModal
+					open
+					onClose={() => setDeleteOpen(false)}
+					title={title}
+					target={{
+						serverId,
+						sessionFile: session.file,
+						workspaceId,
+						sessionIds: [routeId, session.id],
+						isLive: Boolean(convId),
+						stop: async () => {
+							if (convId) await stopConversation(convId);
+						},
+					}}
+					onDeleted={() => {
+						if (active) navigate(paths.chat(workspaceId), { replace: true });
+					}}
+				/>
+			)}
+		</div>
 	);
 }
 
@@ -102,29 +251,64 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 	const navigate = useNavigate();
 	const [showAll, setShowAll] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [archivedOpen, setArchivedOpen] = useState(false);
 
 	const sessions = sessionsQuery.data;
-	const filtered = useMemo(() => (sessions ?? []).filter((s) => matchesSessionQuery(s, ctx.query)), [sessions, ctx.query]);
+	// Archived sessions leave the list (and the count) for the collapsed 已归档 group.
+	const groups = useMemo(() => sidebarSessionGroups(sessions ?? [], ctx.query), [sessions, ctx.query]);
+	const filtered = groups.active;
+	const archived = groups.archived;
 	const extra = useMemo(
 		() => (sessions ? unlistedConversations(wsId, sessions, liveConvs).filter((c) => matchesSessionQuery({ name: c.info.sessionName, firstMessage: "" }, ctx.query)) : []),
 		[sessions, liveConvs, wsId, ctx.query],
 	);
 	const runningCount = liveConvs.filter((c) => c.info.status === "running" || c.info.status === "waiting_ui").length;
-	const count = sessions?.length ?? workspace.sessionCount;
+	const count = sessions ? groups.count : workspace.sessionCount;
+	const activeWs = ctx.activeWorkspaceId === wsId;
+	// Opening an archived session (link, browser history) reveals it in the group, also when the
+	// sidebar mounts on it (mobile drawer, re-expanded server).
+	const viewingArchived = activeWs && archived.some((s) => sessionRouteId(s) === ctx.activeSessionId);
+	const [prevViewingArchived, setPrevViewingArchived] = useState(false);
+	if (prevViewingArchived !== viewingArchived) {
+		setPrevViewingArchived(viewingArchived);
+		if (viewingArchived) setArchivedOpen(true);
+	}
+	// The group is collapsed by default each time it appears again.
+	if (archivedOpen && sessions && !sessions.some(isArchived)) setArchivedOpen(false);
+	const showArchived = archivedOpen || searching;
 
-	if (searching && sessions && filtered.length === 0 && extra.length === 0) return null;
+	const nodeRef = useRef<HTMLDivElement>(null);
+	const focusMove = useRef<{ file: string; archived: boolean } | null>(null);
+	const trackFocus: TrackFocus = (move) => {
+		focusMove.current = move;
+	};
+	useEffect(() => {
+		const move = focusMove.current;
+		if (!move || !sessions) return;
+		const moved = sessions.find((s) => s.file === move.file);
+		if (moved && isArchived(moved) !== move.archived) return; // not rendered yet
+		focusMove.current = null;
+		if (document.activeElement && document.activeElement !== document.body) return; // focus is elsewhere
+		const root = nodeRef.current;
+		if (!root) return;
+		const row = [...root.querySelectorAll<HTMLElement>("a[data-session-file]")].find((a) => a.dataset.sessionFile === move.file);
+		const target = row ?? root.querySelector<HTMLElement>("[data-archived-toggle]") ?? root.querySelector<HTMLElement>("[data-workspace-toggle]");
+		target?.focus();
+	}, [sessions]);
+
+	if (searching && sessions && filtered.length === 0 && extra.length === 0 && archived.length === 0) return null;
 
 	const visible = showAll || searching ? filtered : filtered.slice(0, SESSIONS_PREVIEW);
-	const activeWs = ctx.activeWorkspaceId === wsId;
 	const pageActive = activeWs && Boolean(ctx.workspacePageActive);
 	const offline = !online;
 
 	return (
-		<div className="flex flex-col gap-0.5">
+		<div ref={nodeRef} className="flex flex-col gap-0.5">
 			<div className={cn("group/ws flex h-7 items-center rounded-md", pageActive ? "bg-selected" : "hover:bg-raised")}>
 				<button
 					type="button"
 					aria-expanded={expanded}
+					data-workspace-toggle=""
 					onClick={() => setExpanded(wsId, !expanded)}
 					title={workspace.config.path}
 					className={cn(
@@ -182,17 +366,21 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 						<SessionRow
 							key={c.convId}
 							workspaceId={wsId}
+							serverId={server.config.id}
 							conv={c}
 							active={activeWs && (ctx.activeSessionId === c.info.sessionId || (!ctx.activeSessionId && !c.info.sessionId))}
+							trackFocus={trackFocus}
 						/>
 					))}
 					{visible.map((s) => (
 						<SessionRow
 							key={s.file}
 							workspaceId={wsId}
+							serverId={server.config.id}
 							session={s}
 							conv={liveConversationForSession(s, liveConvs)}
 							active={activeWs && ctx.activeSessionId === sessionRouteId(s)}
+							trackFocus={trackFocus}
 						/>
 					))}
 					{!searching && filtered.length > SESSIONS_PREVIEW && (
@@ -213,6 +401,40 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 							<Plus size={12} strokeWidth={2} aria-hidden="true" />
 							新建对话
 						</button>
+					)}
+					{archived.length > 0 && (
+						<>
+							<button
+								type="button"
+								aria-expanded={showArchived}
+								data-archived-toggle=""
+								// While searching the group is always shown: the toggle does nothing then.
+								onClick={() => !searching && setArchivedOpen(!archivedOpen)}
+								className="flex h-7 items-center gap-1.5 rounded-md border-0 bg-transparent px-2 text-left text-xs text-fg-3 hover:bg-raised hover:text-fg"
+							>
+								{showArchived ? (
+									<ChevronDown size={12} strokeWidth={2.2} aria-hidden="true" />
+								) : (
+									<ChevronRight size={12} strokeWidth={2.2} aria-hidden="true" />
+								)}
+								已归档（{archived.length}）
+							</button>
+							{showArchived && (
+								<div role="group" aria-label="已归档的会话" className="flex flex-col gap-0.5">
+									{archived.map((s) => (
+										<ArchivedSessionRow
+											key={s.file}
+											workspaceId={wsId}
+											serverId={server.config.id}
+											session={s}
+											conv={liveConversationForSession(s, liveConvs)}
+											active={activeWs && ctx.activeSessionId === sessionRouteId(s)}
+											trackFocus={trackFocus}
+										/>
+									))}
+								</div>
+							)}
+						</>
 					)}
 				</div>
 			)}

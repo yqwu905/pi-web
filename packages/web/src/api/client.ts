@@ -11,6 +11,8 @@ import type {
 	AgentLogsResponse,
 	AgentStatus,
 	ApiErrorBody,
+	ArchiveSessionRequest,
+	ArchiveSessionResponse,
 	CacheEntry,
 	CacheResponse,
 	CompanionActionResponse,
@@ -280,6 +282,11 @@ export const getGitLog = (wsId: string, limit?: number) => get<GitLogResponse>(`
 export const readSession = (serverId: string, file: string, signal?: AbortSignal) =>
 	get<SessionFileResponse>("/sessions/read", { serverId, file }, signal);
 export const deleteSession = (serverId: string, file: string) => del<{ trashedTo: string }>("/sessions", { serverId, file });
+/** Hides a session in Pi-Web (host-side mark; the session file is not touched). Works while the server is offline. */
+export const archiveSession = (serverId: string, file: string) =>
+	post<ArchiveSessionResponse>("/sessions/archive", { serverId, file } satisfies ArchiveSessionRequest);
+export const unarchiveSession = (serverId: string, file: string) =>
+	post<ArchiveSessionResponse>("/sessions/unarchive", { serverId, file } satisfies ArchiveSessionRequest);
 
 // ---------- conversations ----------
 
@@ -389,6 +396,8 @@ export const api = {
 	getGitLog,
 	readSession,
 	deleteSession,
+	archiveSession,
+	unarchiveSession,
 	listConversations,
 	openConversation,
 	getConversationSnapshot,

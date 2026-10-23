@@ -18,6 +18,8 @@ interface UiState {
 	setWorkspaceExpanded(workspaceId: string, expanded: boolean): void;
 	rememberSession(workspaceId: string, sessionId: string): void;
 	forgetSession(workspaceId: string, sessionId: string): void;
+	/** Drops a session from the remembered slots of the workspaces `inWorkspace` accepts (e.g. it was archived on their server). */
+	forgetSessionWhere(sessionId: string, inWorkspace: (workspaceId: string) => boolean): void;
 	/** Drops every remembered session of these workspaces (workspace or server removed). */
 	forgetWorkspaces(workspaceIds: readonly string[]): void;
 	setSidebarOpen(open: boolean): void;
@@ -46,6 +48,14 @@ export const useUiStore = create<UiState>()(
 					if (lastSession[workspaceId] === sessionId) delete lastSession[workspaceId];
 					const lastVisited = s.lastVisited?.sessionId === sessionId ? null : s.lastVisited;
 					return { lastSession, lastVisited };
+				}),
+			forgetSessionWhere: (sessionId, inWorkspace) =>
+				set((s) => {
+					const matches = (workspaceId: string, id: string) => id === sessionId && inWorkspace(workspaceId);
+					const visited = s.lastVisited !== null && matches(s.lastVisited.workspaceId, s.lastVisited.sessionId);
+					if (!visited && !Object.entries(s.lastSession).some(([ws, id]) => matches(ws, id))) return s;
+					const lastSession = Object.fromEntries(Object.entries(s.lastSession).filter(([ws, id]) => !matches(ws, id)));
+					return { lastSession, lastVisited: visited ? null : s.lastVisited };
 				}),
 			forgetWorkspaces: (workspaceIds) =>
 				set((s) => {

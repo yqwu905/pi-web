@@ -1,6 +1,7 @@
 import { KeyRound } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate, useNavigation } from "react-router";
+import { useSessionsLiveSync } from "../api/archive";
 import { errorMessage, isApiError, login } from "../api/client";
 import { useMeta } from "../api/hooks";
 import { Button } from "../components/ui/Button";
@@ -16,10 +17,11 @@ import { useUiStore } from "../stores/ui";
 import { Header, Logo } from "./Header";
 import { Sidebar } from "./Sidebar";
 
-/** Starts the app-wide live data (servers + conversations over WS). */
+/** Starts the app-wide live data (servers, conversations and session archive marks over WS). */
 function LiveSync() {
 	useServersLiveSync();
 	useConvsLiveSync();
+	useSessionsLiveSync();
 	const navigate = useNavigate();
 	useEffect(() => {
 		setAttentionNavigator((path) => navigate(path));

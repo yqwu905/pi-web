@@ -116,13 +116,20 @@ export function useWorkspace(workspaceId: string | null | undefined): {
 	return { workspace, isLoading: q.isLoading, error: q.error };
 }
 
-/** Sessions of a workspace, newest first. Refetched automatically on "convs" events. */
+/** Query options of a workspace's session list (newest first); shared by useWorkspaceSessions and useQueries callers. */
+export function sessionsQueryOptions(workspaceId: string) {
+	return {
+		queryKey: queryKeys.sessions(workspaceId),
+		queryFn: async ({ signal }: { signal: AbortSignal }) => sortSessions((await listSessions(workspaceId, signal)).sessions),
+		staleTime: 10_000,
+	};
+}
+
+/** Sessions of a workspace, newest first (archived ones carry archivedAt). Refetched automatically on "convs" and "sessions" events. */
 export function useWorkspaceSessions(workspaceId: string | null | undefined, options?: Opts<SessionSummary[]>) {
 	return useQuery({
-		queryKey: queryKeys.sessions(workspaceId ?? ""),
-		queryFn: async ({ signal }) => sortSessions((await listSessions(workspaceId as string, signal)).sessions),
+		...sessionsQueryOptions(workspaceId ?? ""),
 		enabled: Boolean(workspaceId),
-		staleTime: 10_000,
 		...options,
 	});
 }
