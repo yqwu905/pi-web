@@ -59,9 +59,9 @@ async function setup(): Promise<{ fake: FakeContext; socket: FakeSocket }> {
 }
 
 describe("terminal command", () => {
-	it("cds into the workspace, puts the remote bin dir on PATH and starts a login shell", () => {
+	it("cds into the workspace, sources the server env, puts the remote bin dir on PATH and starts a login shell", () => {
 		expect(buildTerminalCommand("/home/dev/my project", "/home/dev/.pi-web")).toBe(
-			`cd '/home/dev/my project' 2>/dev/null; export PATH=/home/dev/.pi-web/bin:"$PATH"; exec "\${SHELL:-/bin/sh}" -l`,
+			`cd '/home/dev/my project' 2>/dev/null; [ -f /home/dev/.pi-web/run/env.sh ] && . /home/dev/.pi-web/run/env.sh; export PATH=/home/dev/.pi-web/bin:"$PATH"; exec "\${SHELL:-/bin/sh}" -l`,
 		);
 	});
 
@@ -70,6 +70,31 @@ describe("terminal command", () => {
 		expect(remoteShellPath("~/a b")).toBe(`"$HOME"/'a b'`);
 		expect(remoteShellPath("/x/it's")).toBe(`'/x/it'\\''s'`);
 		expect(buildTerminalCommand("~", "~/.pi-web")).toContain(`export PATH="$HOME"/.pi-web/bin:"$PATH"`);
+		expect(buildTerminalCommand("~", "~/my root")).toContain(`[ -f "$HOME"/'my root/run/env.sh' ] && . "$HOME"/'my root/run/env.sh';`);
+	});
+
+	it("exports the variables of run/env.sh to the shell it starts", async () => {
+		const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+		const { tmpdir } = await import("node:os");
+		const { join } = await import("node:path");
+		const { spawnSync } = await import("node:child_process");
+		const root = await mkdtemp(join(tmpdir(), "pi-web-term-"));
+		try {
+			const cmd = buildTerminalCommand(root, join(root, "R"));
+			const run = (shell: string, env: Record<string, string> = {}) =>
+				spawnSync("sh", ["-c", cmd], { input: 'echo "SRV=$PIWEB_SRV_ENV PATH=$PATH"\n', encoding: "utf8", env: { PATH: "/usr/bin:/bin", HOME: root, SHELL: shell, ...env } });
+			// No env file yet: the shell still starts (its login profile may extend PATH further).
+			const plain = run("/bin/sh").stdout;
+			expect(plain).toContain("SRV= PATH=");
+			expect(plain).toContain(`${join(root, "R", "bin")}:/usr/bin:/bin`);
+			await mkdir(join(root, "R", "run"), { recursive: true });
+			// The line format of the agent's envShFile: the terminal (no keep flag) always exports.
+			await writeFile(join(root, "R", "run", "env.sh"), `[ -n "\${_piweb_keep_env-}" ] && [ -n "\${PIWEB_SRV_ENV+x}" ] || export PIWEB_SRV_ENV='a '\\''b'\\'' $HOME'\n`);
+			expect(run("/bin/sh").stdout).toContain("SRV=a 'b' $HOME PATH=");
+			expect(run("/bin/sh", { PIWEB_SRV_ENV: "inherited" }).stdout).toContain("SRV=a 'b' $HOME PATH=");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 });
 

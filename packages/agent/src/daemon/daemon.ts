@@ -189,11 +189,14 @@ export class Daemon {
 		const config = validateAgentConfig(raw);
 		await mkdir(config.agentDir, { recursive: true, mode: 0o700 }).catch(() => {});
 		await this.config.save(config);
+		// pi processes get the variables from extraEnv; the file is for R/bin/pi and the web terminal.
+		await this.config.writeEnvFile(config.extraEnv);
 		this.log.info("configured", {
 			agentDir: config.agentDir,
 			piVersion: config.piVersion,
 			proxy: config.proxy.enabled ? `127.0.0.1:${config.proxy.port}` : "off",
 			idleTimeoutMin: config.idleTimeoutMin,
+			env: Object.keys(config.extraEnv).length,
 		});
 		await this.applyProxy(config);
 		return { ok: true };

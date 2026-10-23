@@ -4,7 +4,7 @@
  * Output lines meant for the host start with "@@key=value"; anything else (login
  * shell noise) is ignored by the parsers.
  */
-import { shellQuote, type ProbeResult } from "@pi-web/shared";
+import { ENV_SH_KEEP_VAR, shellQuote, type ProbeResult } from "@pi-web/shared";
 import { dq } from "../ssh/remote-path.js";
 
 export const PI_PACKAGE = "@earendil-works/pi-coding-agent";
@@ -281,12 +281,18 @@ export function isSafeCliPath(value: string): boolean {
 	return /^[A-Za-z0-9@._/-]+$/.test(value) && !value.split("/").includes("..");
 }
 
+/**
+ * R/bin/pi: the server-level env (run/env.sh, written by the agent) is sourced before proxy.env,
+ * so the proxy settings always win. ENV_SH_KEEP_VAR makes it a set of defaults: variables the
+ * caller already has (`NAME=x pi`, the env of a conversation running `pi`) are kept.
+ */
 export function piWrapperScript(params: { remoteRoot: string; agentDir: string; piCli?: string }): string {
 	const R = dq(params.remoteRoot);
 	const cli = params.piCli ?? piCliRelative();
 	return `#!/bin/sh
 export PI_CODING_AGENT_DIR="\${PI_CODING_AGENT_DIR:-${dq(params.agentDir)}}"
 export PI_OFFLINE="\${PI_OFFLINE:-1}"
+if [ -f "${R}/run/env.sh" ]; then ${ENV_SH_KEEP_VAR}=1; . "${R}/run/env.sh"; unset ${ENV_SH_KEEP_VAR}; fi
 [ -f "${R}/run/proxy.env" ] && . "${R}/run/proxy.env"
 exec "${R}/runtime/current/bin/node" "${R}/pi/current/${cli}" "$@"
 `;

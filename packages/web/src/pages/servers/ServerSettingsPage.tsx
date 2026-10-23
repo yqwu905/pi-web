@@ -1,5 +1,5 @@
 import type { ServerView } from "@pi-web/shared";
-import { ArrowLeft, Folder, Plug, RefreshCw, Server, Shield, Timer, TriangleAlert } from "lucide-react";
+import { ArrowLeft, Folder, Plug, RefreshCw, Server, Shield, Timer, TriangleAlert, Variable } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { useBlocker, useLocation, useParams } from "react-router";
 import { errorMessage, runSync, updateServer } from "../../api/client";
@@ -31,6 +31,7 @@ import {
 } from "./lib/server-settings-form";
 import { ConnectionSection } from "./settings/ConnectionSection";
 import { DeploySection } from "./settings/DeploySection";
+import { EnvSection } from "./settings/EnvSection";
 import { ProxySection } from "./settings/ProxySection";
 import { DangerSection, SessionSection } from "./settings/SessionDangerSections";
 import { SyncSection } from "./settings/SyncSection";
@@ -41,6 +42,7 @@ const NAV: ReadonlyArray<{ id: SettingsSection; label: string; icon: ReactNode }
 	{ id: "proxy", label: "LLM 代理", icon: <Shield /> },
 	{ id: "sync", label: "配置同步", icon: <RefreshCw /> },
 	{ id: "session", label: "会话", icon: <Timer /> },
+	{ id: "env", label: "环境变量", icon: <Variable /> },
 	{ id: "danger", label: "危险操作", icon: <TriangleAlert /> },
 ];
 
@@ -200,6 +202,7 @@ function ServerSettings({ view }: { view: ServerView }) {
 								<ProxySection {...sectionProps} />
 								<SyncSection {...sectionProps} />
 								<SessionSection {...sectionProps} />
+								<EnvSection {...sectionProps} />
 							</>
 						)}
 						<DangerSection view={view} />

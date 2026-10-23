@@ -57,7 +57,7 @@ R/pi/<ver>/node_modules/…             R/pi/current -> <ver>          (由 Host
 R/daemon/{pi-web-agent.mjs,bridge.mjs,pi-web-ext.mjs,VERSION}        (由 Host 部署)
 R/bin/pi                              包装脚本（由 Host 部署）
 R/agent/                              默认的隔离 agentDir
-R/run/agent.sock (0600)  R/run/proxy.env (0600)
+R/run/agent.sock (0600)  R/run/proxy.env (0600)  R/run/env.sh (0600，服务器级环境变量)
 R/logs/agent.log（5MB 轮转，保留 3 份）
 R/state/config.json  R/state/sync-manifest.json  R/state/hash-cache.json
 R/state/backup/<label>/…  R/state/incoming/  R/state/exports/
@@ -77,6 +77,7 @@ R/trash/sessions/
   - 单实例：listen socket 遇到 EADDRINUSE 时先尝试连接；能连上说明已有实例，直接退出 0；连不上就 unlink 旧 socket 后重新 listen。
 - 每个 socket 连接创建一个 `new LinkPeer(socket, { side: "agent" })` 并注册所有方法。事件广播给所有已连接的 peer。
 - 配置：`agent.configure` 时把 AgentConfig 持久化到 `state/config.json`，再 (重新) 启动代理监听；**监听成功后**才写入 `run/proxy.env`。`proxy.env` 的内容是 `export HTTPS_PROXY=…` 等 6 个变量加 NO_PROXY，外面包一层“只有写入它的 daemon 进程仍在运行时才导出”的判断（`kill -0 <pid>` 且 `/proc/<pid>/cmdline` 含 daemon 脚本路径），因为端口固定，daemon 不在时可能被同机其他用户占用。代理关闭、监听失败、stopAccepting/关闭时删除该文件；启动时先删除遗留的文件，加载已有配置并监听后再写。
+- 服务器级环境变量：`agent.configure` 保存配置后，把 `config.extraEnv` 原子写入 `run/env.sh`（0600），每个变量一行 `[ -n "${_piweb_keep_env-}" ] && [ -n "${NAME+x}" ] || export NAME='value'`（POSIX 单引号转义：`'` → `'\''`，值可含引号、`$`、反引号、空格、换行）：Web 终端直接 source，全部导出；`R/bin/pi` 设置 `_piweb_keep_env=1` 后 source，调用方环境中已有的同名变量保持不变（`NAME=x pi`、对话中运行的 `pi` 继承的 workspace 变量优先）。不是 shell 标识符的名字和含 NUL 的值跳过（Host 已拒绝）。extraEnv 为空时删除该文件。它不含与 daemon 绑定的秘密，daemon 停止或重启时保留；每次 `agent.configure`（包括每次重连）都会重写，所以离线期间修改的变量在 Link 恢复后才写到服务器。pi 进程仍通过 extraEnv 取得这些变量（见 2.5），文件只供 `R/bin/pi` 和 Web 终端使用。该文件从 agent 0.1.2 起才写入。
 - 代理令牌：交给 pi 进程（环境变量、proxy.env）的是 daemon 每次启动随机生成的令牌，不是 Host 下发的令牌；Host 令牌只用于部署自检，仍被接受。部署自检只在 agent 报告代理已监听时才向端口发送令牌。
 - `hello` 返回版本、pid、home、platform、arch、nodeVersion、remoteRoot 和当前 config。
 - 日志：写 `logs/agent.log`；info 及以上级别同时以 `agent.log` 事件推送。
@@ -90,7 +91,7 @@ R/trash/sessions/
       - `PI_CODING_AGENT_DIR=config.agentDir`
       - `PI_OFFLINE=1`、`PI_SKIP_VERSION_CHECK=1`、`PI_TELEMETRY=0`
       - 代理开启时：`HTTP_PROXY`/`HTTPS_PROXY`/`http_proxy`/`https_proxy`=`http://pw:<token>@127.0.0.1:<port>`，`NO_PROXY`/`no_proxy`=noProxy 用逗号连接
-      - 依次合并 `config.extraEnv`、`params.env`
+      - 依次合并 `config.extraEnv`（服务器级环境变量）、`params.env`（workspace 环境变量，同名时覆盖前者）
       - PATH 前面加上 `R/bin` 和 node 所在目录
   - 启动后发送 `get_state`（超时 60s）；成功后状态置为 idle，返回 `{conv, state}`。若该 convId 或 sessionFile 已有存活进程（包括并发的 start），则等待它启动并返回 `attached: true`，总预算 `CONV_START_TIMEOUT_MS`（90s）。
 - stdout 按 **LF 严格分帧**（StringDecoder + indexOf("\n")，去掉行尾 `\r`；**禁止用 readline**）。逐条记录处理：
@@ -281,6 +282,7 @@ logs/pi-web.log
   #!/bin/sh
   export PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-<agentDir>}"
   export PI_OFFLINE="${PI_OFFLINE:-1}"
+  if [ -f "<R>/run/env.sh" ]; then _piweb_keep_env=1; . "<R>/run/env.sh"; unset _piweb_keep_env; fi
   [ -f "<R>/run/proxy.env" ] && . "<R>/run/proxy.env"
   exec "<R>/runtime/current/bin/node" "<R>/pi/current/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" "$@"
   ```
@@ -289,11 +291,13 @@ logs/pi-web.log
   - nodePath、piCliPath、piPackageDir 走 current 软链；
   - proxy 字段来自 server.proxy，token 来自 secrets（缺失时生成 32 字节 hex 并保存）；
   - noProxy 为 `settings.defaultNoProxy ∪ server.proxy.noProxy`；
-  - idleTimeoutMin 取自 server 配置。
+  - idleTimeoutMin 取自 server 配置；
+  - extraEnv 为 server.env（服务器级环境变量）。
 - uninstall：先 `agent.shutdown`，再删除 R。只删除带安装标记 `R/.pi-web-root`（或旧版安装布局 `R/daemon/VERSION`）的目录，且只删除 pi-web 自己创建的条目，R 为空时再删除 R 本身；拒绝 `/`、`$HOME` 及其上级目录。脚本使用 `umask 077`；keepSessions 为真时，先把 `R/agent/sessions`（chmod -R go-rwx）移到 `~/pi-web-backups/sessions-<ts>`（目录 0700）；旧版留在 `R/state/backup` 的同步备份同样移到 `~/pi-web-backups/sync-backup-<ts>`。
 - 安装目录：保存前先规范化（去掉末尾斜杠、`.`、重复斜杠），不允许 `..`、家目录本身和 `/`；探测时若安装目录是家目录或其上级、已存在且不是 Pi-Web 安装目录（非空且无标记），列为问题；安装脚本也会再次检查。
 - 探测还检查用户空间：`getconf LONG_BIT` 为 32，或缺少对应架构的动态链接器（x64：`/lib64/ld-linux-x86-64.so.2`，arm64：`/lib/ld-linux-aarch64.so.1`）时列为问题；安装时先运行一次 `node -v`。
 - pi 版本：策略为 host 时，Host 上的 pi 低于 `MIN_PI_VERSION`（与 server 包依赖的下限一致）则改为部署 Pi-Web 自带的版本并在部署日志中警告。pi 的 CLI 路径取已安装包 package.json 的 `bin.pi`，记录到 `deployed.piCli`，bin/pi 和 AgentConfig.piCliPath 都用它（旧安装没有该字段时用 `dist/bundle/cli.js`）。
+- `R/bin/pi` 先 source `run/env.sh`（只补上调用方没有的变量）再 source `proxy.env`，代理设置始终优先。env.sh 由 agent 0.1.2 起写入，包装脚本只在部署时写入：由旧版 agent（< 0.1.2）部署的服务器显示为“需要升级”，对话中的 pi 进程已能通过 extraEnv 取得服务器级变量，但 Web 终端和 bin/pi 都要在升级（重新部署）后才能读到；服务器设置的“环境变量”分区此时显示提示。
 - 修改 agentDirMode 后，重写 `R/bin/pi`（其中写死了默认的 PI_CODING_AGENT_DIR）并更新 deployed.agentDir；服务器离线时在下次建立 Link 后补做。
 - restartAgent：先 `agent.shutdown`，再重连 agent。
 
@@ -400,7 +404,7 @@ logs/pi-web.log
   - 按客户端的 subscribe/unsubscribe 维护订阅，publish 只发给订阅者；
   - 每 30s 发送 ping，客户端回 pong。
 - `/ws/term?serverId&cwd&cols&rows`：
-  - 执行 `openPty({command: \`cd ${q(cwd)} 2>/dev/null; export PATH=${q(R+"/bin")}:"$PATH"; exec "${SHELL:-/bin/sh}" -l\`})`；
+  - 执行 `openPty({command: \`cd ${q(cwd)} 2>/dev/null; [ -f ${q(R+"/run/env.sh")} ] && . ${q(R+"/run/env.sh")}; export PATH=${q(R+"/bin")}:"$PATH"; exec "${SHELL:-/bin/sh}" -l\`})`（服务器级环境变量在登录 shell 启动前导出，新开的终端即可 `echo $NAME`；env.sh 由 agent ≥ 0.1.2 写入，内容是 agent 最近一次收到的配置）；
   - 二进制帧双向透传；
   - 文本帧 `{type:"resize"}` 调用 `channel.setWindow(rows, cols, 0, 0)`；
   - 退出时发送 `{type:"exit"}` 后关闭。
@@ -515,6 +519,12 @@ POST   /servers/test        { host, port, username, auth: ServerAuthInput, jumpS
                             （serverId：编辑已有服务器时传入；host:port 不变则用其已信任的指纹，auth.secret 省略则用已保存的密码/口令）
 GET    /servers/:id                            → ServerView
 PUT    /servers/:id         UpdateServerRequest → ServerView
+                            （env 给出时整体替换服务器级环境变量；修改 proxy、idleTimeoutMin、agentDirMode、remoteRoot 或 env 时向已连接的 agent 重新下发 AgentConfig）
+                            （服务器级与 workspace 的 env 用同一套规则校验，见 @pi-web/shared 的 validateEnvMap，前端也用它：
+                             变量名 ^[A-Za-z_][A-Za-z0-9_]*$、不超过 256 个字符；拒绝 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY（任意大小写）与 PI_CODING_AGENT_DIR，
+                             以及 bash 的只读变量 UID/EUID/PPID/SHELLOPTS/BASHOPTS/BASH_VERSINFO（/bin/sh 是 bash 时 export 它们会让 bin/pi 退出）；
+                             值不含 NUL、每个不超过 32 KiB（UTF-8）；最多 100 个，NAME=value 合计不超过 256 KiB（服务器级与 workspace 合并后仍远低于 execve 的环境大小上限）。
+                             servers.json 中没有 env 的旧记录按 {} 加载）
 DELETE /servers/:id                            → { ok: true }
 POST   /servers/:id/test                       → TestConnectionResult
 POST   /servers/:id/trust-host-key TrustHostKeyRequest → ServerView

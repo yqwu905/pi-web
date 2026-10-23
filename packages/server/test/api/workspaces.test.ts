@@ -89,6 +89,8 @@ describe("workspaces", () => {
 			[{ path: "relative/dir" }, 400, "工作区路径必须是绝对路径或以 ~ 开头"],
 			[{ path: "/home/dev/file.txt" }, 400, "不是目录：/home/dev/file.txt"],
 			[{ path: "/home/dev/project", env: { "BAD-NAME": "x" } }, 400, "环境变量名无效：BAD-NAME"],
+			// Same rules as the server-level env.
+			[{ path: "/home/dev/project", env: { https_proxy: "x" } }, 400, "https_proxy 由 Pi-Web 管理，请在服务器设置的“LLM 代理”中配置"],
 			[{ path: "/home/dev/project", defaults: { provider: "only" } }, 400, "默认模型需要同时指定 provider 和 modelId"],
 			[{ path: "/home/dev/project", trust: "maybe" }, 400, "字段 trust 的取值必须是 approve / no-approve 之一"],
 		];

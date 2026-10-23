@@ -116,6 +116,7 @@ async function fakeBundles(root: string, binPath = "dist/bundle/cli.js") {
 			'if [ "$1" = "-e" ]; then sed -n \'s/.*"pi": *"\\([^"]*\\)".*/\\1/p\' "$3"; exit 0; fi',
 			'echo "fake-node $*"',
 			'echo "AGENT=$PI_CODING_AGENT_DIR OFFLINE=$PI_OFFLINE PROXY=$HTTPS_PROXY"',
+			'echo "SRV=$PIWEB_SRV_ENV KEEP=${_piweb_keep_env-unset}"',
 			"",
 		].join("\n"),
 	);
@@ -180,6 +181,27 @@ describe("install", () => {
 		await writeFile(path.join(R, "run", "proxy.env"), "export HTTPS_PROXY=http://pw:t@127.0.0.1:1\n");
 		const withProxy = spawnSync(path.join(R, "bin", "pi"), [], { encoding: "utf8", env: { PATH: "/usr/bin:/bin", PI_CODING_AGENT_DIR: "/custom" } });
 		expect(withProxy.stdout).toContain("AGENT=/custom OFFLINE=1 PROXY=http://pw:t@127.0.0.1:1");
+
+		// run/env.sh (the server-level env written by the agent, see envShFile) is sourced before
+		// proxy.env: the proxy settings win.
+		const keep = (name: string) => `[ -n "\${_piweb_keep_env-}" ] && [ -n "\${${name}+x}" ] || `;
+		await writeFile(
+			path.join(R, "run", "env.sh"),
+			`${keep("PIWEB_SRV_ENV")}export PIWEB_SRV_ENV='it'\\''s $HOME'\n${keep("HTTPS_PROXY")}export HTTPS_PROXY='http://from-env-sh'\n`,
+		);
+		const withEnv = spawnSync(path.join(R, "bin", "pi"), [], { encoding: "utf8", env: { PATH: "/usr/bin:/bin", HOME: home } });
+		expect(withEnv.stdout).toContain("PROXY=http://pw:t@127.0.0.1:1");
+		expect(withEnv.stdout).toContain("SRV=it's $HOME");
+		// The server-level values are defaults: a value the caller sets (`NAME=x pi`, a conversation's
+		// workspace env) is kept, and the keep flag does not leak into pi's environment.
+		expect(withEnv.stdout).toContain("KEEP=unset");
+		const fromCaller = spawnSync("sh", ["-c", 'PIWEB_SRV_ENV=caller "$1"', "sh", path.join(R, "bin", "pi")], { encoding: "utf8", env: { PATH: "/usr/bin:/bin", HOME: home } });
+		expect(fromCaller.stdout).toContain("SRV=caller KEEP=unset");
+		const emptyFromCaller = spawnSync(path.join(R, "bin", "pi"), [], { encoding: "utf8", env: { PATH: "/usr/bin:/bin", HOME: home, PIWEB_SRV_ENV: "" } });
+		expect(emptyFromCaller.stdout).toContain("SRV= KEEP=unset");
+		await rm(path.join(R, "run", "proxy.env"));
+		const envOnly = spawnSync(path.join(R, "bin", "pi"), [], { encoding: "utf8", env: { PATH: "/usr/bin:/bin", HOME: home } });
+		expect(envOnly.stdout).toContain("PROXY=http://from-env-sh");
 
 		// Second run: only the agent is uploaded; existing versions are kept.
 		await mkdir(upload, { recursive: true });
@@ -261,6 +283,9 @@ describe("install", () => {
 		const text = piWrapperScript({ remoteRoot: '/home/a"b', agentDir: "/home/$x/agent" });
 		expect(text).toContain('PI_CODING_AGENT_DIR:-/home/\\$x/agent}');
 		expect(text).toContain('exec "/home/a\\"b/runtime/current/bin/node"');
+		const envLine = text.indexOf('. "/home/a\\"b/run/env.sh"');
+		expect(envLine).toBeGreaterThan(0);
+		expect(envLine).toBeLessThan(text.indexOf('. "/home/a\\"b/run/proxy.env"'));
 	});
 });
 

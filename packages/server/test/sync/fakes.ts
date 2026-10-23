@@ -56,6 +56,7 @@ export function makeServer(overrides: Partial<ServerConfig> = {}): ServerConfig 
 		sync: { items, auto: true, settingsOverride: {} },
 		idleTimeoutMin: 30,
 		defaultTrust: "no-approve",
+		env: {},
 		createdAt: 0,
 		updatedAt: 0,
 		...overrides,

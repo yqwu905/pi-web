@@ -3,16 +3,11 @@
  * trust, default model ("provider/modelId") + thinking level, and extra environment variables.
  */
 import type { CreateWorkspaceRequest, ThinkingLevel, UpdateWorkspaceRequest, WorkspaceConfig } from "@pi-web/shared";
+import { type EnvRow, envToRows, rowsToEnv } from "../../../lib/env-rows";
+
+export { type EnvRow, envToRows, newEnvRow, rowsToEnv } from "../../../lib/env-rows";
 
 export const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-
-const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-export interface EnvRow {
-	id: string;
-	name: string;
-	value: string;
-}
 
 export interface WorkspaceFormValues {
 	alias: string;
@@ -29,42 +24,6 @@ export interface WorkspaceFormErrors {
 	model?: string;
 	/** Row id → message. */
 	env: Record<string, string>;
-}
-
-let rowCounter = 0;
-export function newEnvRow(name = "", value = ""): EnvRow {
-	rowCounter += 1;
-	return { id: `env-${rowCounter}`, name, value };
-}
-
-export function envToRows(env: Record<string, string> | undefined): EnvRow[] {
-	return Object.entries(env ?? {}).map(([name, value]) => newEnvRow(name, value));
-}
-
-/** Rows with neither a name nor a value are ignored. */
-export function rowsToEnv(rows: readonly EnvRow[]): { env: Record<string, string>; errors: Record<string, string> } {
-	const env: Record<string, string> = {};
-	const errors: Record<string, string> = {};
-	const seen = new Set<string>();
-	for (const row of rows) {
-		const name = row.name.trim();
-		if (!name && !row.value) continue;
-		if (!name) {
-			errors[row.id] = "请填写变量名";
-			continue;
-		}
-		if (!ENV_NAME.test(name)) {
-			errors[row.id] = "变量名只能包含字母、数字和下划线，且不能以数字开头";
-			continue;
-		}
-		if (seen.has(name)) {
-			errors[row.id] = `重复的变量名 ${name}`;
-			continue;
-		}
-		seen.add(name);
-		env[name] = row.value;
-	}
-	return { env, errors };
 }
 
 export type ModelRef = { provider: string; modelId: string };

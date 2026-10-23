@@ -11,6 +11,8 @@ export interface RemotePaths {
 	socket: string;
 	lockFile: string;
 	proxyEnv: string;
+	/** Server-level env (AgentConfig.extraEnv) for R/bin/pi and the web terminal. */
+	envFile: string;
 	logsDir: string;
 	agentLog: string;
 	daemonOut: string;
@@ -37,6 +39,7 @@ export function remotePaths(root: string): RemotePaths {
 		socket: join(runDir, "agent.sock"),
 		lockFile: join(runDir, "agent.pid"),
 		proxyEnv: join(runDir, "proxy.env"),
+		envFile: join(runDir, "env.sh"),
 		logsDir,
 		agentLog: join(logsDir, "agent.log"),
 		daemonOut: join(logsDir, "daemon.out"),

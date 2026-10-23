@@ -108,6 +108,15 @@ describe("JsonStore", () => {
 		expect(new JsonStore(dir).getState("counter")).toBeUndefined();
 	});
 
+	it("loads servers saved before the env field existed with an empty env", async () => {
+		const legacy: Partial<ServerConfig> = { ...server("old") };
+		delete legacy.env;
+		await writeFile(path.join(dir, "servers.json"), JSON.stringify({ version: 1, servers: [legacy, server("new", { env: { A: "1" } })] }));
+		const store = new JsonStore(dir);
+		expect(store.getServer("old")!.env).toEqual({});
+		expect(store.getServer("new")!.env).toEqual({ A: "1" });
+	});
+
 	it("survives a corrupt file", async () => {
 		await writeFile(path.join(dir, "servers.json"), "{not json");
 		const store = new JsonStore(dir);
@@ -134,6 +143,7 @@ describe("ServerConfig helpers", () => {
 			sync: { auto: true, settingsOverride: {} },
 			idleTimeoutMin: 30,
 			defaultTrust: "approve",
+			env: {},
 			createdAt: 5,
 		});
 		expect(config.proxy.port).toBeGreaterThanOrEqual(31000);
@@ -161,6 +171,14 @@ describe("ServerConfig helpers", () => {
 		expect(sameHost.hostKey).toBeDefined();
 		expect(sameHost.updatedAt).toBe(9);
 		expect(mergeServerConfig(base, { host: "other" }).hostKey).toBeUndefined();
+	});
+
+	it("takes the env from a create request and replaces the whole map on update", () => {
+		const created = createServerConfig({ name: "e", host: "h", username: "u", auth: { method: "agent" }, env: { A: "1", B: "2" } });
+		expect(created.env).toEqual({ A: "1", B: "2" });
+		expect(mergeServerConfig(created, { name: "renamed" }).env).toEqual({ A: "1", B: "2" });
+		expect(mergeServerConfig(created, { env: { C: "3" } }).env).toEqual({ C: "3" });
+		expect(mergeServerConfig(created, { env: {} }).env).toEqual({});
 	});
 
 	it("derives secret actions", () => {

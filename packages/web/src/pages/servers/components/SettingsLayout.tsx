@@ -3,7 +3,7 @@
  * label/control row, the "已修改" tag, and the left section navigation with scroll spy.
  */
 import { TriangleAlert } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "../../../lib/cn";
 
 export function DirtyTag({ show = true }: { show?: boolean }) {
@@ -114,9 +114,14 @@ export interface SectionNavItem {
 	danger?: boolean;
 }
 
+/** Quiet time after which the smooth scroll started by a nav click counts as finished. */
+const CLICK_SCROLL_SETTLE_MS = 150;
+
 /**
  * Left section navigation: anchors that scroll the section into view; the section nearest the
- * top of `scrollRoot` is highlighted (aria-current="location").
+ * top of `scrollRoot` is highlighted (aria-current="location"). A clicked section stays
+ * highlighted until the user scrolls again, even when it is too short (or too close to the end
+ * of the page) to reach the top.
  */
 export function SectionNav({
 	items,
@@ -131,10 +136,26 @@ export function SectionNav({
 }) {
 	const [active, setActive] = useState(items[0]?.id);
 	const idsKey = items.map((i) => i.id).join("|");
+	// Set while the scroll caused by a click runs: its scroll events do not move the highlight.
+	const clickScroll = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const settleClickScroll = () => {
+		if (clickScroll.current) clearTimeout(clickScroll.current);
+		clickScroll.current = setTimeout(() => (clickScroll.current = null), CLICK_SCROLL_SETTLE_MS);
+	};
+	useEffect(
+		() => () => {
+			if (clickScroll.current) clearTimeout(clickScroll.current);
+		},
+		[],
+	);
 	useEffect(() => {
 		if (!scrollRoot) return;
 		const ids = idsKey.split("|");
 		const onScroll = () => {
+			if (clickScroll.current) {
+				settleClickScroll();
+				return;
+			}
 			const rootTop = scrollRoot.getBoundingClientRect().top;
 			let current = ids[0];
 			for (const id of ids) {
@@ -163,6 +184,7 @@ export function SectionNav({
 						onClick={(e) => {
 							e.preventDefault();
 							setActive(item.id);
+							settleClickScroll();
 							document.getElementById(item.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 						}}
 						className={cn(

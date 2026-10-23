@@ -663,7 +663,8 @@ export class PiWebDeployer extends EventEmitter implements Deployer {
 				noProxy: [...new Set([...(settings.defaultNoProxy ?? []), ...(server.proxy.noProxy ?? [])].filter(Boolean))],
 			},
 			idleTimeoutMin: server.idleTimeoutMin,
-			extraEnv: {},
+			// Written to R/run/env.sh by the agent; the workspace env of a conversation overrides it.
+			extraEnv: { ...server.env },
 		};
 	}
 

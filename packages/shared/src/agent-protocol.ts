@@ -56,7 +56,10 @@ export interface AgentConfig {
 	proxy: AgentProxyConfig;
 	/** Minutes of inactivity after which an idle (not running, no pending dialog) conversation process exits. 0 = never. */
 	idleTimeoutMin: number;
-	/** Extra environment variables for every pi process. */
+	/**
+	 * Extra environment variables for every pi process (the server-level env; a conversation's own
+	 * env overrides them). The daemon also writes them to R/run/env.sh for R/bin/pi and the web terminal.
+	 */
 	extraEnv: Record<string, string>;
 }
 

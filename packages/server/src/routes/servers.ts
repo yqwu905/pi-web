@@ -29,6 +29,7 @@ import {
 	isRemoteAbsolute,
 	optBool,
 	optEnum,
+	optEnv,
 	optInt,
 	optObject,
 	optString,
@@ -157,6 +158,8 @@ export function parseServerRequest(body: Json, creating: boolean): UpdateServerR
 	if (trust) request.defaultTrust = trust;
 	const jumpOnly = optBool(body, "jumpOnly");
 	if (jumpOnly !== undefined) request.jumpOnly = jumpOnly;
+	const env = optEnv(body, "env");
+	if (env) request.env = env;
 	return request;
 }
 
@@ -267,7 +270,8 @@ export function serverRoutes(app: FastifyInstance, ctx: AppContext, options: Ser
 			patch.proxy !== undefined ||
 			patch.idleTimeoutMin !== undefined ||
 			patch.agentDirMode !== undefined ||
-			patch.remoteRoot !== undefined;
+			patch.remoteRoot !== undefined ||
+			patch.env !== undefined;
 		if (patch.agentDirMode !== undefined && patch.agentDirMode !== current.agentDirMode) {
 			// R/bin/pi (web terminal, the user's shell) bakes in the agent dir.
 			await ctx.deployer.syncAgentDir(current.id).catch((err: unknown) =>

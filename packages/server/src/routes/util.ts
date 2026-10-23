@@ -1,6 +1,6 @@
 /** Helpers shared by the REST route modules: input validation, lookups and path resolution. */
 import { posix as posixPath } from "node:path";
-import { isPlainObject } from "@pi-web/shared";
+import { isPlainObject, validateEnvMap } from "@pi-web/shared";
 import type { ServerConfig, ServerView, ThinkingLevel, WorkspaceConfig, WorkspaceView } from "@pi-web/shared";
 import { ApiError } from "../core/types.js";
 import type { AgentClient, AppContext } from "../core/types.js";
@@ -9,7 +9,6 @@ export type Json = Record<string, unknown>;
 export type Query = Record<string, unknown>;
 
 export const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export function badRequest(message: string, details?: unknown): ApiError {
 	return new ApiError(400, "BAD_REQUEST", message, details);
@@ -78,17 +77,13 @@ export function optObject(obj: Json, key: string): Json | undefined {
 	return value;
 }
 
-/** Environment variable map: valid names, string values. */
+/** Environment variable map (server or workspace env), checked with the shared rules (validateEnvMap). */
 export function optEnv(obj: Json, key: string): Record<string, string> | undefined {
 	const value = optObject(obj, key);
 	if (!value) return undefined;
-	const env: Record<string, string> = {};
-	for (const [name, v] of Object.entries(value)) {
-		if (!ENV_NAME.test(name)) throw badRequest(`环境变量名无效：${name}`);
-		if (typeof v !== "string") throw badRequest(`环境变量 ${name} 的值必须是字符串`);
-		env[name] = v;
-	}
-	return env;
+	const result = validateEnvMap(value);
+	if (!result.ok) throw badRequest(result.error);
+	return result.env;
 }
 
 // ---------- query strings ----------

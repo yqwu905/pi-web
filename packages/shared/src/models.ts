@@ -117,6 +117,11 @@ export interface ServerConfig {
 	idleTimeoutMin: number;
 	/** Default project trust for new workspaces. */
 	defaultTrust: "approve" | "no-approve";
+	/**
+	 * Server-level environment variables: every pi process (below the workspace env), the web
+	 * terminal and R/bin/pi (via R/run/env.sh).
+	 */
+	env: Record<string, string>;
 	/** Trusted host key (TOFU). */
 	hostKey?: { algorithm: string; fingerprint: string; trustedAt: number };
 	deployed?: DeployedInfo;

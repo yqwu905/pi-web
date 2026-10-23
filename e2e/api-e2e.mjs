@@ -675,6 +675,76 @@ async function main() {
 		}
 	});
 
+	// ---------------------------------------------------------------- server-level env
+	const S5a = "server env";
+	const SRV_ENV_VALUE = "srv value with 'quotes' $HOME";
+	await step(S5a, "server env: Pi-Web managed and invalid variables are rejected with 400", async () => {
+		for (const env of [{ HTTPS_PROXY: "http://127.0.0.1:1" }, { https_proxy: "http://127.0.0.1:1" }, { PI_CODING_AGENT_DIR: "/tmp/x" }, { UID: "1000" }, { "BAD-NAME": "x" }]) {
+			const res = await api.raw("PUT", `/servers/${serverId}`, { env });
+			const body = await res.json();
+			assert(res.status === 400 && body.error?.code === "BAD_REQUEST", `PUT env ${Object.keys(env)[0]} → HTTP ${res.status}`, body);
+		}
+		const view = await api.get(`/servers/${serverId}`);
+		assert(view.config.env && Object.keys(view.config.env).length === 0, "env unchanged by the rejected updates", view.config.env);
+	});
+
+	await step(S5a, "server env reaches a new pi process (workspace value wins) and run/env.sh (0600)", async () => {
+		const view = await api.put(`/servers/${serverId}`, { env: { PIWEB_SRV_ENV: SRV_ENV_VALUE, SHARED_VAR: "server" } });
+		assert(view.config.env.PIWEB_SRV_ENV === SRV_ENV_VALUE && view.config.env.SHARED_VAR === "server", "server env saved", view.config.env);
+		const ws = await api.put(`/workspaces/${wsId}`, { env: { SHARED_VAR: "workspace" } });
+		assert(ws.config.env.SHARED_VAR === "workspace", "workspace env saved", ws.config.env);
+		// The agent wrote R/run/env.sh while handling the reconfigure; the deployed wrapper sources it before proxy.env.
+		const file = runAsTestUser(`stat -c %a ~/.pi-web/run/env.sh; . ~/.pi-web/run/env.sh; printf '%s|%s\\n' "$PIWEB_SRV_ENV" "$SHARED_VAR"`).stdout.trim().split("\n");
+		assert(file[0] === "600", "run/env.sh mode", file);
+		assert(file[1] === `${SRV_ENV_VALUE}|server`, "run/env.sh round-trips the values", file);
+		const wrapper = runAsTestUser("cat ~/.pi-web/bin/pi").stdout;
+		const envLine = wrapper.indexOf("/run/env.sh");
+		assert(envLine > 0 && envLine < wrapper.indexOf("/run/proxy.env"), "bin/pi sources run/env.sh before proxy.env", wrapper);
+
+		const conv = await api.post(`/workspaces/${wsId}/conversations`, {});
+		const cid = conv.convId;
+		events.subscribe(`conv:${cid}`);
+		try {
+			const run = await promptOn(cid, { last: conv.info.lastSeq ?? 0 }, `run: printf '[%s][%s]\\n' "$PIWEB_SRV_ENV" "$SHARED_VAR"`);
+			const end = run.find((e) => e.record.type === "tool_execution_end");
+			const output = textOf(end?.record.result?.content);
+			assert(end && !end.record.isError, "bash tool finished without error", end?.record);
+			assert(output.includes(`[${SRV_ENV_VALUE}][workspace]`), "bash sees the exact server value and the workspace override", output);
+		} finally {
+			const fromIndex = events.list(`conv:${cid}`).length;
+			await api.post(`/conversations/${cid}/stop`, {});
+			await events.waitFor(`conv:${cid}`, (e) => e.record.type === "pi_web_exit", { fromIndex, timeoutMs: 20_000 }).catch(() => {});
+		}
+	});
+
+	await step(S5a, "/ws/term: a new terminal has the server env", async () => {
+		const url = `ws://127.0.0.1:${port}/ws/term?serverId=${encodeURIComponent(serverId)}&cwd=${encodeURIComponent(wsPath)}&cols=120&rows=24`;
+		const socket = new WebSocket(url, { origin: api.origin });
+		let output = "";
+		const controls = [];
+		let closed = false;
+		socket.on("message", (data, isBinary) => {
+			if (isBinary) output += data.toString("utf8");
+			else controls.push(JSON.parse(data.toString("utf8")));
+		});
+		socket.on("close", () => (closed = true));
+		await new Promise((resolve, reject) => {
+			socket.once("open", resolve);
+			socket.once("error", reject);
+		});
+		try {
+			await waitUntil("terminal ready", () => controls.some((c) => c.type === "ready"), { timeoutMs: 15_000, intervalMs: 50 });
+			socket.send(Buffer.from(`printf '<%s>\\n' "$PIWEB_SRV_ENV"\n`), { binary: true });
+			await waitUntil("server env in the terminal output", () => output.includes(`<${SRV_ENV_VALUE}>\r\n`), { timeoutMs: 15_000, intervalMs: 50 });
+			socket.send(Buffer.from("exit\n"), { binary: true });
+			await waitUntil("terminal closed", () => closed, { timeoutMs: 10_000, intervalMs: 50 });
+		} catch (err) {
+			throw new AssertionError(`${err.message}\n      output: ${JSON.stringify(output.slice(-800))}\n      controls: ${JSON.stringify(controls)}`);
+		} finally {
+			if (!closed) socket.terminate();
+		}
+	});
+
 	// ---------------------------------------------------------------- sync
 	const S6 = "sync";
 	const remoteAgentDir = `${fixture?.home ?? "/home/pitest"}/.pi-web/agent`;

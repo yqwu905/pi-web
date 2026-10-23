@@ -1,15 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { Plus, X } from "lucide-react";
 import { useId } from "react";
 import { conversationRpc } from "../../api/client";
-import { Button } from "../../components/ui/Button";
+import { EnvEditor } from "../../components/EnvEditor";
 import { Radio, RadioGroup } from "../../components/ui/Choice";
 import { Field } from "../../components/ui/Field";
-import { IconButton } from "../../components/ui/IconButton";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { useLiveConversations } from "../../stores/convs";
-import { type EnvRow, newEnvRow, THINKING_LEVELS, type WorkspaceFormErrors, type WorkspaceFormValues } from "./lib/workspace-form";
+import { THINKING_LEVELS, type WorkspaceFormErrors, type WorkspaceFormValues } from "./lib/workspace-form";
 
 /**
  * "provider/modelId" suggestions from a live conversation on the server (models are only
@@ -31,70 +29,6 @@ export function useModelSuggestions(serverId: string, enabled: boolean): string[
 		retry: false,
 	});
 	return query.data ?? [];
-}
-
-function EnvEditor({ rows, errors, onChange, disabled }: { rows: EnvRow[]; errors: Record<string, string>; onChange: (rows: EnvRow[]) => void; disabled?: boolean }) {
-	const labelId = useId();
-	const update = (id: string, patch: Partial<EnvRow>) => onChange(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-	return (
-		<div role="group" aria-labelledby={labelId} className="flex flex-col gap-1.5">
-			<div className="flex items-baseline justify-between gap-3">
-				<span id={labelId} className="text-xs font-medium text-fg-2">
-					环境变量
-				</span>
-				<span className="text-xs text-fg-3">传给该工作区中的 pi 进程</span>
-			</div>
-			{rows.length > 0 && (
-				<div className="flex flex-col gap-1.5">
-					{rows.map((row, i) => (
-						<div key={row.id} className="flex flex-col gap-1">
-							<div className="flex items-center gap-1.5">
-								<div className="w-[40%] shrink-0">
-									<Input
-										mono
-										size="sm"
-										aria-label={`第 ${i + 1} 个变量名`}
-										placeholder="NAME"
-										value={row.name}
-										invalid={Boolean(errors[row.id])}
-										disabled={disabled}
-										spellCheck={false}
-										autoComplete="off"
-										onChange={(e) => update(row.id, { name: e.target.value })}
-									/>
-								</div>
-								<span aria-hidden="true" className="font-mono text-xs text-fg-3">
-									=
-								</span>
-								<div className="min-w-0 flex-1">
-									<Input
-										mono
-										size="sm"
-										aria-label={`第 ${i + 1} 个变量值`}
-										placeholder="value"
-										value={row.value}
-										disabled={disabled}
-										spellCheck={false}
-										autoComplete="off"
-										onChange={(e) => update(row.id, { value: e.target.value })}
-									/>
-								</div>
-								<IconButton aria-label={`删除变量 ${row.name || i + 1}`} size="md" variant="subtle" disabled={disabled} onClick={() => onChange(rows.filter((r) => r.id !== row.id))}>
-									<X size={13} strokeWidth={2} />
-								</IconButton>
-							</div>
-							{errors[row.id] && <span className="text-xs text-danger">{errors[row.id]}</span>}
-						</div>
-					))}
-				</div>
-			)}
-			<div>
-				<Button size="sm" variant="ghost" icon={<Plus size={12} strokeWidth={2} />} disabled={disabled} onClick={() => onChange([...rows, newEnvRow()])} className="-ml-2">
-					添加变量
-				</Button>
-			</div>
-		</div>
-	);
 }
 
 export interface WorkspaceFormFieldsProps {
@@ -177,7 +111,14 @@ export function WorkspaceFormFields({ values, onChange, errors, modelSuggestions
 					))}
 				</datalist>
 			)}
-			<EnvEditor rows={values.env} errors={errors?.env ?? {}} onChange={(env) => onChange({ env })} disabled={disabled} />
+			<EnvEditor
+				label="环境变量"
+				hint="传给该工作区中的 pi 进程，同名时覆盖服务器级环境变量"
+				rows={values.env}
+				errors={errors?.env ?? {}}
+				onChange={(env) => onChange({ env })}
+				disabled={disabled}
+			/>
 		</>
 	);
 }

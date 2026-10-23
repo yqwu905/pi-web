@@ -87,6 +87,9 @@ describe("bridge + daemon end to end", () => {
 		expect(proxyEnv).toContain(`kill -0 ${hello.pid} `);
 		expect(proxyEnv).toContain("export NO_PROXY=localhost,127.0.0.1");
 		expect((await stat(join(root, "run", "proxy.env"))).mode & 0o777).toBe(0o600);
+		// The server-level env (extraEnv) is published for R/bin/pi and the web terminal.
+		expect(await readFile(join(root, "run", "env.sh"), "utf8")).toContain(" || export FAKE_PI_IGNORE_STDIN_END='1'\n");
+		expect((await stat(join(root, "run", "env.sh"))).mode & 0o777).toBe(0o600);
 		await waitFor(() => first.events.find(([name, data]) => name === "agent.log" && String((data as { msg: string }).msg).startsWith("configured")));
 		const logLine = first.events.find(([name]) => name === "agent.log")?.[1] as { msg: string };
 		expect(JSON.stringify(first.events)).not.toContain("feedfacefeedfacefeedface");
@@ -137,6 +140,11 @@ describe("bridge + daemon end to end", () => {
 		const proxyEnv3 = await readFile(join(root, "run", "proxy.env"), "utf8");
 		expect(proxyEnv3).toContain(`kill -0 ${hello3.pid} `);
 		expect(proxyEnv3).not.toContain(sessionToken![1]);
+		// Unlike proxy.env, env.sh holds no secret tied to the daemon: it survives the restart, and
+		// goes away once the server has no variables left.
+		expect(await readFile(join(root, "run", "env.sh"), "utf8")).toContain("export FAKE_PI_IGNORE_STDIN_END='1'");
+		expect(await third.peer.request("agent.configure", { ...config, extraEnv: {} })).toEqual({ ok: true });
+		await expect(stat(join(root, "run", "env.sh"))).rejects.toThrow();
 
 		// The old daemon finishes stopping its conversation (SIGTERM after 5s) and exits with its bridges.
 		await Promise.all([firstExit, secondExit]);

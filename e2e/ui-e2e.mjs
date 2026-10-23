@@ -669,7 +669,7 @@ async function main() {
 		await shot("settings-saved");
 	});
 
-	await uiStep(S6, "server settings: change 空闲回收 and save", async () => {
+	await uiStep(S6, "server settings: change 空闲回收, add a server-level env variable, save", async () => {
 		await page.goto(`${base}/servers/${serverId}`);
 		await page.getByRole("heading", { name: "运行环境" }).waitFor();
 		await page.getByRole("main").getByRole("link", { name: "设置" }).first().click();
@@ -686,6 +686,84 @@ async function main() {
 		await page.reload();
 		await waitUntil("saved value after reload", async () => (await page.getByLabel("空闲回收").inputValue()) === "60", { timeoutMs: 10_000 });
 		await shot("server-settings-saved");
+
+		// 环境变量: add a variable (a Pi-Web managed name is refused first), save, reload.
+		const envValue = "hello 'ui' $HOME";
+		const multiValue = "line 1\nline 2";
+		const focusedLabel = () => page.evaluate(() => `${document.activeElement?.tagName}:${document.activeElement?.getAttribute("aria-label")}`);
+		const envNav = page.getByRole("navigation", { name: "设置分区" }).getByRole("link", { name: /环境变量/ });
+		const envSection = page.getByRole("region", { name: "环境变量" });
+		// The short section cannot reach the top of the page: the clicked entry stays current once the scroll settles.
+		const showEnvSection = async () => {
+			await envNav.click();
+			await envSection.getByText("工作区中设置的同名变量优先").waitFor();
+			let lastTop = NaN;
+			await waitUntil(
+				"scroll settled",
+				async () => {
+					const top = await envSection.evaluate((el) => Math.round(el.getBoundingClientRect().top));
+					const settled = top === lastTop;
+					lastTop = top;
+					return settled;
+				},
+				{ timeoutMs: 5000, intervalMs: 300 },
+			);
+			assert((await envNav.getAttribute("aria-current")) === "location", "nav keeps 环境变量 current after the click", await envNav.getAttribute("aria-current"));
+		};
+		await showEnvSection();
+		await envSection.getByRole("button", { name: "添加变量" }).click();
+		await waitUntil("new row's name field focused", async () => (await focusedLabel()) === "INPUT:第 1 个变量名", { timeoutMs: 3000 });
+		await page.keyboard.type("https_proxy");
+		await envSection.getByLabel("第 1 个变量值").fill(envValue);
+		await page.getByText("有 1 项未保存的更改").waitFor();
+		await page.getByRole("button", { name: "保存更改" }).click();
+		await envSection.getByText("https_proxy 由 Pi-Web 管理，请在服务器设置的“LLM 代理”中配置").waitFor({ timeout: 5000 });
+		const invalid = async () => [await envSection.getByLabel("第 1 个变量名").getAttribute("aria-invalid"), await envSection.getByLabel("第 1 个变量值").getAttribute("aria-invalid")].join(",");
+		assert((await invalid()) === "true,", "a name error marks the name field", await invalid());
+		await envSection.getByLabel("第 1 个变量名").fill("UI_E2E_VAR");
+		await envSection.getByLabel("第 1 个变量值").fill("x".repeat(33 * 1024));
+		await envSection.getByText("变量值不能超过 32 KiB").waitFor({ timeout: 5000 });
+		assert((await invalid()) === ",true", "a value error marks the value field", await invalid());
+		await envSection.getByLabel("第 1 个变量值").fill(envValue);
+		// A multi-line paste keeps its line breaks: the value field becomes a textarea and keeps the focus.
+		await envSection.getByRole("button", { name: "添加变量" }).click();
+		await page.keyboard.type("UI_E2E_MULTI");
+		await envSection.getByLabel("第 2 个变量值").evaluate((el, text) => {
+			el.focus();
+			const data = new DataTransfer();
+			data.setData("text/plain", text);
+			el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+		}, "line 1\r\nline 2");
+		await waitUntil("multi-line value in a focused textarea", async () => (await focusedLabel()) === "TEXTAREA:第 2 个变量值", { timeoutMs: 3000 });
+		assert((await envSection.getByLabel("第 2 个变量值").inputValue()) === multiValue, "pasted line breaks kept", await envSection.getByLabel("第 2 个变量值").inputValue());
+		await showEnvSection();
+		await shot("server-settings-env");
+		await page.getByRole("button", { name: "保存更改" }).click();
+		await page.getByText("所有更改已保存").waitFor({ timeout: 15_000 });
+		const saved = await api.get(`/servers/${serverId}`);
+		assert(saved.config.env?.UI_E2E_VAR === envValue && saved.config.env?.UI_E2E_MULTI === multiValue, "server env saved", saved.config.env);
+		const remote = runAsTestUser(`. ~/.pi-web/run/env.sh; printf '%s|%s' "$UI_E2E_VAR" "$UI_E2E_MULTI"`).stdout;
+		assert(remote === `${envValue}|${multiValue}`, "run/env.sh on the server carries the variables", remote);
+		await page.reload();
+		await waitUntil(
+			"saved env variables after reload",
+			async () =>
+				(await envSection.getByLabel("第 1 个变量名").inputValue().catch(() => "")) === "UI_E2E_VAR" &&
+				(await envSection.getByLabel("第 1 个变量值").inputValue()) === envValue &&
+				(await envSection.getByLabel("第 2 个变量值").inputValue().catch(() => "")) === multiValue,
+			{ timeoutMs: 10_000 },
+		);
+		await page.getByText("所有更改已保存").waitFor();
+		// Removing a row with the keyboard moves the focus to the remaining row instead of <body>.
+		await envSection.getByRole("button", { name: "删除变量 UI_E2E_MULTI" }).focus();
+		await page.keyboard.press("Enter");
+		await waitUntil("focus moved to the remaining row", async () => (await focusedLabel()) === "INPUT:第 1 个变量名", { timeoutMs: 3000 });
+		await page.getByRole("button", { name: "保存更改" }).click();
+		await page.getByText("所有更改已保存").waitFor({ timeout: 15_000 });
+		const pruned = await api.get(`/servers/${serverId}`);
+		assert(JSON.stringify(pruned.config.env) === JSON.stringify({ UI_E2E_VAR: envValue }), "removed variable saved", pruned.config.env);
+		await showEnvSection();
+		await shot("server-settings-env-saved");
 	});
 
 	// ---------------------------------------------------------------- offline + reconnect

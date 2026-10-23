@@ -124,7 +124,9 @@
   - `PI_OFFLINE=1`：禁止启动时访问网络；
   - `HTTPS_PROXY`/`HTTP_PROXY=http://pw:<token>@127.0.0.1:P`；
   - `NO_PROXY`：`localhost,127.0.0.1,::1`，再加上按服务器配置的内网地址，例如内网的 vLLM 地址；
-  - workspace 上配置的额外环境变量。
+  - 服务器级环境变量（服务器设置中配置，作用于该服务器的所有 workspace）；
+  - workspace 上配置的额外环境变量（与服务器级变量同名时以 workspace 为准）。
+  - 代理变量（`HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`/`NO_PROXY`，不区分大小写）和 `PI_CODING_AGENT_DIR` 由 Pi-Web 管理，`UID` 等 bash 只读变量无法导出，都不能作为服务器级或 workspace 环境变量设置。
 - **扩展 UI**：`extension_ui_request` 中的 select、confirm、input、editor 显示为网页对话框；notify 显示为 toast；setStatus、setWidget 显示在输入框上方的状态区。
 
 ### 3.3 LLM 隧道代理
@@ -189,7 +191,7 @@ pi(HTTPS_PROXY) ──CONNECT api.anthropic.com:443──▶ agent 127.0.0.1:P�
 
 ### 3.6 文件浏览 / Web 终端 / Git
 - **文件浏览**：通过 agent 的 `fs.list` 和 `fs.read` 实现，有大小上限（默认 2 MB）和二进制检测；支持代码高亮、Markdown 预览、图片预览、下载；遵循 `.gitignore` 的过滤可以开关。为只读设计。
-- **Web 终端**：用 ssh2 的 shell 通道（带 pty），先 `cd` 到 workspace，并把 `~/.pi-web/bin` 加到 PATH，这样可以直接运行 `pi`。前端用 xterm.js，支持多个标签页和窗口大小自适应。终端随浏览器页面存在，关闭标签页即结束。
+- **Web 终端**：用 ssh2 的 shell 通道（带 pty），先 `cd` 到 workspace，导出服务器级环境变量，并把 `~/.pi-web/bin` 加到 PATH，这样可以直接运行 `pi`。前端用 xterm.js，支持多个标签页和窗口大小自适应。终端随浏览器页面存在，关闭标签页即结束。
 - **Git**：由 agent 在 workspace 中执行 `git status --porcelain=v2 -z`、`git diff`、`git diff --cached`、`git log`。界面包括变更文件列表、并排或行内 diff，以及最近的提交。为只读设计；可以从 diff 一键“把这段 diff 发给 pi 审阅”。
 
 ---
@@ -207,6 +209,7 @@ pi(HTTPS_PROXY) ──CONNECT api.anthropic.com:443──▶ agent 127.0.0.1:P�
   - 同步项目、自动同步开关
   - settings 覆盖
   - 空闲回收时间
+  - 服务器级环境变量：作用于该服务器所有 workspace 的 pi 进程、Web 终端和 `~/.pi-web/bin/pi`（例如扩展需要的内网服务地址）；同名时 workspace 的变量优先，运行 `~/.pi-web/bin/pi` 时调用方已设置的变量也优先；修改后对新启动的 pi 进程和新打开的终端生效（Web 终端和 bin/pi 需要 agent 0.1.2 及以上，旧版本升级后生效）。值以明文保存（Host 数据目录、服务器上 0600 的 `run/env.sh`），不适合存放高价值密钥
 
 ### 4.2 Workspace 管理
 - 添加：用远程目录选择器选择已有目录，或新建目录
@@ -314,6 +317,7 @@ Server {
            toolsAllow: "list" | "all", extraDomains: string[], noProxy: string[] },
   sync: { items: Record<SyncItemKey, boolean>, auto: boolean, settingsOverride: object },
   idleTimeoutMin: number,
+  env: Record<string, string>,          // 服务器级环境变量（workspace.env 同名时覆盖）
   hostKey?: { alg, fingerprint },
   deployed?: { nodeVersion, piVersion, agentVersion, arch, glibc, at }
 }

@@ -793,6 +793,7 @@ export function makeServer(overrides: Partial<ServerConfig> = {}): ServerConfig 
 		},
 		idleTimeoutMin: 30,
 		defaultTrust: "approve",
+		env: {},
 		createdAt: 1,
 		updatedAt: 1,
 		deployed: {

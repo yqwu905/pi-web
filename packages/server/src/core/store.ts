@@ -42,6 +42,11 @@ export async function writeFileAtomic(file: string, data: string | Buffer, mode 
 	}
 }
 
+/** Fills fields added after a servers.json entry was written (older entries have no `env`). */
+function withServerDefaults(server: ServerConfig): ServerConfig {
+	return isPlainObject(server.env) ? server : { ...server, env: {} };
+}
+
 /** Serializes async tasks per key (one in-process write queue per file). */
 export class KeyedQueue {
 	private readonly tails = new Map<string, Promise<unknown>>();
@@ -138,7 +143,7 @@ export class JsonStore extends EventEmitter implements Store {
 		const settings = readJsonFile<unknown>(this.file("settings"), {}, log);
 		this.settings = isPlainObject(settings) ? (settings as Partial<HostSettings>) : {};
 		const servers = readJsonFile<{ servers?: ServerConfig[] }>(this.file("servers"), {}, log);
-		for (const server of servers.servers ?? []) this.servers.set(server.id, server);
+		for (const server of servers.servers ?? []) this.servers.set(server.id, withServerDefaults(server));
 		const workspaces = readJsonFile<{ workspaces?: WorkspaceConfig[] }>(this.file("workspaces"), {}, log);
 		for (const workspace of workspaces.workspaces ?? []) this.workspaces.set(workspace.id, workspace);
 		const history = readJsonFile<{ records?: SyncRecord[] }>(this.file("history"), {}, log);
@@ -374,6 +379,7 @@ export function createServerConfig(input: CreateServerRequest, options: CreateSe
 		},
 		idleTimeoutMin: input.idleTimeoutMin ?? 30,
 		defaultTrust: input.defaultTrust ?? "approve",
+		env: { ...(input.env ?? {}) },
 		createdAt: now,
 		updatedAt: now,
 	};
@@ -407,6 +413,7 @@ export function mergeServerConfig(existing: ServerConfig, patch: UpdateServerReq
 	}
 	if (patch.idleTimeoutMin !== undefined) next.idleTimeoutMin = patch.idleTimeoutMin;
 	if (patch.defaultTrust !== undefined) next.defaultTrust = patch.defaultTrust;
+	if (patch.env !== undefined) next.env = { ...patch.env };
 	if (patch.jumpOnly !== undefined) {
 		if (patch.jumpOnly) next.jumpOnly = true;
 		else delete next.jumpOnly;

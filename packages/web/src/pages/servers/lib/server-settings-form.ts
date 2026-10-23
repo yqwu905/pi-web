@@ -3,6 +3,7 @@
  * section, validation, and the minimal UpdateServerRequest for the changed fields.
  */
 import { SYNC_ITEM_KEYS, type ServerConfig, type SyncItemKey, type UpdateServerRequest } from "@pi-web/shared";
+import { type EnvRow, envRowsEqual, envToRows, rowsToEnv } from "../../../lib/env-rows";
 import {
 	type ConnectionFormErrors,
 	type ConnectionFormValues,
@@ -27,11 +28,13 @@ export interface ServerSettingsForm extends ConnectionFormValues {
 	overrideText: string;
 	idleTimeoutMin: number;
 	defaultTrust: ServerConfig["defaultTrust"];
+	/** Server-level environment variables. */
+	env: EnvRow[];
 }
 
 export type SettingsField = keyof ServerSettingsForm;
 
-export type SettingsSection = "conn" | "deploy" | "proxy" | "sync" | "session" | "danger";
+export type SettingsSection = "conn" | "deploy" | "proxy" | "sync" | "session" | "env" | "danger";
 
 export const SETTINGS_SECTIONS: ReadonlyArray<{ id: SettingsSection; label: string }> = [
 	{ id: "conn", label: "连接" },
@@ -39,6 +42,7 @@ export const SETTINGS_SECTIONS: ReadonlyArray<{ id: SettingsSection; label: stri
 	{ id: "proxy", label: "LLM 代理" },
 	{ id: "sync", label: "配置同步" },
 	{ id: "session", label: "会话" },
+	{ id: "env", label: "环境变量" },
 	{ id: "danger", label: "危险操作" },
 ];
 
@@ -48,6 +52,7 @@ export const SECTION_FIELDS: Record<SettingsSection, readonly SettingsField[]> =
 	proxy: ["proxyMode", "proxyPort", "proxyScope", "toolsPolicy", "extraDomains", "noProxyText"],
 	sync: ["syncItems", "syncAuto", "overrideText"],
 	session: ["idleTimeoutMin", "defaultTrust"],
+	env: ["env"],
 	danger: [],
 };
 
@@ -74,6 +79,7 @@ export function formFromServer(c: ServerConfig): ServerSettingsForm {
 		overrideText: formatOverride(c.sync.settingsOverride),
 		idleTimeoutMin: c.idleTimeoutMin,
 		defaultTrust: c.defaultTrust,
+		env: envToRows(c.env),
 	};
 }
 
@@ -108,6 +114,8 @@ function fieldEqual(field: SettingsField, a: ServerSettingsForm, b: ServerSettin
 			return changedSyncItems(a, b).length === 0;
 		case "overrideText":
 			return overrideEqual(a.overrideText, b.overrideText);
+		case "env":
+			return envRowsEqual(a.env, b.env);
 		default:
 			return a[field] === b[field];
 	}
@@ -141,7 +149,23 @@ export function dirtySections(fields: readonly SettingsField[]): Set<SettingsSec
 	return out;
 }
 
-export type ServerSettingsErrors = ConnectionFormErrors & Partial<Record<"proxyPort" | "noProxyText" | "overrideText" | "idleTimeoutMin", string>>;
+/** pi-web-agent writes R/run/env.sh (read by R/bin/pi and the web terminal) since this version. */
+export const ENV_FILE_AGENT_VERSION = "0.1.2";
+
+/** Whether a deployed pi-web-agent version writes R/run/env.sh (older ones only pass the env to pi processes). */
+export function agentWritesEnvFile(version: string): boolean {
+	const parts = (v: string) => v.split(/[.+-]/, 3).map((n) => Number.parseInt(n, 10) || 0);
+	const have = parts(version);
+	const need = parts(ENV_FILE_AGENT_VERSION);
+	for (let i = 0; i < 3; i++) if ((have[i] ?? 0) !== need[i]) return (have[i] ?? 0) > need[i];
+	return true;
+}
+
+export type ServerSettingsErrors = ConnectionFormErrors &
+	Partial<Record<"proxyPort" | "noProxyText" | "overrideText" | "idleTimeoutMin", string>> & {
+		/** Env row id → message; only set when a row is invalid. */
+		env?: Record<string, string>;
+	};
 
 export function validateServerSettings(
 	form: ServerSettingsForm,
@@ -164,6 +188,8 @@ export function validateServerSettings(
 	if (!Number.isInteger(form.idleTimeoutMin) || form.idleTimeoutMin < 0 || form.idleTimeoutMin > 7 * 24 * 60) {
 		errors.idleTimeoutMin = "空闲回收时间无效";
 	}
+	const env = rowsToEnv(form.env).errors;
+	if (Object.keys(env).length > 0) errors.env = env;
 	return errors;
 }
 
@@ -211,6 +237,8 @@ export function buildServerUpdate(base: ServerSettingsForm, form: ServerSettings
 	if (Object.keys(sync).length) req.sync = sync;
 	if (dirty.has("idleTimeoutMin")) req.idleTimeoutMin = form.idleTimeoutMin;
 	if (dirty.has("defaultTrust")) req.defaultTrust = form.defaultTrust;
+	// The host replaces the whole map.
+	if (dirty.has("env")) req.env = rowsToEnv(form.env).env;
 	return req;
 }
 

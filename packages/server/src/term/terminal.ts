@@ -41,10 +41,14 @@ export function remoteShellPath(p: string): string {
 	return shellQuote(p);
 }
 
-/** The command run in the pty: cd to the workspace, put `pi` on PATH, start a login shell. */
+/**
+ * The command run in the pty: cd to the workspace, export the server-level env (R/run/env.sh,
+ * written by the agent), put `pi` on PATH and start a login shell.
+ */
 export function buildTerminalCommand(cwd: string, remoteRoot: string): string {
 	const binDir = remoteShellPath(posixPath.join(remoteRoot, "bin"));
-	return `cd ${remoteShellPath(cwd)} 2>/dev/null; export PATH=${binDir}:"$PATH"; exec "\${SHELL:-/bin/sh}" -l`;
+	const envFile = remoteShellPath(posixPath.join(remoteRoot, "run", "env.sh"));
+	return `cd ${remoteShellPath(cwd)} 2>/dev/null; [ -f ${envFile} ] && . ${envFile}; export PATH=${binDir}:"$PATH"; exec "\${SHELL:-/bin/sh}" -l`;
 }
 
 function dimension(value: unknown, fallback: number): number {

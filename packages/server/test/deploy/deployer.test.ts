@@ -93,6 +93,17 @@ describe("Deployer (no SSH)", () => {
 		expect(shared.proxy.enabled).toBe(false);
 	});
 
+	it("hands the server-level env to the agent as extraEnv", async () => {
+		const server = store.getServer("s")!;
+		server.env = { OPENVIKING_URL: "http://10.0.0.2:1933", QUOTED: "it's $HOME" };
+		await store.saveServer(server);
+		const config = await deployer.buildAgentConfig("s");
+		expect(config.extraEnv).toEqual({ OPENVIKING_URL: "http://10.0.0.2:1933", QUOTED: "it's $HOME" });
+		// A copy: changing the config must not touch the stored server.
+		config.extraEnv.OTHER = "x";
+		expect(store.getServer("s")!.env).toEqual({ OPENVIKING_URL: "http://10.0.0.2:1933", QUOTED: "it's $HOME" });
+	});
+
 	it("refuses to build a config for undeployed servers", async () => {
 		const server = store.getServer("s")!;
 		delete server.deployed;

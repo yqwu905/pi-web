@@ -127,6 +127,69 @@ describe("server CRUD", () => {
 		expect(agent.callsOf("agent.configure")).toHaveLength(3);
 	});
 
+	it("stores the server-level env on create and replaces it on update", async () => {
+		t = await createTestApp();
+		const created = await t.request("POST", "/api/servers", {
+			name: "env box",
+			host: "h",
+			username: "u",
+			auth: { method: "agent" },
+			env: { OPENVIKING_URL: "http://10.0.0.2:1933", QUOTED: "it's \"$HOME\"\nline 2" },
+		});
+		expect(created.statusCode).toBe(200);
+		const id = (created.json() as ServerView).config.id;
+		expect(t.store.getServer(id)!.env).toEqual({ OPENVIKING_URL: "http://10.0.0.2:1933", QUOTED: "it's \"$HOME\"\nline 2" });
+		const plain = await t.request("POST", "/api/servers", { name: "plain", host: "h2", username: "u", auth: { method: "agent" } });
+		expect(plain.json().config.env).toEqual({});
+
+		const renamed = await t.request("PUT", `/api/servers/${id}`, { name: "renamed" });
+		expect(renamed.json().config.env).toEqual({ OPENVIKING_URL: "http://10.0.0.2:1933", QUOTED: "it's \"$HOME\"\nline 2" });
+		const replaced = await t.request("PUT", `/api/servers/${id}`, { env: { ONLY: "1" } });
+		expect(replaced.json().config.env).toEqual({ ONLY: "1" });
+		const cleared = await t.request("PUT", `/api/servers/${id}`, { env: {} });
+		expect(cleared.json().config.env).toEqual({});
+	});
+
+	it("rejects invalid and Pi-Web managed env variables", async () => {
+		await withServer();
+		const cases: Array<[unknown, string]> = [
+			[{ "BAD-NAME": "x" }, "环境变量名无效：BAD-NAME"],
+			[{ "1A": "x" }, "环境变量名无效：1A"],
+			[{ HTTPS_PROXY: "http://p" }, "HTTPS_PROXY 由 Pi-Web 管理，请在服务器设置的“LLM 代理”中配置"],
+			[{ no_proxy: "x" }, "no_proxy 由 Pi-Web 管理，请在服务器设置的“LLM 代理”中配置"],
+			[{ PI_CODING_AGENT_DIR: "/x" }, "PI_CODING_AGENT_DIR 由服务器设置中的“Agent 目录”决定，不能在此设置"],
+			[{ A: 1 }, "环境变量 A 的值必须是字符串"],
+			[{ A: "x\u0000y" }, "环境变量 A 的值不能包含 NUL 字符"],
+			[{ A: "x".repeat(32 * 1024 + 1) }, "环境变量 A 的值不能超过 32 KiB"],
+			[Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`V${i}`, "x"])), "环境变量最多 100 个"],
+			[{ UID: "1000" }, "UID 是 shell 只读变量，不能设置"],
+			[{ ["N".repeat(257)]: "x" }, "环境变量名不能超过 256 个字符"],
+			[Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`V${i}`, "x".repeat(32 * 1024 - 4)])), "环境变量总大小不能超过 256 KiB"],
+			["A=1", "字段 env 必须是对象"],
+		];
+		for (const [env, message] of cases) {
+			const res = await t.request("PUT", "/api/servers/srv1", { env });
+			expect(res.statusCode, message).toBe(400);
+			expect(res.json().error).toEqual({ code: "BAD_REQUEST", message });
+		}
+		const create = await t.request("POST", "/api/servers", { name: "n", host: "h", username: "u", auth: { method: "agent" }, env: { ALL_PROXY: "x" } });
+		expect(create.statusCode).toBe(400);
+		expect(t.store.getServer("srv1")!.env).toEqual({});
+		expect(t.store.servers.size).toBe(1);
+	});
+
+	it("reconfigures the connected agent when the server env changes", async () => {
+		await withServer();
+		const agent = connectAgent(t);
+		agent.handle("agent.configure", () => ({ ok: true }));
+		await t.request("PUT", "/api/servers/srv1", { env: { OPENVIKING_URL: "http://10.0.0.2:1933" } });
+		expect(agent.callsOf("agent.configure")).toHaveLength(1);
+		await t.request("PUT", "/api/servers/srv1", { env: {} });
+		expect(agent.callsOf("agent.configure")).toHaveLength(2);
+		await t.request("PUT", "/api/servers/srv1", { defaultTrust: "no-approve" });
+		expect(agent.callsOf("agent.configure")).toHaveLength(2);
+	});
+
 	it("deletes a server with its workspaces and secrets, unless it is used as a jump host", async () => {
 		await withServer();
 		await t.store.saveServer(makeServer({ id: "srv2", name: "inner", jumpServerIds: ["srv1"] }));

@@ -7,6 +7,7 @@
 - **LLM 隧道代理**：服务器上 pi 的 LLM 请求，经 SSH 链路回到 Host 再发出（HTTP CONNECT，TLS 端到端），不依赖 sshd 的端口转发。Host 端强制执行域名白名单；默认只放行 LLM provider，可按服务器开放给工具命令。
 - **配置与插件同步**：把 Host 的 `~/.pi/agent`（settings、models、auth、mcp、AGENTS.md、extensions、skills、prompts、themes、npm/git 插件包）单向增量同步到服务器，支持自动同步。冲突文件会先备份再覆盖。OAuth 的 refresh token 只保存在 Host，由 Pi-Web 在过期前刷新，再把 access token 推送到服务器。
 - **工作区工具**：远程文件浏览（代码高亮、Markdown 预览）、Web 终端（xterm.js）、Git 变更与 diff 查看。
+- **环境变量**：在“服务器设置 → 环境变量”中配置服务器级变量（例如扩展需要的内网服务地址），作用于该服务器所有工作区的 pi 进程、Web 终端和 `~/.pi-web/bin/pi`；工作区可设置同名变量覆盖。修改后对新启动的 pi 进程和新打开的终端生效（已部署的服务器需先升级 agent，Web 终端和 `bin/pi` 才能读到）。
 
 > 设计文档：[docs/DESIGN.md](docs/DESIGN.md)（产品设计）· [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md)（工程规范）· [docs/ui-design/](docs/ui-design/)（界面设计稿）
 
@@ -65,6 +66,7 @@ pi-web [--host 127.0.0.1] [--port 7878] [--data-dir DIR] [--dev]
   - 默认只放行 LLM provider，bash 工具不继承代理变量。
 - 服务器上的 `auth.json` 不包含 OAuth refresh token。
 - 同步到服务器的扩展和插件可以执行任意代码，请只同步你信任的内容。
+- 服务器级和工作区环境变量以明文保存（Host 数据目录，以及服务器上权限 0600 的 `~/.pi-web/run/env.sh`），不要在其中存放高价值密钥。
 
 ## 开发
 
@@ -86,7 +88,7 @@ API 端到端测试的流程：
 
 1. 在本机启动 sshd（用户 `pitest`，端口 2222）作为“服务器”；
 2. 启动一个 OpenAI 兼容的 mock LLM（`e2e/mock-llm.mjs`，域名 `mock-llm.test`）；
-3. 走完整流程：部署 → 对话（LLM 流量经隧道）→ 伴随扩展操作 → 同步、自动同步、OAuth 变换 → 终端 → 断线重连 → 卸载。
+3. 走完整流程：部署 → 对话（LLM 流量经隧道）→ 伴随扩展操作 → 终端 → 服务器级环境变量 → 同步、自动同步、OAuth 变换 → 断线重连 → 卸载。
 
 ## 已知限制
 

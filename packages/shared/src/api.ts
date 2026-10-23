@@ -88,6 +88,8 @@ export interface CreateServerRequest {
 	idleTimeoutMin?: number;
 	defaultTrust?: "approve" | "no-approve";
 	jumpOnly?: boolean;
+	/** Server-level environment variables; replaces the whole map when given. */
+	env?: Record<string, string>;
 }
 export type UpdateServerRequest = Partial<CreateServerRequest>;
 
