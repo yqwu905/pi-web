@@ -187,7 +187,8 @@ export function Composer({ conv, draftKey, ref, onBash, bashRunning, onAbortBash
 				setText(value);
 				requestAnimationFrame(() => {
 					const el = textareaRef.current;
-					if (!el) return;
+					// Typing that landed before this frame already placed the caret; do not move it back.
+					if (!el || el.value !== value) return;
 					el.focus();
 					el.setSelectionRange(value.length, value.length);
 					setCursor(value.length);
@@ -199,7 +200,7 @@ export function Composer({ conv, draftKey, ref, onBash, bashRunning, onAbortBash
 					const next = insertAt(current, el ? el.selectionStart : current.length, value);
 					requestAnimationFrame(() => {
 						const area = textareaRef.current;
-						if (!area) return;
+						if (!area || area.value !== next.text) return;
 						area.focus();
 						area.setSelectionRange(next.cursor, next.cursor);
 						setCursor(next.cursor);
@@ -250,7 +251,10 @@ export function Composer({ conv, draftKey, ref, onBash, bashRunning, onAbortBash
 		setText(next.text);
 		setMenuIndex(0);
 		requestAnimationFrame(() => {
-			textareaRef.current?.setSelectionRange(next.cursor, next.cursor);
+			const el = textareaRef.current;
+			// Keystrokes typed right after the completion (before this frame) must keep their caret.
+			if (!el || el.value !== next.text) return;
+			el.setSelectionRange(next.cursor, next.cursor);
 			setCursor(next.cursor);
 		});
 	};
