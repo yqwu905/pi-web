@@ -1,6 +1,6 @@
 {
   "name": "@pi-web/agent",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "description": "Remote daemon (pi-web-agent), stdio bridge and pi companion extension deployed to servers",

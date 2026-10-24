@@ -1150,6 +1150,73 @@ async function main() {
 		assert(lastAssistantText(next) === "收到：中止之后", "prompt after abort", lastAssistantText(next));
 	});
 
+	// ---------------------------------------------------------------- generation timing, rpiv-todo list
+	const S8d = "timing+todos";
+	const TODO_KEY = "pi-web:todos";
+	const todoSnapshot = async () => {
+		const snap = await api.get(`/conversations/${liveConvId}/snapshot`);
+		const text = snap.snapshot.ui.statuses[TODO_KEY];
+		return { snap, todos: text ? JSON.parse(text) : null };
+	};
+
+	await step(S8d, "generation timing: the snapshot keeps time to first token and decode time of each reply", async () => {
+		assert(liveConvId, "no live conversation");
+		liveSeqs.last = Math.max(liveSeqs.last, lastLiveSeq());
+		// The mock streams 3 characters every 15 ms: about 20 chunks, 300 ms of decoding.
+		const run = await promptOn(liveConvId, liveSeqs, "吞吐速率测试".repeat(10));
+		const end = run.findLast((e) => e.record.type === "message_end" && e.record.message.role === "assistant");
+		const message = end?.record.message;
+		assert(message && message.durationMs > 0 && message.usage.output === 7, "pi reports durationMs and usage", message);
+		const snap = await api.get(`/conversations/${liveConvId}/snapshot`);
+		const timing = snap.snapshot.timing?.messages?.[String(message.timestamp)];
+		assert(timing && timing.decodeMs >= 200 && timing.ttftMs >= 0, "timing of the reply", { timing, durationMs: message.durationMs });
+		assert(timing.ttftMs + timing.decodeMs <= message.durationMs + 250, "timing fits in pi's own duration", { timing, durationMs: message.durationMs });
+		assert(snap.snapshot.timing.streaming === null, "nothing is streaming", snap.snapshot.timing);
+	});
+
+	await step(S8d, "rpiv-todo: the companion extension publishes the todo list as the pi-web:todos status", async () => {
+		const fromIndex = events.list(liveTopic()).length;
+		const run = await promptOn(liveConvId, liveSeqs, 'todo: {"action":"create","tasks":[{"subject":"调研"},{"subject":"实现"},{"subject":"测试"}]}');
+		const end = run.find((e) => e.record.type === "tool_execution_end");
+		assert(end?.record.toolName === "todo" && !end.record.isError && end.record.result.details.tasks.length === 3, "the todo tool ran", end?.record);
+		const status = await events.waitFor(liveTopic(), (e) => e.record.type === "extension_ui_request" && e.record.method === "setStatus" && e.record.statusKey === TODO_KEY, {
+			fromIndex,
+			timeoutMs: 10_000,
+			what: "pi-web:todos setStatus",
+		});
+		const pushed = JSON.parse(status.record.statusText);
+		assert(pushed.v === 1 && pushed.tasks.map((t) => `${t.id}:${t.subject}:${t.status}`).join(",") === "1:调研:pending,2:实现:pending,3:测试:pending", "pushed list", pushed);
+		const { todos } = await todoSnapshot();
+		assert(todos?.tasks.length === 3 && todos.hidden.length === 0, "the list is in the snapshot", todos);
+	});
+
+	await step(S8d, "rpiv-todo: updates are published; completed tasks of earlier prompts are marked hidden", async () => {
+		await promptOn(liveConvId, liveSeqs, 'todo: {"action":"update","id":1,"status":"in_progress","activeForm":"调研中"}');
+		let { todos } = await todoSnapshot();
+		assert(todos.tasks[0].status === "in_progress" && todos.tasks[0].activeForm === "调研中", "in progress", todos);
+		await promptOn(liveConvId, liveSeqs, 'todo: {"action":"update","id":1,"status":"completed"}');
+		({ todos } = await todoSnapshot());
+		assert(todos.tasks[0].status === "completed" && todos.hidden.length === 0, "completed in this prompt: still shown", todos);
+		await promptOn(liveConvId, liveSeqs, "继续下一项");
+		await waitUntil("task #1 hidden after the next prompt", async () => (await todoSnapshot()).todos?.hidden.join(",") === "1", { timeoutMs: 10_000 });
+	});
+
+	await step(S8d, "rpiv-todo: the list survives a compaction that drops the todo tool results from the context", async () => {
+		// Push the todo calls out of the kept tail (keepRecentTokens is 40 in the E2E settings).
+		await promptOn(liveConvId, liveSeqs, `填充上下文 ${"x".repeat(400)}`);
+		await promptOn(liveConvId, liveSeqs, `填充上下文 ${"y".repeat(400)}`);
+		const fromIndex = events.list(liveTopic()).length;
+		const res = await api.post(`/conversations/${liveConvId}/rpc`, { command: { type: "compact" }, timeoutMs: 120_000 });
+		assert(res.success === true, "compact", res);
+		await events.waitFor(liveTopic(), (e) => e.record.type === "compaction_end", { fromIndex, timeoutMs: 60_000, what: "compaction_end" });
+		const { snap, todos } = await todoSnapshot();
+		const todoResults = snap.snapshot.messages.filter((m) => m.role === "toolResult" && m.toolName === "todo");
+		assert(snap.snapshot.messages.some((m) => m.role === "compactionSummary"), "the context was compacted", snap.snapshot.messages.map((m) => m.role));
+		assert(todoResults.length === 0, "the todo results are no longer in the context", todoResults.length);
+		assert(todos?.tasks.map((t) => t.status).join(",") === "completed,pending,pending" && todos.hidden.join(",") === "1", "the list is unchanged", todos);
+		liveSeqs.last = Math.max(liveSeqs.last, lastLiveSeq());
+	});
+
 	// ---------------------------------------------------------------- uninstall
 	const S9 = "uninstall";
 	await step(S9, "uninstall keeps sessions when requested", async () => {

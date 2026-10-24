@@ -9,7 +9,8 @@ import { stripAnsi } from "../logic/composer";
 
 /** Extension statuses (setStatus) as chips above the composer, e.g. "token-meter 本轮 18.2k tokens". */
 export function ExtensionStatuses({ statuses }: { statuses: Record<string, string> }) {
-	const entries = Object.entries(statuses).filter(([, text]) => text);
+	// "pi-web:" keys are Pi-Web's own (companion extension data such as the todo panel's), not chips.
+	const entries = Object.entries(statuses).filter(([key, text]) => text && !key.startsWith("pi-web:"));
 	if (entries.length === 0) return null;
 	return (
 		<div className="flex flex-wrap items-center gap-2 text-xs text-fg-2" aria-label="扩展状态">

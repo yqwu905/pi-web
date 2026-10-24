@@ -447,12 +447,18 @@ async function main() {
 		await shot("chat-hello");
 	});
 
-	await uiStep(S3, 'send "run: echo ui-e2e" → bash tool card with output', async () => {
+	await uiStep(S3, 'send "run: echo ui-e2e" → collapsed bash tool card; expanding it shows the output', async () => {
 		await composer().fill("run: echo ui-e2e");
 		await composer().press("Enter");
 		await messages().getByText("工具执行完成：ui-e2e").waitFor({ timeout: 60_000 });
 		const card = messages().getByRole("group", { name: "工具 bash echo ui-e2e" });
 		await card.getByText(/退出码 0/).waitFor();
+		const toggle = card.locator("button[aria-expanded]").first();
+		assert((await toggle.getAttribute("aria-expanded")) === "false", "tool cards start collapsed");
+		assert((await card.locator("pre").count()) === 0, "a collapsed card renders no output");
+		await shot("chat-bash-tool-collapsed");
+		await toggle.click();
+		assert((await toggle.getAttribute("aria-expanded")) === "true", "the card expands");
 		const output = await card.locator("pre").first().innerText();
 		assert(output.trim() === "ui-e2e", "tool card shows the command output", output);
 		await shot("chat-bash-tool");
@@ -769,6 +775,99 @@ async function main() {
 		await dialog.waitFor({ state: "detached" });
 	});
 
+	// ---------------------------------------------------------------- throughput, tool cards, rpiv-todo
+	const S3c = "throughput+todos";
+	const todoPanel = () => page.getByRole("group", { name: "任务清单" });
+	const todoHeader = () => todoPanel().locator("button[aria-controls]").first();
+	const todoRows = () => todoPanel().locator("li");
+	const toolReplies = () => messages().getByText(/^工具执行完成：/);
+	/** Sends a todo tool call through the mock LLM and waits for the reply that follows the tool. */
+	async function sendTodo(args) {
+		const before = await toolReplies().count();
+		await composer().fill(`todo: ${JSON.stringify(args)}`);
+		await composer().press("Enter");
+		await waitUntil("reply after the todo tool", async () => (await toolReplies().count()) > before, { timeoutMs: 60_000 });
+		await waitUntil("composer ready", async () => (await composer().inputValue()) === "", { timeoutMs: 5000 });
+	}
+
+	await uiStep(S3c, "throughput: a reply ends with its output rate; the info panel shows the average", async () => {
+		// The mock streams 3 characters every 15 ms: about 20 chunks, so the rate is measured over the output phase.
+		const prompt = `速率测试 ${"一二三四五六七八九十".repeat(6)}`;
+		await composer().fill(prompt);
+		await composer().press("Enter");
+		await messages().getByText(`收到：${prompt}`).waitFor({ timeout: 60_000 });
+		const line = messages().getByText(/tok\/s · 7 tokens/).last();
+		await line.waitFor({ timeout: 10_000 });
+		const text = (await line.innerText()).trim();
+		assert(/^\d+(\.\d)? tok\/s · 7 tokens · 首字 [\d.]+s$/.test(text), "rate of the output phase, with the time to first token", text);
+		assert((await line.getAttribute("title"))?.includes("不含首字延迟"), "the tooltip explains the basis", await line.getAttribute("title"));
+		await waitUntil("info panel rate", async () => /生成速率\s+≈? ?\d+(\.\d)? tok\/s/.test(await infoPanel().innerText()), { timeoutMs: 10_000 });
+		assert(/首字延迟\s+[\d.]+s/.test(await infoPanel().innerText()), "info panel time to first token", await infoPanel().innerText());
+		await shot("chat-throughput");
+	});
+
+	await uiStep(S3c, "tool cards: expand-all / collapse-all applies to every card and is remembered", async () => {
+		const card = messages().getByRole("group", { name: "工具 bash echo ui-e2e" });
+		const toggle = card.locator("button[aria-expanded]").first();
+		if ((await toggle.getAttribute("aria-expanded")) === "true") await toggle.click();
+		assert((await toggle.getAttribute("aria-expanded")) === "false", "collapsed by hand");
+		await page.getByRole("button", { name: "展开全部工具调用" }).click();
+		await page.getByRole("button", { name: "折叠全部工具调用" }).waitFor();
+		assert((await toggle.getAttribute("aria-expanded")) === "true", "expand-all overrides the card's own choice");
+		await card.locator("pre").first().waitFor();
+		const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem("pi-web:ui") ?? "{}").state?.toolsExpanded);
+		assert((await stored()) === true, "the preference is stored", await stored());
+		await shot("chat-tools-expanded");
+		await page.getByRole("button", { name: "折叠全部工具调用" }).click();
+		await page.getByRole("button", { name: "展开全部工具调用" }).waitFor();
+		assert((await toggle.getAttribute("aria-expanded")) === "false", "collapse-all collapses the card");
+		assert((await stored()) === false, "the preference is stored", await stored());
+	});
+
+	await uiStep(S3c, "rpiv-todo: creating tasks shows the task list above the composer", async () => {
+		await sendTodo({ action: "create", tasks: [{ subject: "调研现有实现" }, { subject: "编写测试" }, { subject: "更新文档" }] });
+		await todoPanel().waitFor({ timeout: 15_000 });
+		await waitUntil("three tasks", async () => (await todoRows().count()) === 3, { timeoutMs: 10_000 });
+		const rows = await todoRows().allInnerTexts();
+		assert(rows.map((r) => r.replace(/\s+/g, "")).join("|") === "○待处理：调研现有实现|○待处理：编写测试|○待处理：更新文档", "rows", rows);
+		assert((await todoHeader().innerText()).includes("0/3"), "progress in the header", await todoHeader().innerText());
+		// The tool card header summarizes the call instead of showing raw JSON.
+		await messages().getByRole("group", { name: "工具 todo 3 项任务" }).waitFor();
+		await shot("chat-todo-created");
+	});
+
+	await uiStep(S3c, "rpiv-todo: progress, and the task in progress in the collapsed header", async () => {
+		await sendTodo({ action: "update", id: 1, status: "in_progress", activeForm: "调研中" });
+		await waitUntil("task 1 in progress", async () => (await todoRows().first().innerText()).includes("(调研中)"), { timeoutMs: 10_000 });
+		await messages().getByRole("group", { name: "工具 todo #1 → 进行中" }).waitFor();
+		await todoHeader().click();
+		assert((await todoHeader().getAttribute("aria-expanded")) === "false", "the panel collapses");
+		await todoPanel().getByText("进行中：调研中").waitFor();
+		await shot("chat-todo-collapsed");
+		await todoHeader().click();
+		await sendTodo({ action: "update", id: 1, status: "completed" });
+		await waitUntil("1/3 completed", async () => (await todoHeader().innerText()).includes("1/3"), { timeoutMs: 10_000 });
+		assert((await todoRows().first().innerText()).includes("已完成"), "task 1 completed", await todoRows().first().innerText());
+	});
+
+	await uiStep(S3c, "rpiv-todo: tasks completed before the latest prompt are folded away, also after a reload", async () => {
+		await composer().fill("继续下一项");
+		await composer().press("Enter");
+		await messages().getByText("收到：继续下一项").waitFor({ timeout: 60_000 });
+		await waitUntil("task 1 folded away", async () => (await todoRows().count()) === 2, { timeoutMs: 10_000 });
+		assert((await todoHeader().innerText()).includes("0/2"), "progress over the shown tasks", await todoHeader().innerText());
+		await todoPanel().getByRole("button", { name: "显示此前已完成的 1 项" }).click();
+		await waitUntil("all three shown", async () => (await todoRows().count()) === 3, { timeoutMs: 5000 });
+		await shot("chat-todo-earlier-shown");
+		await todoPanel().getByRole("button", { name: "隐藏此前已完成的 1 项" }).click();
+		await page.reload();
+		await messages().getByText("收到：继续下一项").waitFor({ timeout: 30_000 });
+		await waitUntil("task list after the reload", async () => (await todoPanel().count()) === 1 && (await todoHeader().innerText()).includes("0/2"), {
+			timeoutMs: 15_000,
+		});
+		assert((await todoRows().count()) === 2, "same rows after the reload", await todoRows().allInnerTexts());
+	});
+
 	// ---------------------------------------------------------------- archive
 	const S3a = "archive";
 	const archivedToggle = () => sidebar().getByRole("button", { name: /^已归档（\d+）$/ });
@@ -828,6 +927,10 @@ async function main() {
 		await page.getByText("此会话已归档", { exact: true }).waitFor();
 		await messages().getByText("收到：你好").waitFor({ timeout: 30_000 });
 		await infoPanel().getByRole("button", { name: "恢复会话" }).waitFor();
+		// Without a pi process the task list is replayed from the session file.
+		await waitUntil("task list from the session file", async () => (await todoPanel().count()) === 1 && (await todoHeader().innerText()).includes("0/2"), {
+			timeoutMs: 10_000,
+		});
 		await shot("chat-archived");
 		// The tree mounts again on the open archived session (as the mobile drawer does): the group is open.
 		await sidebar().getByRole("button", { name: `收起 ${SERVER_NAME}` }).click();

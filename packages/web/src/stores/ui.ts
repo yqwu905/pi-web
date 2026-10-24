@@ -1,6 +1,7 @@
 /**
- * Persisted UI preferences (localStorage): sidebar tree expansion and the last opened
- * session per workspace. The mobile sidebar drawer state is not persisted.
+ * Persisted UI preferences (localStorage): sidebar tree expansion, the last opened
+ * session per workspace and whether chat tool cards start expanded. The mobile sidebar
+ * drawer state is not persisted.
  */
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -14,6 +15,10 @@ interface UiState {
 	/** Last opened conversation, for the home redirect. */
 	lastVisited: { workspaceId: string; sessionId: string } | null;
 	sidebarOpen: boolean;
+	/** Chat tool cards start expanded (default: collapsed). */
+	toolsExpanded: boolean;
+	/** Bumped by setToolsExpanded: cards drop their own toggles and follow the preference again (not persisted). */
+	toolsExpandedEpoch: number;
 	setServerExpanded(serverId: string, expanded: boolean): void;
 	setWorkspaceExpanded(workspaceId: string, expanded: boolean): void;
 	rememberSession(workspaceId: string, sessionId: string): void;
@@ -23,6 +28,7 @@ interface UiState {
 	/** Drops every remembered session of these workspaces (workspace or server removed). */
 	forgetWorkspaces(workspaceIds: readonly string[]): void;
 	setSidebarOpen(open: boolean): void;
+	setToolsExpanded(expanded: boolean): void;
 }
 
 export const useUiStore = create<UiState>()(
@@ -33,6 +39,8 @@ export const useUiStore = create<UiState>()(
 			lastSession: {},
 			lastVisited: null,
 			sidebarOpen: false,
+			toolsExpanded: false,
+			toolsExpandedEpoch: 0,
 			setServerExpanded: (serverId, expanded) => set((s) => ({ expandedServers: { ...s.expandedServers, [serverId]: expanded } })),
 			setWorkspaceExpanded: (workspaceId, expanded) =>
 				set((s) => ({ expandedWorkspaces: { ...s.expandedWorkspaces, [workspaceId]: expanded } })),
@@ -65,6 +73,7 @@ export const useUiStore = create<UiState>()(
 					return { lastSession, lastVisited };
 				}),
 			setSidebarOpen: (open) => set({ sidebarOpen: open }),
+			setToolsExpanded: (expanded) => set((s) => ({ toolsExpanded: expanded, toolsExpandedEpoch: s.toolsExpandedEpoch + 1 })),
 		}),
 		{
 			name: "pi-web:ui",
@@ -75,6 +84,7 @@ export const useUiStore = create<UiState>()(
 				expandedWorkspaces: s.expandedWorkspaces,
 				lastSession: s.lastSession,
 				lastVisited: s.lastVisited,
+				toolsExpanded: s.toolsExpanded,
 			}),
 		},
 	),

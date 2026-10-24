@@ -33,6 +33,7 @@ export function stateFromSnapshot(snapshot: ConvSnapshot): ConversationState {
 				? { code: info.exitCode ?? null, signal: info.exitSignal ?? null, stderrTail: "" }
 				: undefined,
 		seq: snapshot.seq,
+		timing: snapshot.timing ?? { streaming: null, messages: {} },
 	});
 }
 
@@ -59,7 +60,7 @@ export function applyEvents(state: ConversationState, events: readonly ConvEvent
 	if (events.length === 0) return state;
 	const sorted = [...events].sort((a, b) => a.seq - b.seq);
 	let next = state;
-	for (const ev of sorted) next = applyConvRecord(next, ev.record, ev.seq);
+	for (const ev of sorted) next = applyConvRecord(next, ev.record, ev.seq, ev.ts);
 	return next;
 }
 

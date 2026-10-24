@@ -9,6 +9,7 @@ import {
 	formatDurationZh,
 	formatPercent,
 	formatRelativeTime,
+	formatTokenRate,
 	formatTokens,
 	tildify,
 	truncate,
@@ -85,6 +86,26 @@ describe("formatTokens", () => {
 		expect(formatTokens(2_000_000)).toBe("2M");
 		expect(formatTokens(999_990)).toBe("1.0M");
 		expect(formatTokens(undefined)).toBe("-");
+	});
+});
+
+describe("formatTokenRate", () => {
+	it("uses whole numbers from 10 tok/s and one decimal below", () => {
+		expect(formatTokenRate(52.4)).toBe("52 tok/s");
+		expect(formatTokenRate(1234.6)).toBe("1235 tok/s");
+		expect(formatTokenRate(10)).toBe("10 tok/s");
+		expect(formatTokenRate(9.96)).toBe("10 tok/s");
+		expect(formatTokenRate(9.94)).toBe("9.9 tok/s");
+		expect(formatTokenRate(4.24)).toBe("4.2 tok/s");
+		expect(formatTokenRate(0.1)).toBe("0.1 tok/s");
+	});
+	it("handles the edges", () => {
+		expect(formatTokenRate(0.04)).toBe("<0.1 tok/s");
+		expect(formatTokenRate(0)).toBe("0 tok/s");
+		expect(formatTokenRate(-1)).toBe("-");
+		expect(formatTokenRate(Number.POSITIVE_INFINITY)).toBe("-");
+		expect(formatTokenRate(Number.NaN)).toBe("-");
+		expect(formatTokenRate(undefined)).toBe("-");
 	});
 });
 

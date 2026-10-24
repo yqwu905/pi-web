@@ -62,6 +62,11 @@ describe("stateFromSnapshot", () => {
 		const s = stateFromSnapshot({ ...base, info: { ...base.info, status: "exited", exitCode: 1 } });
 		expect(s.exited).toEqual({ code: 1, signal: null, stderrTail: "" });
 	});
+	it("copies generation timing, empty for older agents", () => {
+		const timing = { streaming: { timestamp: 5, firstDeltaAt: 8 }, messages: { "3": { ttftMs: 1, decodeMs: 2 } } };
+		expect(stateFromSnapshot(snapshot({ timing })).timing).toEqual(timing);
+		expect(stateFromSnapshot(snapshot()).timing).toEqual({ streaming: null, messages: {} });
+	});
 });
 
 describe("event application", () => {
@@ -82,6 +87,26 @@ describe("event application", () => {
 		expect(s1.tools.t1.status).toBe("done");
 		expect(s1.isRunning).toBe(false);
 		expect(applyEvents(s1, [])).toBe(s1);
+	});
+	it("times streamed messages with the events' timestamps", () => {
+		const t0 = 1_700_000_000_000;
+		const assistant = {
+			role: "assistant" as const,
+			content: [],
+			api: "x",
+			provider: "p",
+			model: "m",
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			stopReason: "pending" as const,
+			timestamp: t0,
+		};
+		const at = (seq: number, ts: number, record: ConvEvent["record"]): ConvEvent => ({ convId: "c1", seq, ts, record });
+		const s = applyEvents(stateFromSnapshot(snapshot()), [
+			at(11, t0 + 10, { type: "message_start", message: assistant }),
+			at(12, t0 + 300, { type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "你好" } }),
+			at(13, t0 + 800, { type: "message_end", message: { ...assistant, content: [{ type: "text", text: "你好" }], stopReason: "stop" } }),
+		]);
+		expect(s.timing).toEqual({ streaming: null, messages: { [String(t0)]: { ttftMs: 300, decodeMs: 500 } } });
 	});
 	it("flags resync on session changes", () => {
 		const s = applyEvents(stateFromSnapshot(snapshot()), [ev(11, { type: "pi_web_session_changed", sessionId: "s2" })]);
@@ -111,5 +136,6 @@ describe("stateFromSessionFile", () => {
 		expect(s.messages.map((m) => m.role)).toEqual(["user", "compactionSummary"]);
 		expect(s.sessionName).toBe("名字");
 		expect(s.seq).toBe(0);
+		expect(s.timing).toEqual({ streaming: null, messages: {} });
 	});
 });

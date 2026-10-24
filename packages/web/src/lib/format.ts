@@ -143,6 +143,16 @@ export function formatTokens(n: number | null | undefined): string {
 	return `${sign}${trimFixed(abs / 1_000_000, 1)}M`;
 }
 
+/** Output throughput: "52 tok/s", "4.2 tok/s" below 10, "<0.1 tok/s" for a trickle. */
+export function formatTokenRate(tokensPerSecond: number | null | undefined): string {
+	if (tokensPerSecond === null || tokensPerSecond === undefined || !Number.isFinite(tokensPerSecond) || tokensPerSecond < 0) return "-";
+	if (tokensPerSecond === 0) return "0 tok/s";
+	if (tokensPerSecond < 0.1) return "<0.1 tok/s";
+	// 9.96 would round to "10.0": from there on whole numbers.
+	if (tokensPerSecond < 9.95) return `${trimFixed(tokensPerSecond, 1)} tok/s`;
+	return `${Math.round(tokensPerSecond)} tok/s`;
+}
+
 /** USD cost: "$0.00", "<$0.01", "$0.62", "$12.30", "$1,234". */
 export function formatCost(usd: number | null | undefined): string {
 	if (usd === null || usd === undefined || !Number.isFinite(usd)) return "-";

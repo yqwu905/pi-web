@@ -74,6 +74,8 @@ export interface AssistantMessage {
 	stopReason: StopReason;
 	errorMessage?: string;
 	timestamp: number;
+	/** Request start (`timestamp`) → end of the response, ms, end-to-end (pi-ai 1.4; absent for legacy messages). */
+	durationMs?: number;
 }
 export interface ToolResultMessage<TDetails = any> {
 	role: "toolResult";
@@ -84,6 +86,8 @@ export interface ToolResultMessage<TDetails = any> {
 	usage?: Usage;
 	isError: boolean;
 	timestamp: number;
+	/** Execution time of the tool, ms (absent for legacy results). */
+	durationMs?: number;
 }
 export interface BashExecutionMessage {
 	role: "bashExecution";

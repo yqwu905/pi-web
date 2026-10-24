@@ -262,7 +262,10 @@ function copyInfo(info: ConvInfo): ConvInfo {
 	return { ...info, pendingUi: [...info.pendingUi], statuses: { ...info.statuses }, widgets: { ...info.widgets } };
 }
 
-/** Keeps only what snapshots need from the reducer state (messages come from get_messages). */
+/**
+ * Keeps only what snapshots need from the reducer state (messages come from get_messages).
+ * Timing stays: the reducer bounds it and snapshots carry it.
+ */
 function compactTracker(state: ConversationState): ConversationState {
 	let next = state;
 	if (next.messages.length > 0) next = { ...next, messages: [] };
@@ -459,6 +462,7 @@ export class ConversationManager {
 			stats,
 			seq: messagesOutcome.seq,
 			uiRemainingMs,
+			timing: t.timing,
 		};
 	}
 
@@ -942,7 +946,7 @@ export class ConversationManager {
 		const seq = ++conv.info.lastSeq;
 		const event: ConvEvent = { convId: conv.info.convId, seq, ts: Date.now(), record };
 		conv.ring.push(event, size);
-		conv.tracker = compactTracker(applyConvRecord(conv.tracker, record, seq));
+		conv.tracker = compactTracker(applyConvRecord(conv.tracker, record, seq, event.ts));
 		this.options.emit("conv.event", event);
 	}
 

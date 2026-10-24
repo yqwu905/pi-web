@@ -5,12 +5,13 @@ import {
 	FileText,
 	FolderOpen,
 	FolderSearch,
+	ListTodo,
 	type LucideIcon,
 	Search,
 	SquareTerminal,
 	Wrench,
 } from "lucide-react";
-import { memo, type ReactNode, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, type ReactNode, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { CodeBlock } from "../../../components/CodeBlock";
 import { JsonView } from "../../../components/JsonView";
@@ -19,9 +20,24 @@ import { cn } from "../../../lib/cn";
 import { diffStats, parseUnifiedDiff } from "../../../lib/diff-parse";
 import { formatDuration } from "../../../lib/format";
 import { paths } from "../../../lib/routes";
-import { firstSeen, useNow } from "../hooks";
+import { useUiStore } from "../../../stores/ui";
+import { firstSeen, ScrollReleaseContext, useNow } from "../hooks";
 import { type ToolView, toolViewEqual } from "../logic/messages";
-import { countLines, editDiff, lineRangeLabel, parseBashResult, parseReadResult, payloadImages, payloadText, toolPath, toolTarget } from "../logic/tools";
+import {
+	countLines,
+	editDiff,
+	lineRangeLabel,
+	parseBashResult,
+	parseReadResult,
+	payloadImages,
+	payloadText,
+	todoError,
+	toolErrorLine,
+	toolExpanded,
+	toolOverrides,
+	toolPath,
+	toolTarget,
+} from "../logic/tools";
 import { CompactDiff } from "./CompactDiff";
 import { ImageThumbs } from "./ImageThumbs";
 
@@ -33,14 +49,8 @@ const ICONS: Record<string, LucideIcon> = {
 	grep: Search,
 	find: FolderSearch,
 	ls: FolderOpen,
+	todo: ListTodo,
 };
-
-const EXPANDED_BY_DEFAULT: Record<string, boolean> = { bash: true, edit: true, write: true };
-
-function defaultExpanded(tool: ToolView): boolean {
-	if (tool.status === "error" || tool.status === "running") return true;
-	return EXPANDED_BY_DEFAULT[tool.name] ?? false;
-}
 
 function str(v: unknown): string {
 	return typeof v === "string" ? v : "";
@@ -51,16 +61,34 @@ export interface ToolCardProps {
 	workspaceId?: string;
 }
 
-/** Collapsible card for one tool call, paired with its result or live execution state. */
+/**
+ * Collapsible card for one tool call, paired with its result or live execution state. Cards start
+ * collapsed (or expanded, per the global preference in the ui store); a toggle of one card is
+ * remembered by tool call id until reload or until the preference changes.
+ */
 export const ToolCard = memo(ToolCardImpl, (a, b) => a.workspaceId === b.workspaceId && toolViewEqual(a.tool, b.tool));
 
 function ToolCardImpl({ tool, workspaceId }: ToolCardProps) {
-	const [expanded, setExpanded] = useState(() => defaultExpanded(tool));
-	const [prevStatus, setPrevStatus] = useState(tool.status);
-	if (prevStatus !== tool.status) {
-		setPrevStatus(tool.status);
-		if (tool.status === "error") setExpanded(true);
+	// Read from the store, not props: the memo comparators up the tree ignore everything else.
+	const toolsExpanded = useUiStore((s) => s.toolsExpanded);
+	const epoch = useUiStore((s) => s.toolsExpandedEpoch);
+	const [override, setOverride] = useState(() => toolOverrides.get(tool.id, epoch));
+	const [overrideEpoch, setOverrideEpoch] = useState(epoch);
+	if (overrideEpoch !== epoch) {
+		// Expand/collapse all: every card follows the new preference.
+		setOverrideEpoch(epoch);
+		setOverride(undefined);
 	}
+	const expanded = toolExpanded(override, toolsExpanded);
+	const release = useContext(ScrollReleaseContext);
+	const cardRef = useRef<HTMLDivElement>(null);
+	const bodyId = useId();
+	const toggle = () => {
+		// Growing a card above the bottom must not scroll its header away while the list follows new output.
+		if (!expanded) release?.(cardRef.current);
+		toolOverrides.set(tool.id, !expanded, epoch);
+		setOverride(!expanded);
+	};
 	const running = tool.status === "running";
 	const busy = running || tool.status === "pending";
 	const now = useNow(1000, running);
@@ -68,6 +96,8 @@ function ToolCardImpl({ tool, workspaceId }: ToolCardProps) {
 	const Icon = ICONS[tool.name] ?? Wrench;
 	const text = payloadText(tool.output);
 	const target = toolTarget(tool.name, tool.args);
+	const rejected = tool.name === "todo" ? todoError(tool.output?.details) : undefined;
+	const errorLine = expanded ? "" : toolErrorLine(tool.name, tool.isError, text, tool.output?.details);
 
 	// While the arguments stream, every delta would re-diff the whole edit: diff once they are complete.
 	const diffFiles = useMemo(
@@ -77,8 +107,10 @@ function ToolCardImpl({ tool, workspaceId }: ToolCardProps) {
 
 	let meta: ReactNode = null;
 	let metaTone = "text-fg-3";
-	if (tool.status === "pending") meta = tool.argsStreaming ? "生成参数…" : "等待执行";
-	else if (running) {
+	if (tool.status === "pending") {
+		const lines = tool.argsStreaming && !expanded && (tool.name === "write" || tool.name === "edit") ? streamingLines(tool) : 0;
+		meta = tool.argsStreaming ? (lines ? `生成中 · ${lines} 行` : "生成参数…") : "等待执行";
+	} else if (running) {
 		meta = `运行中${startedAt ? ` ${formatDuration(Math.max(0, now - startedAt))}` : ""}`;
 		metaTone = "text-link";
 	} else if (tool.status === "interrupted") meta = text ? "已中断" : "未执行";
@@ -87,7 +119,7 @@ function ToolCardImpl({ tool, workspaceId }: ToolCardProps) {
 		const head = r.status ?? (r.exitCode !== undefined ? `退出码 ${r.exitCode}` : "失败");
 		meta = tool.durationMs !== undefined ? `${head} · ${formatDuration(tool.durationMs)}` : head;
 		if (tool.isError) metaTone = "text-danger";
-	} else if (tool.isError) {
+	} else if (tool.isError || rejected) {
 		meta = "失败";
 		metaTone = "text-danger";
 	} else if (tool.name === "read") {
@@ -103,6 +135,7 @@ function ToolCardImpl({ tool, workspaceId }: ToolCardProps) {
 
 	return (
 		<div
+			ref={cardRef}
 			role="group"
 			aria-label={`工具 ${tool.name}${target ? ` ${target}` : ""}`}
 			className={cn(
@@ -114,7 +147,8 @@ function ToolCardImpl({ tool, workspaceId }: ToolCardProps) {
 				<button
 					type="button"
 					aria-expanded={expanded}
-					onClick={() => setExpanded((e) => !e)}
+					aria-controls={bodyId}
+					onClick={toggle}
 					className="flex min-h-9 min-w-0 flex-1 items-center gap-2 bg-transparent py-1.5 pl-3 text-left"
 				>
 					{busy ? (
@@ -146,8 +180,13 @@ function ToolCardImpl({ tool, workspaceId }: ToolCardProps) {
 					</Link>
 				)}
 			</div>
+			{errorLine && (
+				<div className="-mt-1 truncate px-3 pb-1.5 text-xs text-danger" title={errorLine}>
+					{errorLine}
+				</div>
+			)}
 			{expanded && (
-				<div className="border-t border-border">
+				<div id={bodyId} className="border-t border-border">
 					<ToolBody tool={tool} text={text} diffFiles={diffFiles} />
 				</div>
 			)}
@@ -189,10 +228,20 @@ function OutputPre({ text, follow, empty = "（无输出）", maxHeight = 360 }:
 /** Characters of a streaming write/edit shown as plain text (highlighting waits for the final arguments). */
 const STREAMING_TAIL = 4000;
 
-function streamingText(tool: ToolView): string {
-	if (tool.name === "write") return str(tool.args.content);
+/** Content of a streaming write, or the replacement texts of a streaming edit. */
+function streamingParts(tool: ToolView): string[] {
+	if (tool.name === "write") return [str(tool.args.content)];
 	const edits = Array.isArray(tool.args.edits) ? (tool.args.edits as Array<{ newText?: unknown }>) : [{ newText: tool.args.newText }];
-	return edits.map((e) => str(e?.newText)).join("\n…\n");
+	return edits.map((e) => str(e?.newText));
+}
+
+function streamingText(tool: ToolView): string {
+	return streamingParts(tool).join("\n…\n");
+}
+
+/** Lines generated so far (size hint of a collapsed streaming write/edit). */
+function streamingLines(tool: ToolView): number {
+	return streamingParts(tool).reduce((n, part) => n + countLines(part), 0);
 }
 
 function ToolBody({ tool, text, diffFiles }: { tool: ToolView; text: string; diffFiles: ReturnType<typeof parseUnifiedDiff> }) {

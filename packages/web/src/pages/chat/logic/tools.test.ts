@@ -11,6 +11,10 @@ import {
 	parseReadResult,
 	payloadImages,
 	payloadText,
+	ToolExpansionOverrides,
+	todoError,
+	toolErrorLine,
+	toolExpanded,
 	toolTarget,
 } from "./tools";
 
@@ -39,6 +43,85 @@ describe("toolTarget", () => {
 		expect(toolTarget("ls", {})).toBe(".");
 		expect(toolTarget("custom", {})).toBe("");
 		expect(toolTarget("custom", { a: 1 })).toBe('{"a":1}');
+	});
+
+	it("summarizes rpiv's todo calls", () => {
+		expect(toolTarget("todo", { action: "create", subject: " Write the parser " })).toBe("Write the parser");
+		expect(toolTarget("todo", { action: "create", tasks: [{ subject: "a" }, { subject: "b" }] })).toBe("2 项任务");
+		expect(toolTarget("todo", { action: "create", tasks: JSON.stringify([{ subject: "a" }]) })).toBe("1 项任务");
+		expect(toolTarget("todo", { action: "update", id: 3, status: "completed" })).toBe("#3 → 已完成");
+		expect(toolTarget("todo", { action: "update", id: 3, status: "in_progress", activeForm: "writing" })).toBe("#3 → 进行中");
+		expect(toolTarget("todo", { action: "update", id: 3, subject: "x", addBlockedBy: [1], removeBlockedBy: [2] })).toBe("#3 · 标题、依赖");
+		expect(toolTarget("todo", { action: "update", id: 3, status: "toString" })).toBe("#3");
+		expect(toolTarget("todo", { action: "delete", id: 3 })).toBe("#3");
+		expect(toolTarget("todo", { action: "get", id: "4" })).toBe("#4");
+		expect(toolTarget("todo", { action: "list" })).toBe("列表");
+		expect(toolTarget("todo", { action: "list", status: "pending" })).toBe("列表 · 待处理");
+		expect(toolTarget("todo", { action: "clear" })).toBe("清空");
+		// Unknown actions (and other tools named differently) keep the raw JSON.
+		expect(toolTarget("todo", { action: "zap" })).toBe('{"action":"zap"}');
+		expect(toolTarget("todo", {})).toBe("");
+	});
+});
+
+describe("toolErrorLine", () => {
+	it("takes the first non-empty line of a failed call", () => {
+		expect(toolErrorLine("read", true, "\n  ENOENT: no such file  \nat x", undefined)).toBe("ENOENT: no such file");
+		expect(toolErrorLine("read", false, "fine", undefined)).toBe("");
+		expect(toolErrorLine("custom", true, "", undefined)).toBe("");
+	});
+
+	it("drops bash's exit trailer", () => {
+		expect(toolErrorLine("bash", true, "npm ERR! missing script\nmore\n\nCommand exited with code 1", undefined)).toBe("npm ERR! missing script");
+		expect(toolErrorLine("bash", true, "Command exited with code 2", undefined)).toBe("");
+	});
+
+	it("reports rpiv's in-band todo rejections", () => {
+		const details = { action: "update", params: {}, tasks: [], nextId: 1, error: "illegal transition completed → in_progress" };
+		expect(todoError(details)).toBe("illegal transition completed → in_progress");
+		expect(toolErrorLine("todo", false, "Error: illegal transition completed → in_progress", details)).toBe("illegal transition completed → in_progress");
+		expect(todoError({ tasks: [], nextId: 1 })).toBeUndefined();
+		expect(todoError(null)).toBeUndefined();
+		expect(toolErrorLine("todo", false, "Created #1: a (pending)", { tasks: [], nextId: 2 })).toBe("");
+	});
+});
+
+describe("tool card expansion", () => {
+	it("follows the global preference unless the card was toggled", () => {
+		expect(toolExpanded(undefined, false)).toBe(false);
+		expect(toolExpanded(undefined, true)).toBe(true);
+		expect(toolExpanded(true, false)).toBe(true);
+		expect(toolExpanded(false, true)).toBe(false);
+	});
+
+	it("keeps per-card toggles until the preference changes", () => {
+		const overrides = new ToolExpansionOverrides();
+		overrides.set("a", true, 0);
+		overrides.set("b", false, 0);
+		expect(overrides.get("a", 0)).toBe(true);
+		expect(overrides.get("b", 0)).toBe(false);
+		expect(overrides.get("c", 0)).toBeUndefined();
+		// A new epoch (global expand/collapse all) drops every toggle; stale epochs are ignored.
+		expect(overrides.get("a", 1)).toBeUndefined();
+		overrides.set("b", true, 0);
+		expect(overrides.get("b", 1)).toBeUndefined();
+		overrides.set("b", true, 1);
+		expect(overrides.get("b", 1)).toBe(true);
+		expect(overrides.get("b", 0)).toBeUndefined();
+	});
+
+	it("ignores calls without an id and stays bounded", () => {
+		const overrides = new ToolExpansionOverrides(2);
+		overrides.set("", true, 0);
+		expect(overrides.get("", 0)).toBeUndefined();
+		overrides.set("a", true, 0);
+		overrides.set("b", true, 0);
+		overrides.set("a", false, 0);
+		overrides.set("c", true, 0);
+		// "b" is the least recently toggled one.
+		expect(overrides.get("b", 0)).toBeUndefined();
+		expect(overrides.get("a", 0)).toBe(false);
+		expect(overrides.get("c", 0)).toBe(true);
 	});
 });
 

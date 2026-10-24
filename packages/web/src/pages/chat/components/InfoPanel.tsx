@@ -3,11 +3,11 @@ import { type ReactNode, useId, useMemo, useState } from "react";
 import { downloadWorkspaceFile, errorMessage, exportConversation, reloadConversation, saveBlob } from "../../../api/client";
 import { Button, Callout, IconButton, ProgressBar, SectionLabel, toast } from "../../../components/ui";
 import { cn } from "../../../lib/cn";
-import { formatCost, formatNumber, formatTokens, tildify } from "../../../lib/format";
+import { formatCost, formatDuration, formatNumber, formatTokens, tildify } from "../../../lib/format";
 import { archiveBlockedReason } from "../../../lib/sessions";
 import type { ConversationHandle } from "../../../stores/conversation";
 import { useServer } from "../../../stores/servers";
-import { contextSummary, usageFromMessages, usageFromStats } from "../logic/usage";
+import { contextSummary, sessionThroughput, throughputBasisNote, throughputRateText, usageFromMessages, usageFromStats } from "../logic/usage";
 import { invalidateCommands } from "./Composer";
 
 /** Auto-retry has no field in get_state; remember what this client last set per conversation. */
@@ -81,6 +81,7 @@ export function InfoPanel({
 	const live = conv.mode === "live";
 
 	const usage = useMemo(() => (stats ? usageFromStats(stats) : usageFromMessages(state.messages)), [stats, state.messages]);
+	const throughput = useMemo(() => sessionThroughput(state.messages, state.timing.messages), [state.messages, state.timing.messages]);
 	const ctx = contextSummary(live ? stats : null, rpcState?.model?.contextWindow);
 	const autoCompaction = rpcState?.autoCompactionEnabled ?? true;
 	const autoRetry = (conv.convId ? autoRetryByConv.get(conv.convId) : undefined) ?? true;
@@ -158,7 +159,7 @@ export function InfoPanel({
 	else if (ctx.tokens === null) ctxNote = stats ? "压缩后将在下一次回复时更新" : "正在读取用量…";
 	else ctxNote = autoCompaction ? `自动压缩已开启${ctx.remaining !== null ? `，剩余约 ${formatTokens(ctx.remaining)}` : ""}` : "自动压缩已关闭";
 
-	const usageRows: Array<[string, string]> = [
+	const usageRows: Array<[label: string, value: string, title?: string]> = [
 		["输入", formatTokens(usage.input)],
 		["输出", formatTokens(usage.output)],
 		["缓存读", formatTokens(usage.cacheRead)],
@@ -166,6 +167,10 @@ export function InfoPanel({
 		["费用", formatCost(usage.cost)],
 		["工具调用", formatNumber(usage.toolCalls)],
 	];
+	if (throughput) {
+		usageRows.push(["生成速率", throughputRateText(throughput), `会话内全部回复的平均输出速率；${throughputBasisNote(throughput)}`]);
+		if (throughput.ttftMs !== undefined) usageRows.push(["首字延迟", formatDuration(throughput.ttftMs), "从发出请求到收到首个输出的平均耗时"]);
+	}
 
 	return (
 		<aside aria-label="会话信息" className={cn("flex min-h-0 flex-col overflow-y-auto border-l border-border bg-panel", className)}>
@@ -217,10 +222,10 @@ export function InfoPanel({
 					用量
 				</SectionLabel>
 				<dl className="m-0 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-					{usageRows.map(([k, v]) => (
+					{usageRows.map(([k, v, title]) => (
 						<div key={k} className="contents">
-							<dt className="text-fg-2">{k}</dt>
-							<dd className="m-0 text-right font-mono">{v}</dd>
+							<dt className="text-fg-2" title={title}>{k}</dt>
+							<dd className="m-0 text-right font-mono" title={title}>{v}</dd>
 						</div>
 					))}
 				</dl>

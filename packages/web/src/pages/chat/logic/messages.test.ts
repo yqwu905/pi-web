@@ -118,6 +118,14 @@ describe("resolveTool", () => {
 		);
 		expect(view).toMatchObject({ status: "error", isError: true, durationMs: 5 });
 	});
+
+	it("falls back to the result's duration when there is no live state (reload)", () => {
+		const result = { role: "toolResult" as const, toolCallId: "t", toolName: "bash", content: [], isError: false, timestamp: 2, durationMs: 1200 };
+		const ctx = { messageStreaming: false, isRunning: false };
+		expect(resolveTool(call, result, undefined, ctx).durationMs).toBe(1200);
+		expect(resolveTool(call, result, { toolCallId: "t", toolName: "bash", args: {}, status: "done", durationMs: 1250 }, ctx).durationMs).toBe(1250);
+		expect(resolveTool(call, { ...result, durationMs: undefined }, undefined, ctx).durationMs).toBeUndefined();
+	});
 });
 
 describe("hasRunningTool", () => {

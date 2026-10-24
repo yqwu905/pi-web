@@ -4,8 +4,10 @@
  *
  * Behaviour (based on the last message):
  *   - last message is a tool result        → short text summarizing the tool output
+ *   - a compaction summary request          → a fixed summary (pi rejects tool calls there)
  *   - user text contains "run: <command>"  → a `bash` tool call with that command
  *   - user text contains "write: <path>"   → a `write` tool call creating <path>
+ *   - user text contains "todo: <json>"    → a `todo` tool call with those arguments (rpiv-todo style)
  *   - anything else                        → streams "收到：<text>" in small chunks
  *
  * Usage: node e2e/mock-llm.mjs [--port 18080] [--host 127.0.0.1]
@@ -37,6 +39,10 @@ function planReply(messages) {
 	}
 	const lastUser = [...messages].reverse().find((m) => m.role === "user");
 	const text = textOf(lastUser?.content ?? "");
+	// pi wraps the history to summarize in <conversation> tags; it may quote "run:" or "todo:" prompts.
+	if (text.startsWith("<conversation>")) return { text: "## 摘要\nE2E 测试会话。" };
+	const todo = text.match(/todo:\s*(\{.*\})\s*$/m);
+	if (todo) return { tool: { name: "todo", arguments: JSON.parse(todo[1]) } };
 	const run = text.match(/run:\s*(.+)$/m);
 	if (run) return { tool: { name: "bash", arguments: { command: run[1].trim() } } };
 	const write = text.match(/write:\s*(\S+)/);

@@ -6,7 +6,7 @@
  * Paths are absolute remote paths unless stated otherwise ("~" is NOT expanded by
  * callers; methods that accept user input call it out explicitly).
  */
-import type { ConversationUiState, ToolExecutionState } from "./conversation.js";
+import type { ConversationTiming, ConversationUiState, ToolExecutionState } from "./conversation.js";
 import type {
 	AgentMessage,
 	AssistantMessage,
@@ -175,6 +175,8 @@ export interface ConvSnapshot {
 	 * that has a timeout: pi's own timer started when it asked, not when a viewer opened it.
 	 */
 	uiRemainingMs?: Record<string, number>;
+	/** Generation timing the tracker derived from event timestamps (agent clock). Absent from older agents. */
+	timing?: ConversationTiming;
 }
 
 export interface ConvUiResponseParams {

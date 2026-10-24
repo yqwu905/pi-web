@@ -112,7 +112,9 @@ export function resolveTool(
 	const args = (hasArgs ? call.arguments : (streamedArgs ?? live?.args ?? call.arguments)) ?? {};
 	const base = { id: call.id, name: call.name || live?.toolName || "tool", args, argsStreaming: context.partialArgs !== undefined };
 	if (result) {
-		return { ...base, status: result.isError ? "error" : "done", output: resultPayload(result), isError: result.isError, durationMs: live?.durationMs };
+		// Live timings exist only for runs this view saw; the message keeps pi's own (after a reload too).
+		const durationMs = live?.durationMs ?? (typeof result.durationMs === "number" ? result.durationMs : undefined);
+		return { ...base, status: result.isError ? "error" : "done", output: resultPayload(result), isError: result.isError, durationMs };
 	}
 	if (live) {
 		const isError = live.status === "error" || Boolean(live.isError);

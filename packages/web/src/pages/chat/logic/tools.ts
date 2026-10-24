@@ -1,6 +1,7 @@
 /**
  * Pure helpers for rendering pi's built-in tools (argument and result shapes taken from
- * @earendil-works/pi-coding-agent dist/core/tools/{bash,read,edit,write,grep,find,ls}.js).
+ * @earendil-works/pi-coding-agent dist/core/tools/{bash,read,edit,write,grep,find,ls}.js)
+ * and the todo tool of the rpiv-todo extension, plus the expand/collapse state of tool cards.
  */
 import type { ImageContent } from "@pi-web/shared";
 import { structuredPatch } from "diff";
@@ -63,12 +64,115 @@ export function toolTarget(name: string, args: Record<string, unknown>): string 
 		}
 		case "ls":
 			return str(args.path) || ".";
-		default: {
-			const keys = Object.keys(args);
-			if (keys.length === 0) return "";
-			const json = JSON.stringify(args);
-			return json.length > 80 ? `${json.slice(0, 79)}…` : json;
+		case "todo":
+			return todoTarget(args) ?? jsonTarget(args);
+		default:
+			return jsonTarget(args);
+	}
+}
+
+/** Arguments of an unknown tool as truncated JSON. */
+function jsonTarget(args: Record<string, unknown>): string {
+	const keys = Object.keys(args);
+	if (keys.length === 0) return "";
+	const json = JSON.stringify(args);
+	return json.length > 80 ? `${json.slice(0, 79)}…` : json;
+}
+
+function firstNonEmptyLine(text: string): string {
+	for (const line of text.split("\n")) {
+		const trimmed = line.trim();
+		if (trimmed) return trimmed;
+	}
+	return "";
+}
+
+/**
+ * First non-empty line of a failed call's error text, shown under a collapsed card header
+ * ("" when there is none). bash drops pi's exit trailer (the header shows the exit code);
+ * rpiv's todo reports rejections in-band, in details.error of a result that is not isError.
+ */
+export function toolErrorLine(name: string, isError: boolean, text: string, details: unknown): string {
+	const rejected = name === "todo" ? todoError(details) : undefined;
+	if (rejected) return firstNonEmptyLine(rejected);
+	if (!isError) return "";
+	return firstNonEmptyLine(name === "bash" ? parseBashResult(text, true).output : text);
+}
+
+// ---------- todo (rpiv-todo extension: tool/types.ts TodoParamsSchema, TaskDetails) ----------
+
+const TODO_STATUS_LABELS: Record<string, string> = {
+	pending: "待处理",
+	in_progress: "进行中",
+	completed: "已完成",
+	deleted: "已删除",
+};
+
+/** Mutable fields of an update without a status change, in rpiv's schema order. */
+const TODO_FIELD_LABELS: Array<[string, string]> = [
+	["subject", "标题"],
+	["description", "描述"],
+	["activeForm", "进行中文案"],
+	["owner", "负责人"],
+	["metadata", "元数据"],
+	["addBlockedBy", "依赖"],
+	["removeBlockedBy", "依赖"],
+];
+
+function todoStatusLabel(status: unknown): string | undefined {
+	return typeof status === "string" && Object.hasOwn(TODO_STATUS_LABELS, status) ? TODO_STATUS_LABELS[status] : undefined;
+}
+
+/** rpiv's in-band rejection message of a todo call (details.error), if any. */
+export function todoError(details: unknown): string | undefined {
+	const error = (details as { error?: unknown } | null | undefined)?.error;
+	return typeof error === "string" && error.trim() ? error : undefined;
+}
+
+function todoId(args: Record<string, unknown>): string {
+	const id = args.id;
+	return typeof id === "number" || (typeof id === "string" && id.trim()) ? `#${String(id).trim()}` : "";
+}
+
+/** Items of a batch create; rpiv also accepts a double-encoded `tasks` JSON string. */
+function todoTasks(value: unknown): unknown[] | undefined {
+	if (typeof value === "string") {
+		try {
+			value = JSON.parse(value);
+		} catch {
+			return undefined;
 		}
+	}
+	return Array.isArray(value) ? value : undefined;
+}
+
+/** Readable target of a todo call ("#3 → 已完成"), or undefined for an unknown action. */
+function todoTarget(args: Record<string, unknown>): string | undefined {
+	switch (args.action) {
+		case "create": {
+			const subject = str(args.subject).trim();
+			if (subject) return subject;
+			const tasks = todoTasks(args.tasks);
+			return tasks ? `${tasks.length} 项任务` : "";
+		}
+		case "update": {
+			const id = todoId(args);
+			const status = todoStatusLabel(args.status);
+			if (status) return id ? `${id} → ${status}` : `→ ${status}`;
+			const fields = [...new Set(TODO_FIELD_LABELS.filter(([key]) => args[key] !== undefined).map(([, label]) => label))];
+			return [id, fields.join("、")].filter(Boolean).join(" · ");
+		}
+		case "get":
+		case "delete":
+			return todoId(args);
+		case "list": {
+			const status = todoStatusLabel(args.status);
+			return status ? `列表 · ${status}` : "列表";
+		}
+		case "clear":
+			return "清空";
+		default:
+			return undefined;
 	}
 }
 
@@ -251,3 +355,47 @@ export function countLines(text: string): number {
 	if (!text) return 0;
 	return text.replace(/\n$/, "").split("\n").length;
 }
+
+// ---------- card expansion ----------
+
+/** Whether a tool card is expanded: the user's toggle of that card, else the global preference. */
+export function toolExpanded(override: boolean | undefined, global: boolean): boolean {
+	return override ?? global;
+}
+
+/**
+ * Per-card expand/collapse toggles keyed by tool call id, kept until reload so they survive
+ * remounts (list paging, session switches, key changes). Bounded like FirstSeen. Toggles are
+ * recorded under the epoch of the global preference: a newer epoch (the user changed the
+ * preference) drops them all, so every card follows the new value; a stale one is ignored.
+ */
+export class ToolExpansionOverrides {
+	private readonly values = new Map<string, boolean>();
+	private epoch = 0;
+	constructor(private readonly max = 2000) {}
+
+	private current(epoch: number): boolean {
+		if (epoch > this.epoch) {
+			this.values.clear();
+			this.epoch = epoch;
+		}
+		return epoch === this.epoch;
+	}
+
+	get(id: string, epoch: number): boolean | undefined {
+		return id && this.current(epoch) ? this.values.get(id) : undefined;
+	}
+
+	set(id: string, expanded: boolean, epoch: number): void {
+		// Calls without an id (some providers stream an empty one) cannot be told apart.
+		if (!id || !this.current(epoch)) return;
+		this.values.delete(id);
+		this.values.set(id, expanded);
+		if (this.values.size > this.max) {
+			const oldest = this.values.keys().next().value;
+			if (oldest !== undefined) this.values.delete(oldest);
+		}
+	}
+}
+
+export const toolOverrides = new ToolExpansionOverrides();

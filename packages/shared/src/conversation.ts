@@ -10,6 +10,7 @@ import type { ConvRecord, ConvStatus } from "./agent-protocol.js";
 import type {
 	AgentMessage,
 	AssistantMessage,
+	AssistantMessageEvent,
 	ExtensionUIRequest,
 	ImageContent,
 	SessionEntry,
@@ -52,6 +53,31 @@ export interface ConversationUiState {
 	editorText?: { text: string; nonce: string };
 }
 
+/** Generation timing of one finalized assistant message, from ConvEvent.ts on the agent host (same clock as message.timestamp). */
+export interface MessageTiming {
+	/** Request start (message.timestamp) → first streamed text/thinking/tool-call delta, ms. */
+	ttftMs: number;
+	/** First streamed delta → message_end, ms. */
+	decodeMs: number;
+}
+
+/** Timing of the assistant message being streamed. */
+export interface StreamingTiming {
+	/** message.timestamp of the streaming assistant message. */
+	timestamp: number;
+	/** ConvEvent.ts of the first / latest text, thinking or tool-call delta. */
+	firstDeltaAt?: number;
+	lastDeltaAt?: number;
+	/** usage.output carried by the first delta's message_update (a later larger value means the provider streams real usage). */
+	outputAtFirstDelta?: number;
+}
+
+export interface ConversationTiming {
+	streaming: StreamingTiming | null;
+	/** By String(message.timestamp) of finalized assistant messages; bounded to MAX_TIMED_MESSAGES (= 500), oldest dropped. */
+	messages: Record<string, MessageTiming>;
+}
+
 export interface ConversationState {
 	/** Finalized messages, in order. */
 	messages: AgentMessage[];
@@ -80,6 +106,8 @@ export interface ConversationState {
 	needsResync: boolean;
 	/** Seq of the last applied event (0 = none). */
 	seq: number;
+	/** Generation timing, measured from the `ts` passed to applyConvRecord. */
+	timing: ConversationTiming;
 }
 
 export const ZERO_USAGE: Usage = {
@@ -93,6 +121,8 @@ export const ZERO_USAGE: Usage = {
 
 const MAX_NOTIFICATIONS = 50;
 const DEDUPE_WINDOW = 64;
+/** Finalized assistant messages kept in ConversationTiming.messages. */
+export const MAX_TIMED_MESSAGES = 500;
 
 export function createConversationState(init?: Partial<ConversationState>): ConversationState {
 	return {
@@ -108,6 +138,7 @@ export function createConversationState(init?: Partial<ConversationState>): Conv
 		ui: { pending: [], statuses: {}, widgets: {}, notifications: [] },
 		needsResync: false,
 		seq: 0,
+		timing: { streaming: null, messages: {} },
 		...init,
 	};
 }
@@ -155,9 +186,64 @@ function setContent(
 	return { ...message, content };
 }
 
+function hasTime(ts: number | undefined): ts is number {
+	return Number.isFinite(ts);
+}
+
+/** A text, thinking or tool-call delta that streams new output (what decode timing is measured on). */
+function isStreamedDelta(e: AssistantMessageEvent): boolean {
+	return (e.type === "text_delta" || e.type === "thinking_delta" || e.type === "toolcall_delta") && e.delta.length > 0;
+}
+
+/** Same object when nothing streams. */
+function clearStreamingTiming(timing: ConversationTiming): ConversationTiming {
+	return timing.streaming ? { ...timing, streaming: null } : timing;
+}
+
+/** Notes a delta received at `ts` for `streaming` (the message being streamed before the delta). */
+function noteDelta(
+	timing: ConversationTiming,
+	streaming: AssistantMessage | null,
+	ts: number,
+	output: number,
+): ConversationTiming {
+	let current = timing.streaming;
+	if (!current || current.timestamp !== streaming?.timestamp) {
+		if (!streaming) return timing;
+		current = { timestamp: streaming.timestamp };
+	}
+	const next: StreamingTiming =
+		current.firstDeltaAt === undefined
+			? { ...current, firstDeltaAt: ts, lastDeltaAt: ts, outputAtFirstDelta: output }
+			: { ...current, lastDeltaAt: ts };
+	return { ...timing, streaming: next };
+}
+
+/** Records the timing of the assistant message that ended at `ts` (when its deltas were timed) and ends streaming. */
+function finishTiming(timing: ConversationTiming, timestamp: number, ts: number | undefined): ConversationTiming {
+	const current = timing.streaming;
+	if (!current) return timing;
+	if (!hasTime(ts) || current.timestamp !== timestamp || current.firstDeltaAt === undefined) {
+		return { ...timing, streaming: null };
+	}
+	const key = String(timestamp);
+	const messages = { ...timing.messages };
+	// Re-inserted so it counts as the newest; epoch-ms keys are not array indices, so key order is insertion order.
+	delete messages[key];
+	messages[key] = {
+		ttftMs: Math.max(0, current.firstDeltaAt - timestamp),
+		decodeMs: Math.max(0, ts - current.firstDeltaAt),
+	};
+	const keys = Object.keys(messages);
+	const excess = keys.length - MAX_TIMED_MESSAGES;
+	for (let i = 0; i < excess; i++) delete messages[keys[i]];
+	return { streaming: null, messages };
+}
+
 function applyAssistantEvent(
 	state: ConversationState,
 	event: Extract<ConvRecord, { type: "message_update" }>,
+	ts?: number,
 ): ConversationState {
 	let streaming = state.streaming ?? placeholderAssistant();
 	let streamingToolArgs = state.streamingToolArgs;
@@ -213,7 +299,9 @@ function applyAssistantEvent(
 		default:
 			break;
 	}
-	return { ...state, streaming, streamingToolArgs };
+	const timing =
+		hasTime(ts) && isStreamedDelta(e) ? noteDelta(state.timing, state.streaming, ts, event.usage?.output ?? 0) : state.timing;
+	return { ...state, streaming, streamingToolArgs, timing };
 }
 
 function applyUiRequest(state: ConversationState, request: ExtensionUIRequest): ConversationState {
@@ -264,9 +352,10 @@ export function dismissNotification(state: ConversationState, id: string): Conve
 
 /**
  * Apply one record. `seq`, when given, is recorded and records with seq <= state.seq are ignored
- * (so replaying overlapping ranges is harmless).
+ * (so replaying overlapping ranges is harmless). `ts` is the event's ConvEvent.ts (agent clock,
+ * ms); generation timing is only recorded when it is given.
  */
-export function applyConvRecord(state: ConversationState, record: ConvRecord, seq?: number): ConversationState {
+export function applyConvRecord(state: ConversationState, record: ConvRecord, seq?: number, ts?: number): ConversationState {
 	if (seq !== undefined) {
 		if (seq <= state.seq) return state;
 		state = { ...state, seq };
@@ -275,7 +364,14 @@ export function applyConvRecord(state: ConversationState, record: ConvRecord, se
 		case "agent_start":
 			return { ...state, isRunning: true, lastError: undefined, exited: undefined };
 		case "agent_settled":
-			return { ...state, isRunning: false, streaming: null, streamingToolArgs: {}, retry: null };
+			return {
+				...state,
+				isRunning: false,
+				streaming: null,
+				streamingToolArgs: {},
+				retry: null,
+				timing: clearStreamingTiming(state.timing),
+			};
 		case "agent_end":
 		case "turn_start":
 		case "turn_end":
@@ -287,12 +383,18 @@ export function applyConvRecord(state: ConversationState, record: ConvRecord, se
 		case "message_start": {
 			const message = record.message;
 			if (message.role === "assistant") {
-				return { ...state, streaming: cloneAssistant(message as AssistantMessage), streamingToolArgs: {} };
+				const m = message as AssistantMessage;
+				return {
+					...state,
+					streaming: cloneAssistant(m),
+					streamingToolArgs: {},
+					timing: { ...state.timing, streaming: { timestamp: m.timestamp } },
+				};
 			}
 			return { ...state, messages: upsertMessage(state.messages, message) };
 		}
 		case "message_update":
-			return applyAssistantEvent(state, record);
+			return applyAssistantEvent(state, record, ts);
 		case "message_end": {
 			const message = record.message;
 			const next = { ...state, messages: upsertMessage(state.messages, message) };
@@ -301,6 +403,7 @@ export function applyConvRecord(state: ConversationState, record: ConvRecord, se
 				next.streamingToolArgs = {};
 				const m = message as AssistantMessage;
 				if (m.stopReason === "error" && m.errorMessage) next.lastError = m.errorMessage;
+				next.timing = finishTiming(state.timing, m.timestamp, ts);
 			}
 			return next;
 		}
@@ -411,13 +514,22 @@ export function applyConvRecord(state: ConversationState, record: ConvRecord, se
 				isRunning: false,
 				streaming: null,
 				streamingToolArgs: {},
+				timing: clearStreamingTiming(state.timing),
 				ui: { ...state.ui, pending: [] },
 				exited: { code: record.code, signal: record.signal, stderrTail: record.stderrTail },
 			};
 		case "pi_web_ui_resolved":
 			return resolveUiRequest(state, record.id);
 		case "pi_web_session_changed":
-			return { ...state, needsResync: true, tools: {}, streaming: null, streamingToolArgs: {} };
+			// Finalized timings stay: they are keyed by message timestamp, valid in any session.
+			return {
+				...state,
+				needsResync: true,
+				tools: {},
+				streaming: null,
+				streamingToolArgs: {},
+				timing: clearStreamingTiming(state.timing),
+			};
 		case "pi_web_stderr":
 			return state;
 		default:

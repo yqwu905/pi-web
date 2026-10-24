@@ -380,7 +380,7 @@ export function preflight() {
 
 /**
  * Creates the temp dir with the host agent dir (the host's ~/.pi/agent stand-in: mock provider,
- * default model, an extension with five commands, a skill, a prompt template and auth.json).
+ * default model, an extension with five commands and a todo tool, a skill, a prompt template and auth.json).
  */
 export async function prepareHostAgentDir(prefix = "pi-web-e2e-") {
 	const tmp = await mkdtemp(path.join(os.tmpdir(), prefix));
@@ -402,7 +402,8 @@ export async function prepareHostAgentDir(prefix = "pi-web-e2e-") {
 			},
 		},
 	});
-	await json("settings.json", { defaultProvider: "mock", defaultModel: "mock-1" });
+	// keepRecentTokens is tiny so a manual compaction of a short test conversation has something to summarize.
+	await json("settings.json", { defaultProvider: "mock", defaultModel: "mock-1", compaction: { keepRecentTokens: 40 } });
 	await writeFile(
 		path.join(hostAgentDir, "extensions", "e2e-ext.ts"),
 		[
@@ -455,6 +456,55 @@ export async function prepareHostAgentDir(prefix = "pi-web-e2e-") {
 			"\t\t\t\tif (typed == null || typed.trim().length === 0) continue;",
 			'\t\t\t\treturn ctx.ui.notify(`rpiv 回答：${typed}`, "info");',
 			"\t\t\t}",
+			"\t\t},",
+			"\t});",
+			// A todo tool that stores its list the way @juicesharp/rpiv-todo does: the full snapshot in the
+			// result details, plus a "rpiv-todo-state" custom entry for every change (replayed on session start).
+			"\tlet todos: { tasks: any[]; nextId: number } = { tasks: [], nextId: 1 };",
+			"\tconst replayTodos = (_event: any, ctx: any) => {",
+			"\t\ttodos = { tasks: [], nextId: 1 };",
+			"\t\tfor (const e of ctx.sessionManager.getBranch()) {",
+			'\t\t\tif (e.type === "custom" && e.customType === "rpiv-todo-state") todos = { tasks: e.data.tasks.map((t: any) => ({ ...t })), nextId: e.data.nextId };',
+			"\t\t}",
+			"\t};",
+			'\tpi.on("session_start", replayTodos);',
+			'\tpi.on("session_tree", replayTodos);',
+			"\tpi.registerTool({",
+			'\t\tname: "todo",',
+			'\t\tlabel: "Todo",',
+			'\t\tdescription: "E2E task list in rpiv-todo\'s format",',
+			"\t\tparameters: {",
+			'\t\t\ttype: "object",',
+			"\t\t\tproperties: {",
+			'\t\t\t\taction: { type: "string" },',
+			'\t\t\t\tsubject: { type: "string" },',
+			'\t\t\t\ttasks: { type: "array", items: { type: "object" } },',
+			'\t\t\t\tid: { type: "number" },',
+			'\t\t\t\tstatus: { type: "string" },',
+			'\t\t\t\tactiveForm: { type: "string" },',
+			"\t\t\t},",
+			'\t\t\trequired: ["action"],',
+			"\t\t},",
+			"\t\tasync execute(_id: string, params: any) {",
+			'\t\t\tlet text = "No tasks";',
+			'\t\t\tif (params.action === "create") {',
+			"\t\t\t\tconst created = (params.tasks ?? [{ subject: params.subject }]).map((t: any) => ({ id: todos.nextId++, subject: t.subject, status: \"pending\" }));",
+			"\t\t\t\ttodos.tasks.push(...created);",
+			'\t\t\t\ttext = created.map((t: any) => `Created #${t.id}: ${t.subject} (pending)`).join("\\n");',
+			'\t\t\t} else if (params.action === "update") {',
+			"\t\t\t\tconst task = todos.tasks.find((t: any) => t.id === params.id);",
+			"\t\t\t\tif (task) {",
+			"\t\t\t\t\tif (params.status) task.status = params.status;",
+			"\t\t\t\t\tif (params.activeForm) task.activeForm = params.activeForm;",
+			"\t\t\t\t}",
+			"\t\t\t\ttext = task ? `Updated #${task.id}` : `Error: task #${params.id} not found`;",
+			'\t\t\t} else if (params.action === "clear") {',
+			"\t\t\t\ttext = `Cleared ${todos.tasks.length} tasks`;",
+			"\t\t\t\ttodos = { tasks: [], nextId: 1 };",
+			"\t\t\t}",
+			"\t\t\tconst details = { action: params.action, params, tasks: todos.tasks.map((t: any) => ({ ...t })), nextId: todos.nextId };",
+			'\t\t\tif (params.action !== "list") pi.appendEntry("rpiv-todo-state", details);',
+			'\t\t\treturn { content: [{ type: "text", text }], details };',
 			"\t\t},",
 			"\t});",
 			"}",

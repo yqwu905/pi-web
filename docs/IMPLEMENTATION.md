@@ -102,13 +102,14 @@ R/trash/sessions/
     - 其他 setStatus/setWidget：更新 ConvInfo.statuses/widgets，并转发。
   - 其余（会话事件）：转发。`agent_start` 时状态改为 running；`agent_settled` 时，有 pendingUi 则改为 waiting_ui，否则改为 idle。`session_info_changed` 时更新 sessionName。
   - 每条转发的记录分配递增的 seq，存入环形缓冲（3000 条），并 `emitEvent("conv.event", {convId, seq, ts, record})`。状态变化时额外发送 `pi_web_status` 记录和 `conv.info` 事件。
-  - 同时把每条记录喂给 shared 的 `applyConvRecord` 维护 tracker 状态（为节省内存，每次应用后把 `messages` 清空），供 `conv.snapshot` 使用。
+  - 同时把每条记录（连同它的 ts）喂给 shared 的 `applyConvRecord` 维护 tracker 状态（为节省内存，每次应用后把 `messages` 清空），供 `conv.snapshot` 使用。
+  - 生成计时（`ConversationState.timing`）：reducer 用记录的 ts（agent 主机时钟，与 pi 的 `message.timestamp` 同一时钟）记下流式回复首个 text/thinking/toolcall delta 的时间，在 assistant 的 message_end 时按 `String(message.timestamp)` 保存 `{ttftMs: 首个 delta − message.timestamp, decodeMs: message_end − 首个 delta}`，最多 500 条；不带 ts 时不记录。
 - `conv.send`：
   - 给命令分配 id `pw-<n>`，写入 stdin，等待 response。默认超时 60s；prompt、compact、export_html、abort、bash、fork、clone、new_session、switch_session 的超时为 10 分钟（pi 在准备好运行之后才回复 prompt：之前可能先自动压缩会话（一次完整的 LLM 摘要）、运行 before_agent_start 钩子；扩展斜杠命令在处理完、包括等待对话框之后才回复）。超时从收到请求开始计算，包括等待仍在启动的进程。
   - 超时常量和 `defaultCommandTimeout` 在 `@pi-web/shared` 的 `timeouts.ts` 中，agent 和 host 共用；host 在 link 上多等 10s，保证先收到 agent 的精确错误。
   - 返回 `{...response, seq: 读到 response 时的 lastSeq}`。
   - new_session、switch_session、fork、clone 成功后：重新 `get_state`，更新 sessionFile 索引，并转发一条 `pi_web_session_changed` 记录。
-- `conv.snapshot`：在总预算 `CONV_SNAPSHOT_TIMEOUT_MS`（120s）内依次 `get_state`、`get_messages`（**记录此 response 被读到时的 seq 和 tracker 状态**）、`get_session_stats`（失败可忽略）。组装并返回 ConvSnapshot：runningTools 取 tracker.tools 中 status==="running" 的项。
+- `conv.snapshot`：在总预算 `CONV_SNAPSHOT_TIMEOUT_MS`（120s）内依次 `get_state`、`get_messages`（**记录此 response 被读到时的 seq 和 tracker 状态**）、`get_session_stats`（失败可忽略）。组装并返回 ConvSnapshot：runningTools 取 tracker.tools 中 status==="running" 的项；timing 取 tracker.timing（旧版 agent 没有该字段）。
 - `conv.uiResponse`：写入 stdin，从 pendingUi 中移除，转发 `pi_web_ui_resolved`，重新计算状态；返回 `delivered`：对话框已不在 pendingUi（已被回答）或已过 pi 的 timeout 时为 false。
 - `conv.companion`：
   - 生成 reqId，发送 prompt `/pi-web-<action> <JSON.stringify({reqId,...args})>`。扩展命令在 streaming 期间也会立即执行。
@@ -129,6 +130,10 @@ R/trash/sessions/
 - label：`pi.setLabel(entryId, label)`。
 - reload：`await ctx.waitForIdle()`，然后 `await ctx.reload()`。
 - 结果统一通过 `ctx.ui.setStatus("pi-web:result", JSON.stringify({reqId, ok, error?, cancelled?}))` 回报，异常时 ok=false。
+- rpiv-todo 任务清单：rpiv 的面板用 setWidget 组件工厂，RPC 模式会丢弃。伴随扩展在 session_start、session_tree、session_compact、agent_end、`todo` 的 tool_execution_end（含 codemode 的嵌套调用）、user 或 `todo` toolResult 的 message_end 之后，用 shared 的 `replayTodos` 重放 `ctx.sessionManager.getBranch()`（包括压缩前的条目），值有变化时 `ctx.ui.setStatus("pi-web:todos", encodeTodoStatus(snapshot))`（没有清单时清除）。
+  - 处理函数只同步记下 ui 和 sessionManager，再用 setTimeout(0) 合并成一次重放：pi 在 await 完扩展的 message_end 处理之后才把消息写入会话，延后才能读到。
+  - 重放规则与 rpiv 的 `replayFromBranch` 一致：分支上有合法的 `rpiv-todo-state` 自定义条目时只看它们，否则看 `todo` toolResult 的 details；快照 `{v:1, tasks（不含已删除）, nextId, hidden}`，hidden 是在最后一条用户消息时已经完成、现在仍是已完成的任务（对应 rpiv 面板在 agent_start 时收起上一回合已完成的任务；clear 使 nextId 变小后重新计算）。
+  - 每个扩展实例的第一次重放总会推送（包括清除），避免 reload 或切换会话后留下上一个会话的清单；定时器里的异常一律吞掉（抛出会让 pi 退出），session_shutdown 时取消尚未执行的重放。
 - 实现前请先在 `dist/core/extensions/types.d.ts` 中核对 API。
 
 ### 2.7 HTTP 代理监听（仅在 config.proxy.enabled 时开启）
@@ -460,7 +465,10 @@ logs/pi-web.log
     - `needsResync` 为真时重新取 snapshot。
   - 消息渲染：
     - user：文本和图片；assistant：Markdown，thinking 折叠；
-    - 工具卡片：toolCall 与 toolResult 按 toolCallId 配对，运行中的状态和 partialResult 取自 state.tools。
+    - 工具卡片：toolCall 与 toolResult 按 toolCallId 配对，运行中的状态和 partialResult 取自 state.tools；耗时取 state.tools，没有时（刷新后、只读）取 toolResult 消息的 `durationMs`。
+      - 所有卡片默认折叠（运行中、出错的也一样），折叠时标题行显示图标、工具名、目标（`todo` 显示为“3 项任务”“#3 → 已完成”等）、状态和耗时；出错时标题下多一行错误摘要，write/edit 生成参数时显示“生成中 · N 行”。
+      - 消息区右上角的“展开/折叠全部工具调用”按钮修改 `pi-web:ui` 中保存的 `toolsExpanded`，并清除所有卡片的手动选择；单张卡片的手动展开/折叠按 toolCallId 记在模块级 Map 中（最多 2000 条），页面刷新前跨分页、切换会话保留。
+      - 列表吸底时展开的卡片若不在底部，先取消吸底，避免被点击的标题行被推出视野。
       - bash：流式输出
       - read：文件内容
       - edit：用 diff 包对 oldText/newText 计算并渲染；参数格式以 pi 的 `dist/core/tools/edit.js` 为准
@@ -478,7 +486,12 @@ logs/pi-web.log
     - 显示队列。
   - 控件：
     - 模型选择（get_available_models + set_model）、思考级别（get_available_thinking_levels）；
-    - 右侧面板：上下文占用条和用量（get_session_stats，运行结束后刷新）、会话路径；
+    - 右侧面板：上下文占用条和用量（get_session_stats，运行结束后刷新）、平均生成速率和首字延迟、会话路径；
+    - 输出速率（`logic/usage.ts`）：每个 assistant 分组末尾一行“52 tok/s · 1.2k tokens · 首字 0.8s”，悬停显示计算方式和每一轮的明细。
+      - 有 timing 时按生成阶段计算：tokens = usage.output（推理内容不可见时扣除 usage.reasoning）÷ decodeMs，decodeMs 至少 200ms；
+      - 否则按 pi 的 `durationMs`（含首字延迟）估算并标“≈”；中止、出错的回复不计；
+      - 生成中显示“≈ N tok/s · 生成中”（每秒最多刷新 2 次）：provider 流式返回用量时用真实值，否则按已输出内容估算（CJK 字符约 1 token、其他字符约 1/4 token），并用本会话最近 10 条回复的“实际 token ÷ 估算 token”中位数校准；
+    - 任务清单（`components/TodoPanel.tsx`、`logic/todos.ts`）：显示在输入框上方（实时和只读会话都显示），可折叠（`pi-web:todo-panel-open`）。数据来源依次为：只读会话按 branchIds 用 `replayTodos` 重放会话文件；伴随扩展推送的 `pi-web:todos` 状态；旧版伴随扩展时重放当前消息列表（压缩后可能不完整）。hidden 中的任务默认收起，可用“显示此前已完成的 N 项”展开；进度按显示的任务计算。`pi-web:` 开头的状态不显示为状态条目；
     - 操作：树视图、Fork（get_fork_messages + fork）、Clone、压缩（可附带指令）、导出 HTML、重命名、归档/恢复、删除、自动压缩和自动重试开关；
   - 归档：侧栏的活动列表和会话数不含已归档的会话，它们在每个工作区下默认折叠的“已归档（N）”分组中（打开、恢复、删除）；已归档的会话顶部显示“此会话已归档”和“恢复”；发送消息（含 steer/follow-up、`!cmd`）前先 `POST /sessions/unarchive`，失败时提示且不发送；已归档的会话不会被记为工作区的上一个会话（对话标签页、首页、“在对话中引用”的目标）；
     - configStale 时显示“配置已更新”卡片，提供“重新加载”（companion reload）。
@@ -614,6 +627,6 @@ WebSocket：`/ws`（话题见 `api.ts`，含归档变化的 `sessions`），`/ws
 5. 验证 fork/tree/label/reload、文件浏览、git、终端；
 6. 验证自动同步和 OAuth 推送（用伪造的 oauth 条目验证变换）。
 
-以上流程已自动化为 API 级 E2E：`npm run build && npm run e2e:api`（`e2e/api-e2e.mjs`，需 root + OpenSSH；`E2E_KEEP=1` 保留临时目录，`E2E_VERBOSE=1` 打印全部事件）。它像浏览器一样驱动 REST + `/ws` + `/ws/term`，并额外覆盖扩展对话框（ui-response）、提示模板/技能展开、write 工具、abort、归档会话（列表标记、运行中 409、恢复、删除时清除记录、断开连接时归档）、Pi-Web 重启后的事件补发与卸载。
+以上流程已自动化为 API 级 E2E：`npm run build && npm run e2e:api`（`e2e/api-e2e.mjs`，需 root + OpenSSH；`E2E_KEEP=1` 保留临时目录，`E2E_VERBOSE=1` 打印全部事件）。它像浏览器一样驱动 REST + `/ws` + `/ws/term`，并额外覆盖扩展对话框（ui-response）、提示模板/技能展开、write 工具、abort、生成计时（快照中的 ttft/decode）、rpiv-todo 任务清单（测试扩展里按 rpiv 格式保存状态的 `todo` 工具：伴随扩展推送 `pi-web:todos`、上一回合已完成的任务标记为 hidden、压缩掉 todo 工具结果后清单不变；E2E 设置把 `compaction.keepRecentTokens` 调小，mock LLM 对 `<conversation>` 摘要请求固定回复文字）、归档会话（列表标记、运行中 409、恢复、删除时清除记录、断开连接时归档）、Pi-Web 重启后的事件补发与卸载。
 
-浏览器 E2E：`npm run build && npm run e2e:ui`（`e2e/ui-e2e.mjs`，与 API E2E 共用 `e2e/lib/env.mjs` 中的环境：sshd fixture、mock LLM、Host agent 目录、数据目录）。用 Playwright 驱动 Chromium（1440×960）走完添加服务器向导（连接 → 主机指纹 → 探测 → 离线部署 → 同步）、新建工作区（目录选择器 + 新建文件夹）、对话（流式回复、bash 工具卡片、信息面板、会话树与标签、模型/思考选择、`/` 补全与提示模板、刷新恢复、离开再返回）、扩展对话框（在 select 的选项列表里直接输入自定义回答、普通选项、空回答后由扩展自己的 input 询问、打开时仍在输入的按键被忽略、提交失败后带文字放回、扩展随后不要文字时丢弃并提示，以及按 rpiv-ask-user-question 的 RPC 格式提问时的多行标题、直接输入和它自己的 input）、归档（侧栏归档、已归档分组、打开归档会话、发送时自动恢复）、文件/Git/终端、同步中心（预览、手动同步）、全局设置、服务器设置，以及断开/重连。每一步截图到 `e2e/screenshots/`，出现页面异常、未预期的 console.error、失败的 `/api` 请求或整页滚动即判失败。需要全局或本地安装的 `playwright` 包与 `PLAYWRIGHT_BROWSERS_PATH` 下的 Chromium；`E2E_HOLD=1` 在结束后保留环境便于手动调试。
+浏览器 E2E：`npm run build && npm run e2e:ui`（`e2e/ui-e2e.mjs`，与 API E2E 共用 `e2e/lib/env.mjs` 中的环境：sshd fixture、mock LLM、Host agent 目录、数据目录）。用 Playwright 驱动 Chromium（1440×960）走完添加服务器向导（连接 → 主机指纹 → 探测 → 离线部署 → 同步）、新建工作区（目录选择器 + 新建文件夹）、对话（流式回复、默认折叠的 bash 工具卡片、信息面板、会话树与标签、模型/思考选择、`/` 补全与提示模板、刷新恢复、离开再返回）、扩展对话框（在 select 的选项列表里直接输入自定义回答、普通选项、空回答后由扩展自己的 input 询问、打开时仍在输入的按键被忽略、提交失败后带文字放回、扩展随后不要文字时丢弃并提示，以及按 rpiv-ask-user-question 的 RPC 格式提问时的多行标题、直接输入和它自己的 input）、输出速率（回复末尾的速率行、信息面板的生成速率和首字延迟）、全部展开/折叠工具调用（偏好保存在浏览器）、任务清单（创建、进度、折叠时显示进行中的任务、此前回合已完成的任务收起与展开、刷新后保留、只读查看归档会话时从会话文件还原）、归档（侧栏归档、已归档分组、打开归档会话、发送时自动恢复）、文件/Git/终端、同步中心（预览、手动同步）、全局设置、服务器设置，以及断开/重连。每一步截图到 `e2e/screenshots/`，出现页面异常、未预期的 console.error、失败的 `/api` 请求或整页滚动即判失败。需要全局或本地安装的 `playwright` 包与 `PLAYWRIGHT_BROWSERS_PATH` 下的 Chromium；`E2E_HOLD=1` 在结束后保留环境便于手动调试。

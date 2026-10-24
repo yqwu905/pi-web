@@ -4,13 +4,42 @@
  * `/pi-web-<action> <json>` as a prompt; results are reported through
  * ctx.ui.setStatus("pi-web:result", JSON.stringify({ reqId, ok, error?, cancelled? })).
  *
+ * It also mirrors the rpiv-todo task list (whose setWidget overlay RPC mode drops): after
+ * every event that may change it, the branch is replayed and the snapshot is pushed as
+ * ctx.ui.setStatus("pi-web:todos", encodeTodoStatus(snapshot)).
+ *
  * The interfaces below are the structural subset of pi's ExtensionAPI /
- * ExtensionCommandContext (dist/core/extensions/types.d.ts) this extension uses.
+ * ExtensionContext / ExtensionCommandContext (dist/core/extensions/types.d.ts) this extension uses.
  */
-import { COMPANION_COMMAND_PREFIX, COMPANION_STATUS_KEY } from "@pi-web/shared";
+import {
+	COMPANION_COMMAND_PREFIX,
+	COMPANION_STATUS_KEY,
+	encodeTodoStatus,
+	replayTodos,
+	TODO_STATUS_KEY,
+	TODO_TOOL_NAME,
+	type TodoSourceEntry,
+} from "@pi-web/shared";
 
 interface CompanionUi {
 	setStatus(key: string, text: string | undefined): void;
+}
+
+interface CompanionSessionManager {
+	/** Entries from the root to the current leaf, compacted ones included. */
+	getBranch(): TodoSourceEntry[];
+}
+
+interface CompanionEventContext {
+	readonly ui: CompanionUi;
+	readonly sessionManager: CompanionSessionManager;
+}
+
+/** The fields of pi's session, agent, message and tool events read here. */
+interface CompanionEvent {
+	type: string;
+	toolName?: string;
+	message?: { role?: string; toolName?: string };
 }
 
 interface CompanionCommandContext {
@@ -29,6 +58,7 @@ interface CompanionApi {
 		options: { description?: string; handler: (args: string, ctx: CompanionCommandContext) => Promise<void> },
 	): void;
 	setLabel(entryId: string, label: string | undefined): void;
+	on(event: string, handler: (event: CompanionEvent, ctx: CompanionEventContext) => void): void;
 }
 
 interface ActionOutcome {
@@ -99,5 +129,69 @@ export default function piWebCompanion(pi: CompanionApi): void {
 	register("reload", async (_payload, ctx) => {
 		await ctx.waitForIdle();
 		await ctx.reload();
+	});
+
+	mirrorTodos(pi);
+}
+
+/**
+ * Pushes the rpiv-todo snapshot of the current branch (replayTodos) as the TODO_STATUS_KEY status.
+ * Handlers capture ui and sessionManager synchronously and schedule one deferred replay per
+ * burst of events: pi persists a message entry only after the awaited message_end handlers
+ * returned, so the replay must run later to see it.
+ */
+function mirrorTodos(pi: CompanionApi): void {
+	let target: CompanionEventContext | undefined;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	// The value this instance pushed last (null: cleared), undefined before its first push. A value
+	// left by the previous instance (before a reload or session switch) survives in Pi-Web, so the
+	// first replay always pushes, even when there is no task list.
+	let pushed: string | null | undefined;
+
+	const push = () => {
+		timer = undefined;
+		const current = target;
+		target = undefined;
+		if (!current) return;
+		try {
+			const snapshot = replayTodos(current.sessionManager.getBranch());
+			const encoded = snapshot ? encodeTodoStatus(snapshot) : null;
+			if (encoded === pushed) return;
+			current.ui.setStatus(TODO_STATUS_KEY, encoded ?? undefined);
+			pushed = encoded;
+		} catch {
+			// Stale after a reload or session replacement (the next instance pushes), or an unreadable
+			// branch: this refresh is skipped. Never throw from a timer, it would kill pi.
+		}
+	};
+	const schedule = (ctx: CompanionEventContext) => {
+		try {
+			target = { ui: ctx.ui, sessionManager: ctx.sessionManager };
+		} catch {
+			// pi's ctx getters throw once the session was replaced or reloaded.
+			return;
+		}
+		timer ??= setTimeout(push, 0);
+	};
+
+	pi.on("session_start", (_event, ctx) => schedule(ctx));
+	pi.on("session_tree", (_event, ctx) => schedule(ctx));
+	pi.on("session_compact", (_event, ctx) => schedule(ctx));
+	pi.on("agent_end", (_event, ctx) => schedule(ctx));
+	pi.on("tool_execution_end", (event, ctx) => {
+		// Also nested calls (codemode): their state entries are on the branch already.
+		if (event.toolName === TODO_TOOL_NAME) schedule(ctx);
+	});
+	pi.on("message_end", (event, ctx) => {
+		// A user message moves the "completed in a previous turn" baseline; a todo toolResult is the
+		// only snapshot of sessions written before rpiv's state entries.
+		const message = event.message;
+		if (message?.role === "user" || (message?.role === "toolResult" && message.toolName === TODO_TOOL_NAME)) schedule(ctx);
+	});
+	pi.on("session_shutdown", () => {
+		// This runtime is being torn down: a pending replay would read a session that is no longer current.
+		clearTimeout(timer);
+		timer = undefined;
+		target = undefined;
 	});
 }

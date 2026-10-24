@@ -174,6 +174,21 @@ describe("ConversationManager with fake pi", () => {
 		expect(snap.runningTools).toEqual([]);
 		expect(snap.stats?.totalMessages).toBe(2);
 		expect(snap.state.sessionId).toBeTruthy();
+		// Generation timing from the event timestamps of the streamed reply.
+		const assistant = snap.messages[1] as { timestamp: number };
+		const firstDelta = h.events.find(
+			(e) => e.record.type === "message_update" && e.record.assistantMessageEvent.type === "text_delta",
+		) as ConvEvent;
+		const end = h.events.find((e) => e.record.type === "message_end" && e.record.message.role === "assistant") as ConvEvent;
+		expect(snap.timing).toEqual({
+			streaming: null,
+			messages: {
+				[String(assistant.timestamp)]: {
+					ttftMs: Math.max(0, firstDelta.ts - assistant.timestamp),
+					decodeMs: Math.max(0, end.ts - firstDelta.ts),
+				},
+			},
+		});
 	});
 
 	it("tracks dialogs, answers them and resolves timeouts", async () => {

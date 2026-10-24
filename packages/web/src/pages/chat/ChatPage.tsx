@@ -20,8 +20,10 @@ import { MessageList } from "./components/MessageList";
 import type { BashRunView } from "./components/MessageViews";
 import { SessionTreeModal } from "./components/SessionTreeModal";
 import { ArchivedBanner, CompactingBanner, ErrorBanner, ExitedBanner, ExtensionStatuses, ExtensionWidgets, RetryBanner } from "./components/StatusArea";
+import { TodoPanel } from "./components/TodoPanel";
 import { useMediaMinWidth, useStoredState } from "./hooks";
 import { buildDisplayItems, hasRunningTool } from "./logic/messages";
+import { selectTodoSnapshot } from "./logic/todos";
 
 /**
  * Session ids that the chat view itself moved to (new session got its id, fork, clone):
@@ -276,6 +278,10 @@ function ChatView({
 
 	const items = useMemo(() => buildDisplayItems(state), [state.messages, state.streaming, state.streamingToolArgs, state.tools, state.isRunning]);
 	const waiting = conv.isLive && state.isRunning && !state.streaming && !state.isCompacting && !hasRunningTool(state);
+	const todoSnapshot = useMemo(
+		() => selectTodoSnapshot({ statuses: state.ui.statuses, readOnlyFile: conv.readOnlyFile, messages: state.messages }),
+		[state.ui.statuses, conv.readOnlyFile, state.messages],
+	);
 
 	// Each banner remembers its own dismissal (one shared slot brought the other back).
 	const [dismissedErrors, setDismissedErrors] = useState<ReadonlySet<string>>(() => new Set());
@@ -413,6 +419,7 @@ function ChatView({
 					waiting={waiting}
 					placeholder={placeholder}
 					overlay={panelToggle}
+					timing={state.timing}
 				/>
 				<div className="shrink-0 px-4 pb-4 sm:px-6">
 					<div className="mx-auto flex max-w-[860px] flex-col gap-2">
@@ -431,6 +438,7 @@ function ChatView({
 						{lastError && <ErrorBanner message={lastError} onDismiss={() => dismissError(`turn:${lastError}`)} />}
 						{syncError && <ErrorBanner message={`同步会话失败：${syncError}`} onDismiss={() => dismissError(`sync:${syncError}`)} />}
 						{showExit && <ExitedBanner exited={showExit} onDismiss={() => setExitInfo(undefined)} />}
+						<TodoPanel snapshot={todoSnapshot} />
 						{conv.isLive && <ExtensionStatuses statuses={state.ui.statuses} />}
 						{conv.isLive && <ExtensionWidgets widgets={state.ui.widgets} placement="aboveEditor" />}
 						<Composer

@@ -5,17 +5,27 @@ import {
 	type CustomMessage,
 	contentToText,
 	type ImageContent,
+	type MessageTiming,
+	type StreamingTiming,
 	type UserMessage,
 } from "@pi-web/shared";
-import { Ban, Brain, ChevronDown, GitBranch, Layers, Puzzle, SquareTerminal } from "lucide-react";
-import { memo, type ReactNode, useState } from "react";
+import { Ban, Brain, ChevronDown, Gauge, GitBranch, Layers, Puzzle, SquareTerminal } from "lucide-react";
+import { memo, type ReactNode, useMemo, useState } from "react";
 import { Markdown } from "../../../components/Markdown";
 import { Badge, Callout, Spinner } from "../../../components/ui";
 import { cn } from "../../../lib/cn";
 import { formatDuration, formatDurationZh, formatTokens } from "../../../lib/format";
 import { thinkingSpans, useNow, useThrottledValue } from "../hooks";
 import { type AssistantPart, type AssistantView, assistantViewsEqual } from "../logic/messages";
-import { trackSpan } from "../logic/usage";
+import {
+	groupThroughput,
+	groupThroughputTitle,
+	liveThroughput,
+	liveThroughputText,
+	sameMessageTimings,
+	throughputText,
+	trackSpan,
+} from "../logic/usage";
 import { ImageThumbs } from "./ImageThumbs";
 import { ToolCard } from "./ToolCard";
 
@@ -122,17 +132,74 @@ function AssistantMessageView({ view, workspaceId }: { view: AssistantView; work
 	);
 }
 
+function ThroughputLine({ text, title }: { text: string; title: string }) {
+	return (
+		<div className="flex items-center gap-1 self-start text-2xs text-fg-3 tabular-nums" title={title}>
+			<Gauge size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+			{text}
+		</div>
+	);
+}
+
+/** Output throughput of the group's finished messages (hidden when none has one). */
+function GroupThroughputLine({ views, timings }: { views: AssistantView[]; timings?: Readonly<Record<string, MessageTiming>> }) {
+	const throughput = useMemo(() => groupThroughput(views.map((v) => v.message), timings), [views, timings]);
+	if (!throughput) return null;
+	return <ThroughputLine text={throughputText(throughput)} title={groupThroughputTitle(throughput)} />;
+}
+
+/** Tool-call arguments parsed so far, by call id: the streaming message holds `{}` until toolcall_end. */
+function streamedToolArgs(parts: readonly AssistantPart[]): Record<string, unknown> | undefined {
+	let args: Record<string, unknown> | undefined;
+	for (const part of parts) {
+		if (part.kind !== "tool" || !part.tool.argsStreaming || !part.tool.id) continue;
+		args ??= {};
+		args[part.tool.id] = part.tool.args;
+	}
+	return args;
+}
+
+/** Estimated throughput of the reply that is streaming, recomputed at most twice a second. */
+function LiveThroughputLine({ view, timing, calibration }: { view: AssistantView; timing: StreamingTiming | null; calibration: number }) {
+	const input = useMemo(() => ({ view, timing, calibration }), [view, timing, calibration]);
+	const shown = useThrottledValue(input, 500, true);
+	const live = useMemo(() => liveThroughput(shown.view.message, shown.timing, shown.calibration, streamedToolArgs(shown.view.parts)), [shown]);
+	if (!live) return null;
+	return <ThroughputLine text={liveThroughputText(live)} title={live.estimated ? "生成中，按已输出的内容估算" : "生成中，按模型实时返回的用量计算"} />;
+}
+
+export interface AssistantGroupProps {
+	messages: AssistantView[];
+	workspaceId?: string;
+	/** ConversationTiming.messages: only the entries of this group's messages are compared. */
+	timings?: Readonly<Record<string, MessageTiming>>;
+	/** For the group whose last message is streaming: its timing and throughputCalibration. */
+	streamingTiming?: StreamingTiming | null;
+	calibration?: number;
+}
+
 export const AssistantGroupView = memo(
-	function AssistantGroupView({ messages, workspaceId }: { messages: AssistantView[]; workspaceId?: string }) {
+	function AssistantGroupView({ messages, workspaceId, timings, streamingTiming, calibration }: AssistantGroupProps) {
+		const last = messages[messages.length - 1];
 		return (
 			<div className="flex min-w-0 flex-col gap-3">
 				{messages.map((view) => (
 					<AssistantMessageView key={view.key} view={view} workspaceId={workspaceId} />
 				))}
+				{last?.streaming ? (
+					<LiveThroughputLine view={last} timing={streamingTiming ?? null} calibration={calibration ?? 1} />
+				) : (
+					<GroupThroughputLine views={messages} timings={timings} />
+				)}
 			</div>
 		);
 	},
-	(a, b) => a.workspaceId === b.workspaceId && assistantViewsEqual(a.messages, b.messages),
+	(a, b) =>
+		a.workspaceId === b.workspaceId &&
+		assistantViewsEqual(a.messages, b.messages) &&
+		sameMessageTimings(a.messages, a.timings, b.timings) &&
+		a.streamingTiming === b.streamingTiming &&
+		a.calibration === b.calibration,
 );
 
 // ---------- bash executions (! commands) ----------

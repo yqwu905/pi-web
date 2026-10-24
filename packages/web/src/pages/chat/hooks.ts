@@ -1,4 +1,4 @@
-import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createContext, type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FirstSeen } from "./logic/usage";
 
 /** First time this client saw a running tool / pending dialog (for elapsed and countdown display). */
@@ -85,15 +85,21 @@ export function useMediaMinWidth(minWidth: number): boolean {
 
 const STICK_THRESHOLD_PX = 48;
 
+/** useStickToBottom's release of the message list, for cards that are about to grow. */
+export const ScrollReleaseContext = createContext<((anchor?: HTMLElement | null) => void) | null>(null);
+
 /**
  * Keeps a scroll container pinned to the bottom while content grows, until the user scrolls
  * up; scrolling back near the bottom re-pins it. `resetKey` changes re-pin (new session).
+ * `release(anchor)` unpins it before an element grows so the view stays where it is; with an
+ * anchor only when that element ends above the bottom of the viewport (at the bottom, following
+ * the growth keeps it in view).
  */
 export function useStickToBottom(
 	scrollRef: RefObject<HTMLElement | null>,
 	contentRef: RefObject<HTMLElement | null>,
 	resetKey: unknown,
-): { atBottom: boolean; scrollToBottom: (smooth?: boolean) => void } {
+): { atBottom: boolean; scrollToBottom: (smooth?: boolean) => void; release: (anchor?: HTMLElement | null) => void } {
 	const stick = useRef(true);
 	const lastTop = useRef(0);
 	const [atBottom, setAtBottom] = useState(true);
@@ -105,6 +111,17 @@ export function useStickToBottom(
 			stick.current = true;
 			setAtBottom(true);
 			el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+		},
+		[scrollRef],
+	);
+
+	const release = useCallback(
+		(anchor?: HTMLElement | null) => {
+			const el = scrollRef.current;
+			if (!el || !stick.current) return;
+			if (anchor && el.getBoundingClientRect().bottom - anchor.getBoundingClientRect().bottom <= STICK_THRESHOLD_PX) return;
+			stick.current = false;
+			setAtBottom(false);
 		},
 		[scrollRef],
 	);
@@ -140,5 +157,5 @@ export function useStickToBottom(
 		};
 	}, [scrollRef, contentRef]);
 
-	return { atBottom, scrollToBottom };
+	return { atBottom, scrollToBottom, release };
 }
