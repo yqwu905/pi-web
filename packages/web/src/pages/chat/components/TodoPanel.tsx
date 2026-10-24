@@ -21,10 +21,10 @@ export function TodoPanel({ snapshot }: { snapshot: TodoSnapshot | null }) {
 	const [open, setOpen] = useStoredState("pi-web:todo-panel-open", true);
 	const [showHidden, setShowHidden] = useState(false);
 	const bodyId = useId();
-	if (!snapshot) return null;
+	// Like rpiv's overlay, gone once every task left is one completed in an earlier run.
+	if (!snapshot || visibleTodoTasks(snapshot).length === 0) return null;
 	const hiddenCount = hiddenTodoCount(snapshot);
 	const tasks = visibleTodoTasks(snapshot, showHidden);
-	if (tasks.length === 0 && hiddenCount === 0) return null;
 	const { completed, total } = todoProgress(tasks);
 	const active = activeTodoTask(tasks);
 	const activeText = active ? `进行中：${active.activeForm || active.subject}` : "";
@@ -54,7 +54,7 @@ export function TodoPanel({ snapshot }: { snapshot: TodoSnapshot | null }) {
 				)}
 				<ChevronDown size={13} strokeWidth={2} aria-hidden="true" className={cn("ml-auto shrink-0 text-fg-3 transition-transform", !open && "-rotate-90")} />
 			</button>
-			<div id={bodyId} hidden={!open} className="max-h-72 overflow-y-auto border-t border-border px-3 py-1.5">
+			<div id={bodyId} hidden={!open} className="max-h-[min(18rem,30dvh)] overflow-y-auto border-t border-border px-3 py-1.5">
 				{tasks.length > 0 && (
 					<ul className="m-0 flex list-none flex-col p-0">
 						{tasks.map((task) => (

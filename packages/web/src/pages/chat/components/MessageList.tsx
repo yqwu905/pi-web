@@ -4,7 +4,7 @@ import { type ReactNode, useMemo, useRef, useState } from "react";
 import { IconButton, Spinner } from "../../../components/ui";
 import { cn } from "../../../lib/cn";
 import { useUiStore } from "../../../stores/ui";
-import { ScrollReleaseContext, useStickToBottom } from "../hooks";
+import { KeepInViewContext, useStickToBottom } from "../hooks";
 import type { DisplayItem } from "../logic/messages";
 import { throughputCalibration } from "../logic/usage";
 import {
@@ -50,7 +50,8 @@ function ToolsToggle({ className }: { className?: string }) {
 	return (
 		<div className={cn("absolute top-2 z-10", className)}>
 			<IconButton
-				aria-label={expanded ? "折叠全部工具调用" : "展开全部工具调用"}
+				aria-label="展开全部工具调用"
+				title={expanded ? "折叠全部工具调用" : "展开全部工具调用"}
 				aria-pressed={expanded}
 				active={expanded}
 				variant="secondary"
@@ -114,7 +115,7 @@ export interface MessageListProps {
 export function MessageList({ items, workspaceId, resetKey, bashRuns, waiting, placeholder, overlay, timing = NO_TIMING }: MessageListProps) {
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
-	const { atBottom, scrollToBottom, release } = useStickToBottom(scrollRef, contentRef, resetKey);
+	const { atBottom, scrollToBottom, keepInView } = useStickToBottom(scrollRef, contentRef, resetKey);
 	const [limit, setLimit] = useState(PAGE);
 	const hidden = Math.max(0, items.length - limit);
 	const visible = hidden > 0 ? items.slice(hidden) : items;
@@ -132,7 +133,7 @@ export function MessageList({ items, workspaceId, resetKey, bashRuns, waiting, p
 			<div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto py-6" role="region" aria-label="对话消息" tabIndex={-1}>
 				<div ref={contentRef} className="mx-auto flex max-w-[860px] flex-col gap-[18px] px-4 sm:px-6">
 					{placeholder ?? (
-						<ScrollReleaseContext.Provider value={release}>
+						<KeepInViewContext.Provider value={keepInView}>
 							{hidden > 0 && (
 								<button
 									type="button"
@@ -160,7 +161,7 @@ export function MessageList({ items, workspaceId, resetKey, bashRuns, waiting, p
 									等待模型响应…
 								</div>
 							)}
-						</ScrollReleaseContext.Provider>
+						</KeepInViewContext.Provider>
 					)}
 				</div>
 			</div>

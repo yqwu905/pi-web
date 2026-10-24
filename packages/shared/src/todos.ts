@@ -53,8 +53,14 @@ export interface TodoSnapshot {
 	/** Tasks in rpiv's order, without deleted tombstones. */
 	tasks: TodoTask[];
 	nextId: number;
-	/** Ids of completed tasks that were already completed before the last user message. */
+	/** Ids of completed tasks that were already completed when the current run started. */
 	hidden: number[];
+}
+
+/** The list as a run started (rpiv hides the tasks completed by then at agent_start). */
+export interface TodoBaseline {
+	completed: number[];
+	nextId: number;
 }
 
 // ---------- validation (port of rpiv state/replay.ts) ----------
@@ -100,7 +106,7 @@ function toTodoTask(task: TodoTask): TodoTask {
 
 // ---------- replay ----------
 
-/** One replay source: its latest snapshot and the ids completed as of the last user message. */
+/** One replay source: its latest snapshot and the ids completed as of the last run start. */
 interface Track {
 	details?: TodoDetails;
 	baseline: ReadonlySet<number>;
@@ -121,12 +127,16 @@ function advance(track: Track, details: TodoDetails): void {
  * valid state entry wins once the branch has any, otherwise the last valid `todo` toolResult.
  * null when the branch holds no valid snapshot at all.
  *
- * `hidden` mirrors rpiv's overlay, which hides completed tasks from previous turns: tasks that
- * are completed now and already were as of the last user message on the branch.
+ * `hidden` mirrors rpiv's overlay, which hides completed tasks from previous runs at agent_start:
+ * tasks that are completed now and already were when the current run started. Given `baseline`
+ * (the companion records it at agent_start) that is exact; otherwise a run is taken to start at
+ * the last user message that does not follow a tool result (those are steering messages,
+ * injected into a running turn).
  */
-export function replayTodos(entries: Iterable<TodoSourceEntry>): TodoSnapshot | null {
+export function replayTodos(entries: Iterable<TodoSourceEntry>, baseline?: TodoBaseline): TodoSnapshot | null {
 	const fromEntries: Track = { baseline: new Set() };
 	const fromToolResults: Track = { baseline: new Set() };
+	let lastRole: string | undefined;
 	for (const e of entries) {
 		if (e.type === "custom") {
 			if (e.customType === TODO_STATE_ENTRY_TYPE && isTodoDetails(e.data)) advance(fromEntries, e.data);
@@ -134,7 +144,10 @@ export function replayTodos(entries: Iterable<TodoSourceEntry>): TodoSnapshot | 
 		}
 		if (e.type !== "message") continue;
 		const msg = e.message;
+		const afterToolResult = lastRole === "toolResult";
+		lastRole = msg?.role;
 		if (msg?.role === "user") {
+			if (afterToolResult) continue;
 			fromEntries.baseline = completedIds(fromEntries.details);
 			fromToolResults.baseline = completedIds(fromToolResults.details);
 			continue;
@@ -146,8 +159,16 @@ export function replayTodos(entries: Iterable<TodoSourceEntry>): TodoSnapshot | 
 	const track = fromEntries.details ? fromEntries : fromToolResults;
 	if (!track.details) return null;
 	const tasks = track.details.tasks.filter((t) => t.status !== "deleted").map(toTodoTask);
-	const hidden = tasks.filter((t) => t.status === "completed" && track.baseline.has(t.id)).map((t) => t.id);
+	// A smaller nextId than at the run start means the list was cleared since: its ids are reused.
+	const runBaseline = baseline ? new Set(track.details.nextId < baseline.nextId ? [] : baseline.completed) : track.baseline;
+	const hidden = tasks.filter((t) => t.status === "completed" && runBaseline.has(t.id)).map((t) => t.id);
 	return { v: 1, tasks, nextId: track.details.nextId, hidden };
+}
+
+/** The baseline for runs starting now (no list yet: nothing to hide). */
+export function todoBaseline(snapshot: TodoSnapshot | null): TodoBaseline {
+	if (!snapshot) return { completed: [], nextId: 0 };
+	return { completed: snapshot.tasks.filter((t) => t.status === "completed").map((t) => t.id), nextId: snapshot.nextId };
 }
 
 /** Transcript messages as replay entries (live views without the companion's status; no state entries). */

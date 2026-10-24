@@ -200,18 +200,19 @@ function clearStreamingTiming(timing: ConversationTiming): ConversationTiming {
 	return timing.streaming ? { ...timing, streaming: null } : timing;
 }
 
-/** Notes a delta received at `ts` for `streaming` (the message being streamed before the delta). */
+/**
+ * Notes a delta received at `ts` for `streaming` (the message being streamed before the delta).
+ * Only a message whose entry message_start created is timed: a viewer that joined mid-stream
+ * without one (a snapshot from an older agent) would time the reply from the join.
+ */
 function noteDelta(
 	timing: ConversationTiming,
 	streaming: AssistantMessage | null,
 	ts: number,
 	output: number,
 ): ConversationTiming {
-	let current = timing.streaming;
-	if (!current || current.timestamp !== streaming?.timestamp) {
-		if (!streaming) return timing;
-		current = { timestamp: streaming.timestamp };
-	}
+	const current = timing.streaming;
+	if (!current || current.timestamp !== streaming?.timestamp) return timing;
 	const next: StreamingTiming =
 		current.firstDeltaAt === undefined
 			? { ...current, firstDeltaAt: ts, lastDeltaAt: ts, outputAtFirstDelta: output }

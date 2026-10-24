@@ -103,7 +103,7 @@ R/trash/sessions/
   - 其余（会话事件）：转发。`agent_start` 时状态改为 running；`agent_settled` 时，有 pendingUi 则改为 waiting_ui，否则改为 idle。`session_info_changed` 时更新 sessionName。
   - 每条转发的记录分配递增的 seq，存入环形缓冲（3000 条），并 `emitEvent("conv.event", {convId, seq, ts, record})`。状态变化时额外发送 `pi_web_status` 记录和 `conv.info` 事件。
   - 同时把每条记录（连同它的 ts）喂给 shared 的 `applyConvRecord` 维护 tracker 状态（为节省内存，每次应用后把 `messages` 清空），供 `conv.snapshot` 使用。
-  - 生成计时（`ConversationState.timing`）：reducer 用记录的 ts（agent 主机时钟，与 pi 的 `message.timestamp` 同一时钟）记下流式回复首个 text/thinking/toolcall delta 的时间，在 assistant 的 message_end 时按 `String(message.timestamp)` 保存 `{ttftMs: 首个 delta − message.timestamp, decodeMs: message_end − 首个 delta}`，最多 500 条；不带 ts 时不记录。
+  - 生成计时（`ConversationState.timing`）：reducer 用记录的 ts（agent 主机时钟，与 pi 的 `message.timestamp` 同一时钟）记下流式回复首个 text/thinking/toolcall delta 的时间，在 assistant 的 message_end 时按 `String(message.timestamp)` 保存 `{ttftMs: 首个 delta − message.timestamp, decodeMs: message_end − 首个 delta}`，最多 500 条；不带 ts 时不记录；只给由 message_start 开始跟踪的回复计时（从不带 timing 的旧版快照中途加入时，这条回复不计时，否则会从加入时刻算起而高估速率）。
 - `conv.send`：
   - 给命令分配 id `pw-<n>`，写入 stdin，等待 response。默认超时 60s；prompt、compact、export_html、abort、bash、fork、clone、new_session、switch_session 的超时为 10 分钟（pi 在准备好运行之后才回复 prompt：之前可能先自动压缩会话（一次完整的 LLM 摘要）、运行 before_agent_start 钩子；扩展斜杠命令在处理完、包括等待对话框之后才回复）。超时从收到请求开始计算，包括等待仍在启动的进程。
   - 超时常量和 `defaultCommandTimeout` 在 `@pi-web/shared` 的 `timeouts.ts` 中，agent 和 host 共用；host 在 link 上多等 10s，保证先收到 agent 的精确错误。
@@ -130,9 +130,10 @@ R/trash/sessions/
 - label：`pi.setLabel(entryId, label)`。
 - reload：`await ctx.waitForIdle()`，然后 `await ctx.reload()`。
 - 结果统一通过 `ctx.ui.setStatus("pi-web:result", JSON.stringify({reqId, ok, error?, cancelled?}))` 回报，异常时 ok=false。
-- rpiv-todo 任务清单：rpiv 的面板用 setWidget 组件工厂，RPC 模式会丢弃。伴随扩展在 session_start、session_tree、session_compact、agent_end、`todo` 的 tool_execution_end（含 codemode 的嵌套调用）、user 或 `todo` toolResult 的 message_end 之后，用 shared 的 `replayTodos` 重放 `ctx.sessionManager.getBranch()`（包括压缩前的条目），值有变化时 `ctx.ui.setStatus("pi-web:todos", encodeTodoStatus(snapshot))`（没有清单时清除）。
-  - 处理函数只同步记下 ui 和 sessionManager，再用 setTimeout(0) 合并成一次重放：pi 在 await 完扩展的 message_end 处理之后才把消息写入会话，延后才能读到。
-  - 重放规则与 rpiv 的 `replayFromBranch` 一致：分支上有合法的 `rpiv-todo-state` 自定义条目时只看它们，否则看 `todo` toolResult 的 details；快照 `{v:1, tasks（不含已删除）, nextId, hidden}`，hidden 是在最后一条用户消息时已经完成、现在仍是已完成的任务（对应 rpiv 面板在 agent_start 时收起上一回合已完成的任务；clear 使 nextId 变小后重新计算）。
+- rpiv-todo 任务清单：rpiv 的面板用 setWidget 组件工厂，RPC 模式会丢弃。伴随扩展在 session_start、session_tree、session_compact、agent_start、agent_end、turn_end、`todo` 的 tool_execution_end（含 codemode 的嵌套调用）之后，用 shared 的 `replayTodos` 重放 `ctx.sessionManager.getBranch()`（包括压缩前的条目），值有变化时 `ctx.ui.setStatus("pi-web:todos", encodeTodoStatus(snapshot))`（没有清单时清除）。
+  - 处理函数只同步记下 ui 和 sessionManager，再用 setTimeout(0) 合并成一次重放。旧版 rpiv 只把快照写在 toolResult 里，而 pi 在 await 完所有扩展的 message_end 处理之后才写入消息，所以靠 turn_end（此时本轮的工具结果都已写入）兜底。
+  - 重放规则与 rpiv 的 `replayFromBranch` 一致：分支上有合法的 `rpiv-todo-state` 自定义条目时只看它们，否则看 `todo` toolResult 的 details；快照 `{v:1, tasks（不含已删除）, nextId, hidden}`。
+  - hidden 对应 rpiv 面板在 agent_start 时收起之前已完成的任务：伴随扩展在 agent_start 时（提示词写入会话之前）记下当时的清单（`todoBaseline`），本轮内 hidden = 当时已完成、现在仍是已完成的任务；运行中插入的 steer/follow-up 不改变它；clear 使 nextId 变小后不再收起。新会话或切换分支后、第一次运行之前，以及只读和旧版伴随扩展的回退路径，从分支推断运行起点：最后一条不紧跟在工具结果之后的用户消息（紧跟在工具结果之后的是 steer）。
   - 每个扩展实例的第一次重放总会推送（包括清除），避免 reload 或切换会话后留下上一个会话的清单；定时器里的异常一律吞掉（抛出会让 pi 退出），session_shutdown 时取消尚未执行的重放。
 - 实现前请先在 `dist/core/extensions/types.d.ts` 中核对 API。
 
@@ -467,8 +468,8 @@ logs/pi-web.log
     - user：文本和图片；assistant：Markdown，thinking 折叠；
     - 工具卡片：toolCall 与 toolResult 按 toolCallId 配对，运行中的状态和 partialResult 取自 state.tools；耗时取 state.tools，没有时（刷新后、只读）取 toolResult 消息的 `durationMs`。
       - 所有卡片默认折叠（运行中、出错的也一样），折叠时标题行显示图标、工具名、目标（`todo` 显示为“3 项任务”“#3 → 已完成”等）、状态和耗时；出错时标题下多一行错误摘要，write/edit 生成参数时显示“生成中 · N 行”。
-      - 消息区右上角的“展开/折叠全部工具调用”按钮修改 `pi-web:ui` 中保存的 `toolsExpanded`，并清除所有卡片的手动选择；单张卡片的手动展开/折叠按 toolCallId 记在模块级 Map 中（最多 2000 条），页面刷新前跨分页、切换会话保留。
-      - 列表吸底时展开的卡片若不在底部，先取消吸底，避免被点击的标题行被推出视野。
+      - 消息区右上角的“展开全部工具调用”切换按钮（aria-pressed 表示当前状态）修改 `pi-web:ui` 中保存的 `toolsExpanded`，并清除所有卡片的手动选择；单张卡片的手动展开/折叠按 toolCallId 记在模块级 Map 中（最多 2000 条），页面刷新前跨分页、切换会话保留。
+      - 列表吸底时，点击展开的卡片在渲染后测量（`keepInView`）：继续吸底会把它的标题推出视野时才取消吸底，并把整张卡片滚入视野（放不下时标题对齐顶部），否则照常跟随新输出；未吸底的列表在内容变化后回到底部附近（如收起卡片）时重新吸底。
       - bash：流式输出
       - read：文件内容
       - edit：用 diff 包对 oldText/newText 计算并渲染；参数格式以 pi 的 `dist/core/tools/edit.js` 为准
@@ -491,7 +492,7 @@ logs/pi-web.log
       - 有 timing 时按生成阶段计算：tokens = usage.output（推理内容不可见时扣除 usage.reasoning）÷ decodeMs，decodeMs 至少 200ms；
       - 否则按 pi 的 `durationMs`（含首字延迟）估算并标“≈”；中止、出错的回复不计；
       - 生成中显示“≈ N tok/s · 生成中”（每秒最多刷新 2 次）：provider 流式返回用量时用真实值，否则按已输出内容估算（CJK 字符约 1 token、其他字符约 1/4 token），并用本会话最近 10 条回复的“实际 token ÷ 估算 token”中位数校准；
-    - 任务清单（`components/TodoPanel.tsx`、`logic/todos.ts`）：显示在输入框上方（实时和只读会话都显示），可折叠（`pi-web:todo-panel-open`）。数据来源依次为：只读会话按 branchIds 用 `replayTodos` 重放会话文件；伴随扩展推送的 `pi-web:todos` 状态；旧版伴随扩展时重放当前消息列表（压缩后可能不完整）。hidden 中的任务默认收起，可用“显示此前已完成的 N 项”展开；进度按显示的任务计算。`pi-web:` 开头的状态不显示为状态条目；
+    - 任务清单（`components/TodoPanel.tsx`、`logic/todos.ts`）：显示在输入框上方（实时和只读会话都显示），可折叠（`pi-web:todo-panel-open`），正文高度不超过 min(18rem, 30dvh)。数据来源依次为：只读会话按 branchIds 用 `replayTodos` 重放会话文件；伴随扩展推送的 `pi-web:todos` 状态；旧版伴随扩展时重放当前消息列表（压缩后可能不完整）。hidden 中的任务默认收起，可用“显示此前已完成的 N 项”展开；只剩收起的任务时整个面板隐藏（与 rpiv 一致）；进度按显示的任务计算。从只读会话恢复、进程启动期间，界面仍显示会话文件的内容，清单也继续从会话文件还原。`pi-web:` 开头的状态不显示为状态条目；
     - 操作：树视图、Fork（get_fork_messages + fork）、Clone、压缩（可附带指令）、导出 HTML、重命名、归档/恢复、删除、自动压缩和自动重试开关；
   - 归档：侧栏的活动列表和会话数不含已归档的会话，它们在每个工作区下默认折叠的“已归档（N）”分组中（打开、恢复、删除）；已归档的会话顶部显示“此会话已归档”和“恢复”；发送消息（含 steer/follow-up、`!cmd`）前先 `POST /sessions/unarchive`，失败时提示且不发送；已归档的会话不会被记为工作区的上一个会话（对话标签页、首页、“在对话中引用”的目标）；
     - configStale 时显示“配置已更新”卡片，提供“重新加载”（companion reload）。

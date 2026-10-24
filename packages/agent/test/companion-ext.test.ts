@@ -80,22 +80,43 @@ describe("companion extension", () => {
 		expect(todoStatuses()[3]).toBeUndefined();
 	});
 
-	it("replays after user messages and todo results but ignores other events", async () => {
+	it("replays after todo results and turns but ignores other events", async () => {
 		const { session, emit, todoStatuses } = setup();
 		session.branch.push({ type: "message", message: { role: "user" } }, state([{ id: 1, status: "completed" }], 2));
 		emit("tool_execution_end", { toolName: "bash" });
-		emit("message_end", { message: { role: "assistant" } });
-		emit("message_end", { message: { role: "toolResult", toolName: "bash" } });
+		emit("message_end", { message: { role: "user" } });
+		emit("message_end", { message: todoResult });
 		await tick();
 		expect(todoStatuses()).toEqual([]);
 
-		emit("message_end", { message: { role: "user" } });
+		emit("turn_end", { message: { role: "assistant" }, toolResults: [] });
 		await tick();
-		expect(todoStatuses()[0]?.hidden).toEqual([]);
-		session.branch.push({ type: "message", message: { role: "user" } });
-		emit("message_end", { message: { role: "user" } });
+		expect(todoStatuses()).toEqual([{ v: 1, tasks: [{ id: 1, subject: "task 1", status: "completed" }], nextId: 2, hidden: [] }]);
+	});
+
+	it("hides the tasks completed when a run starts; steering messages do not move that", async () => {
+		const { session, emit, todoStatuses } = setup();
+		const user = { type: "message", message: { role: "user" } };
+		session.branch.push(user, state([{ id: 1, status: "completed" }, { id: 2, status: "pending" }], 3));
+		emit("agent_start");
+		// pi persists the prompt after agent_start: the run's baseline is the list before it.
+		session.branch.push(user);
+		await tick();
+		expect(todoStatuses()[0]?.hidden).toEqual([1]);
+
+		// Task 2 is completed in this run, then the user steers: it stays shown until the next run.
+		session.branch.push(state([{ id: 1, status: "completed" }, { id: 2, status: "completed" }], 3), user);
+		emit("turn_end", {});
 		await tick();
 		expect(todoStatuses()[1]?.hidden).toEqual([1]);
+
+		// A new session (or branch): run starts are inferred from the branch again.
+		emit("session_start", { reason: "resume" });
+		await tick();
+		expect(todoStatuses()[2]?.hidden).toEqual([1, 2]);
+		emit("agent_start");
+		await tick();
+		expect(todoStatuses()).toHaveLength(3);
 	});
 
 	it("survives stale contexts and drops the pending replay on shutdown", async () => {

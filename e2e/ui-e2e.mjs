@@ -811,15 +811,18 @@ async function main() {
 		const toggle = card.locator("button[aria-expanded]").first();
 		if ((await toggle.getAttribute("aria-expanded")) === "true") await toggle.click();
 		assert((await toggle.getAttribute("aria-expanded")) === "false", "collapsed by hand");
-		await page.getByRole("button", { name: "展开全部工具调用" }).click();
-		await page.getByRole("button", { name: "折叠全部工具调用" }).waitFor();
+		// A toggle button: the name stays, aria-pressed carries the state.
+		const expandAll = page.getByRole("button", { name: "展开全部工具调用" });
+		assert((await expandAll.getAttribute("aria-pressed")) === "false", "not pressed by default");
+		await expandAll.click();
+		await page.getByRole("button", { name: "展开全部工具调用", pressed: true }).waitFor();
 		assert((await toggle.getAttribute("aria-expanded")) === "true", "expand-all overrides the card's own choice");
 		await card.locator("pre").first().waitFor();
 		const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem("pi-web:ui") ?? "{}").state?.toolsExpanded);
 		assert((await stored()) === true, "the preference is stored", await stored());
 		await shot("chat-tools-expanded");
-		await page.getByRole("button", { name: "折叠全部工具调用" }).click();
-		await page.getByRole("button", { name: "展开全部工具调用" }).waitFor();
+		await expandAll.click();
+		await page.getByRole("button", { name: "展开全部工具调用", pressed: false }).waitFor();
 		assert((await toggle.getAttribute("aria-expanded")) === "false", "collapse-all collapses the card");
 		assert((await stored()) === false, "the preference is stored", await stored());
 	});
@@ -834,6 +837,38 @@ async function main() {
 		// The tool card header summarizes the call instead of showing raw JSON.
 		await messages().getByRole("group", { name: "工具 todo 3 项任务" }).waitFor();
 		await shot("chat-todo-created");
+	});
+
+	await uiStep(S3c, "tool cards: opening a card keeps its header in view; closing it follows new output again", async () => {
+		const backToBottom = () => page.getByRole("button", { name: "回到底部" });
+		const card = messages().getByRole("group", { name: "工具 todo 3 项任务" });
+		const toggle = card.locator("button[aria-expanded]").first();
+		await waitUntil("pinned to the bottom", async () => (await backToBottom().count()) === 0, { timeoutMs: 5000 });
+		const headerInView = () =>
+			toggle.evaluate((el) => {
+				const region = el.closest('[role="region"]').getBoundingClientRect();
+				const header = el.getBoundingClientRect();
+				const card = el.closest('[role="group"]').getBoundingClientRect();
+				return {
+					inView: header.top >= region.top && header.bottom <= region.bottom,
+					// When the card fits, all of it is shown.
+					cardShown: card.height > region.height || (card.top >= region.top - 1 && card.bottom <= region.bottom + 1),
+					top: header.top - region.top,
+					height: region.height,
+				};
+			});
+		await toggle.click();
+		await page.locator(`[id="${await toggle.getAttribute("aria-controls")}"]`).waitFor();
+		await sleep(300);
+		// Pinned, the list would follow the growth to the bottom: it does so only while the header stays in view.
+		const opened = await headerInView();
+		info(`header after expanding: ${JSON.stringify(opened)}, still pinned: ${(await backToBottom().count()) === 0}`);
+		assert(opened.inView && opened.cardShown, "the expanded card's header stays in view, and the card is shown", opened);
+		await toggle.click();
+		await sleep(300);
+		assert((await backToBottom().count()) === 0, "back at the bottom after collapsing: following again");
+		const distance = await messages().evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+		assert(distance <= 48, "at the bottom", distance);
 	});
 
 	await uiStep(S3c, "rpiv-todo: progress, and the task in progress in the collapsed header", async () => {

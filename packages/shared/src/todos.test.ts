@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ZERO_USAGE } from "./conversation.js";
 import type { AgentMessage, ToolResultMessage } from "./pi.js";
 import {
 	encodeTodoStatus,
@@ -7,6 +8,7 @@ import {
 	parseTodoStatus,
 	replayTodos,
 	TODO_STATE_ENTRY_TYPE,
+	todoBaseline,
 	type TodoSourceEntry,
 	type TodoTask,
 } from "./todos.js";
@@ -30,6 +32,7 @@ const toolResult = (tasks: unknown[], nextId: number, toolName = "todo"): ToolRe
 });
 const resultEntry = (tasks: unknown[], nextId: number, toolName = "todo"): TodoSourceEntry => ({ type: "message", message: toolResult(tasks, nextId, toolName) });
 const userEntry: TodoSourceEntry = { type: "message", message: { role: "user" } };
+const assistantEntry: TodoSourceEntry = { type: "message", message: { role: "assistant" } };
 
 describe("isTodoDetails", () => {
 	it("ports rpiv's validation", () => {
@@ -89,7 +92,7 @@ describe("replayTodos", () => {
 		expect(t.description?.endsWith("…")).toBe(true);
 	});
 
-	it("hides tasks completed before the last user message", () => {
+	it("hides tasks completed before the last run started", () => {
 		const snap = replayTodos([
 			userEntry,
 			stateEntry([task(1, "pending"), task(2, "pending"), task(3, "pending")], 4),
@@ -114,12 +117,42 @@ describe("replayTodos", () => {
 	});
 
 	it("computes the baseline from the chosen source", () => {
-		const snap = replayTodos([resultEntry([task(1, "completed"), task(2, "pending")], 3), userEntry, resultEntry([task(1, "completed"), task(2, "completed")], 3)]);
+		const snap = replayTodos([
+			resultEntry([task(1, "completed"), task(2, "pending")], 3),
+			assistantEntry,
+			userEntry,
+			resultEntry([task(1, "completed"), task(2, "completed")], 3),
+		]);
 		expect(snap?.hidden).toEqual([1]);
 	});
 
+	it("does not start a run at a steering message (a user message right after a tool result)", () => {
+		const snap = replayTodos([
+			userEntry,
+			stateEntry([task(1, "completed"), task(2, "pending")], 3),
+			resultEntry([task(1, "completed"), task(2, "pending")], 3),
+			userEntry,
+			stateEntry([task(1, "completed"), task(2, "completed")], 3),
+		]);
+		expect(snap?.hidden).toEqual([]);
+	});
+
+	it("uses the baseline recorded at the run start when given", () => {
+		const entries = [userEntry, stateEntry([task(1, "completed"), task(2, "completed"), task(3, "pending")], 4)];
+		expect(replayTodos(entries, { completed: [1], nextId: 4 })?.hidden).toEqual([1]);
+		expect(replayTodos(entries, todoBaseline(null))?.hidden).toEqual([]);
+		// Cleared since the run started: the recorded ids belong to the old list.
+		expect(replayTodos([stateEntry([task(1, "completed")], 2)], { completed: [1], nextId: 4 })?.hidden).toEqual([]);
+		expect(todoBaseline(replayTodos(entries))).toEqual({ completed: [1, 2], nextId: 4 });
+	});
+
 	it("replays transcript messages", () => {
-		const messages: AgentMessage[] = [{ role: "user", content: "hi", timestamp: 1 }, toolResult([task(1, "completed")], 2), { role: "user", content: "next", timestamp: 2 }];
+		const messages: AgentMessage[] = [
+			{ role: "user", content: "hi", timestamp: 1 },
+			toolResult([task(1, "completed")], 2),
+			{ role: "assistant", content: [], api: "openai-completions", provider: "p", model: "m", usage: ZERO_USAGE, stopReason: "stop", timestamp: 2 },
+			{ role: "user", content: "next", timestamp: 3 },
+		];
 		expect(replayTodos(messagesToTodoEntries(messages))).toEqual({ v: 1, tasks: [task(1, "completed")], nextId: 2, hidden: [1] });
 	});
 });

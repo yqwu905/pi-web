@@ -211,18 +211,22 @@ describe("generation timing", () => {
 		let s = runTimed([...turn.slice(0, -1), other]);
 		expect(s.timing).toEqual({ streaming: null, messages: {} });
 
-		// Streaming known (e.g. a snapshot from an older agent) but no timing entry: starts at the next delta.
+		// Streaming known (e.g. a snapshot from an older agent) but no timing entry: joined mid-stream,
+		// so the reply is not timed (timing it from the join would inflate the rate).
 		const snapshotted = createConversationState({ streaming: assistantAt(T, { stopReason: "pending" }) });
 		s = runTimed(turn.slice(4), snapshotted);
-		expect(s.timing.messages).toEqual({ [String(T)]: { ttftMs: 400, decodeMs: 500 } });
+		expect(s.timing).toEqual({ streaming: null, messages: {} });
 
-		// A stale entry for another message is replaced.
+		// A stale entry for another message is left alone, then cleared at message_end.
+		const staleEntry = { timestamp: T - 5000, firstDeltaAt: T - 4000, lastDeltaAt: T - 3000, outputAtFirstDelta: 9 };
 		const stale = createConversationState({
 			streaming: assistantAt(T, { stopReason: "pending" }),
-			timing: { streaming: { timestamp: T - 5000, firstDeltaAt: T - 4000, lastDeltaAt: T - 3000, outputAtFirstDelta: 9 }, messages: {} },
+			timing: { streaming: staleEntry, messages: {} },
 		});
 		s = runTimed(turn.slice(3, 4), stale);
-		expect(s.timing.streaming).toEqual({ timestamp: T, firstDeltaAt: T + 200, lastDeltaAt: T + 200, outputAtFirstDelta: 0 });
+		expect(s.timing.streaming).toEqual(staleEntry);
+		s = runTimed(turn.slice(4), stale);
+		expect(s.timing).toEqual({ streaming: null, messages: {} });
 
 		// No streaming message at all: nothing to time.
 		s = runTimed(turn.slice(3, 4));

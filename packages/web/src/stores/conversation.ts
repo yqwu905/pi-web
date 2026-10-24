@@ -523,7 +523,7 @@ export interface ConversationHandle {
 	rpcState: RpcSessionState | null;
 	stats: SessionStats | null;
 	configStale: boolean;
-	/** Raw session file (read-only mode only). */
+	/** Raw session file: read-only mode, and while a resumed session's process starts (the state shown is the file's). */
 	readOnlyFile: SessionFileResponse | undefined;
 	start(options?: StartOptions): Promise<ConversationView>;
 	ensureLive(options?: StartOptions): Promise<string>;
@@ -771,7 +771,7 @@ export function useConversation(params: UseConversationParams): ConversationHand
 		rpcState: live?.rpcState ?? null,
 		stats: live?.stats ?? null,
 		configStale: live?.configStale ?? false,
-		readOnlyFile: mode === "readonly" ? readOnlyQuery.data : undefined,
+		readOnlyFile: mode === "readonly" || (seeded !== null && seeded === readOnlyState) ? readOnlyQuery.data : undefined,
 		start,
 		ensureLive,
 		prompt,

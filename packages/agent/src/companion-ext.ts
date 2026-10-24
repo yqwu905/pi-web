@@ -18,7 +18,9 @@ import {
 	replayTodos,
 	TODO_STATUS_KEY,
 	TODO_TOOL_NAME,
+	type TodoBaseline,
 	type TodoSourceEntry,
+	todoBaseline,
 } from "@pi-web/shared";
 
 interface CompanionUi {
@@ -35,11 +37,10 @@ interface CompanionEventContext {
 	readonly sessionManager: CompanionSessionManager;
 }
 
-/** The fields of pi's session, agent, message and tool events read here. */
+/** The fields of pi's session, agent and tool events read here. */
 interface CompanionEvent {
 	type: string;
 	toolName?: string;
-	message?: { role?: string; toolName?: string };
 }
 
 interface CompanionCommandContext {
@@ -137,8 +138,9 @@ export default function piWebCompanion(pi: CompanionApi): void {
 /**
  * Pushes the rpiv-todo snapshot of the current branch (replayTodos) as the TODO_STATUS_KEY status.
  * Handlers capture ui and sessionManager synchronously and schedule one deferred replay per
- * burst of events: pi persists a message entry only after the awaited message_end handlers
- * returned, so the replay must run later to see it.
+ * burst of events. Like rpiv's overlay, the tasks completed when a run starts (agent_start) are
+ * hidden for that run; until the first run of a session the replay infers run starts from the
+ * branch.
  */
 function mirrorTodos(pi: CompanionApi): void {
 	let target: CompanionEventContext | undefined;
@@ -147,6 +149,8 @@ function mirrorTodos(pi: CompanionApi): void {
 	// left by the previous instance (before a reload or session switch) survives in Pi-Web, so the
 	// first replay always pushes, even when there is no task list.
 	let pushed: string | null | undefined;
+	// The list as the current run started; undefined until a run of this session starts.
+	let baseline: TodoBaseline | undefined;
 
 	const push = () => {
 		timer = undefined;
@@ -154,7 +158,7 @@ function mirrorTodos(pi: CompanionApi): void {
 		target = undefined;
 		if (!current) return;
 		try {
-			const snapshot = replayTodos(current.sessionManager.getBranch());
+			const snapshot = replayTodos(current.sessionManager.getBranch(), baseline);
 			const encoded = snapshot ? encodeTodoStatus(snapshot) : null;
 			if (encoded === pushed) return;
 			current.ui.setStatus(TODO_STATUS_KEY, encoded ?? undefined);
@@ -174,20 +178,32 @@ function mirrorTodos(pi: CompanionApi): void {
 		timer ??= setTimeout(push, 0);
 	};
 
-	pi.on("session_start", (_event, ctx) => schedule(ctx));
-	pi.on("session_tree", (_event, ctx) => schedule(ctx));
+	const restart = (ctx: CompanionEventContext) => {
+		// Another session or branch: infer its run starts again, as rpiv resets its overlay.
+		baseline = undefined;
+		schedule(ctx);
+	};
+	pi.on("session_start", (_event, ctx) => restart(ctx));
+	pi.on("session_tree", (_event, ctx) => restart(ctx));
 	pi.on("session_compact", (_event, ctx) => schedule(ctx));
+	pi.on("agent_start", (_event, ctx) => {
+		// Before the prompt is persisted: the branch holds the list as the run starts. Steering and
+		// follow-up messages join the running run and do not move it.
+		try {
+			baseline = todoBaseline(replayTodos(ctx.sessionManager.getBranch()));
+		} catch {
+			// Stale or unreadable: keep the previous baseline.
+		}
+		schedule(ctx);
+	});
 	pi.on("agent_end", (_event, ctx) => schedule(ctx));
 	pi.on("tool_execution_end", (event, ctx) => {
 		// Also nested calls (codemode): their state entries are on the branch already.
 		if (event.toolName === TODO_TOOL_NAME) schedule(ctx);
 	});
-	pi.on("message_end", (event, ctx) => {
-		// A user message moves the "completed in a previous turn" baseline; a todo toolResult is the
-		// only snapshot of sessions written before rpiv's state entries.
-		const message = event.message;
-		if (message?.role === "user" || (message?.role === "toolResult" && message.toolName === TODO_TOOL_NAME)) schedule(ctx);
-	});
+	// A todo toolResult is the only snapshot of sessions written before rpiv's state entries; pi
+	// persists tool results before turn_end, after awaiting every extension's message_end handler.
+	pi.on("turn_end", (_event, ctx) => schedule(ctx));
 	pi.on("session_shutdown", () => {
 		// This runtime is being torn down: a pending replay would read a session that is no longer current.
 		clearTimeout(timer);
