@@ -80,16 +80,17 @@ describe("companion extension", () => {
 		expect(todoStatuses()[3]).toBeUndefined();
 	});
 
-	it("replays after todo results and turns but ignores other events", async () => {
+	it("replays after todo results and at turn starts but ignores other events", async () => {
 		const { session, emit, todoStatuses } = setup();
 		session.branch.push({ type: "message", message: { role: "user" } }, state([{ id: 1, status: "completed" }], 2));
 		emit("tool_execution_end", { toolName: "bash" });
 		emit("message_end", { message: { role: "user" } });
 		emit("message_end", { message: todoResult });
+		emit("turn_end", { message: { role: "assistant" }, toolResults: [] });
 		await tick();
 		expect(todoStatuses()).toEqual([]);
 
-		emit("turn_end", { message: { role: "assistant" }, toolResults: [] });
+		emit("turn_start", { turnIndex: 1, timestamp: 0 });
 		await tick();
 		expect(todoStatuses()).toEqual([{ v: 1, tasks: [{ id: 1, subject: "task 1", status: "completed" }], nextId: 2, hidden: [] }]);
 	});
@@ -106,7 +107,7 @@ describe("companion extension", () => {
 
 		// Task 2 is completed in this run, then the user steers: it stays shown until the next run.
 		session.branch.push(state([{ id: 1, status: "completed" }, { id: 2, status: "completed" }], 3), user);
-		emit("turn_end", {});
+		emit("turn_start", {});
 		await tick();
 		expect(todoStatuses()[1]?.hidden).toEqual([1]);
 

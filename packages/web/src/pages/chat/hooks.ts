@@ -85,23 +85,30 @@ export function useMediaMinWidth(minWidth: number): boolean {
 
 const STICK_THRESHOLD_PX = 48;
 
-/** useStickToBottom's keepInView, for cards that just grew. */
-export const KeepInViewContext = createContext<((anchor: HTMLElement | null) => void) | null>(null);
+/** useStickToBottom's keepInView, for cards the user just opened or closed. */
+export const KeepInViewContext = createContext<((anchor: HTMLElement | null, expanded?: boolean) => void) | null>(null);
 
 /**
  * Keeps a scroll container pinned to the bottom while content grows, until the user scrolls
  * up; getting back near the bottom (by scrolling, or because content shrank) re-pins it.
  * `resetKey` changes re-pin (new session). `keepInView(anchor)`, called in a layout effect right
  * after `anchor` grew, unpins the view when following that growth to the bottom would scroll
- * the top of `anchor` out of view, and brings as much of `anchor` into view as fits instead.
+ * the top of `anchor` out of view, and brings as much of `anchor` into view as fits instead;
+ * later growth of `anchor` itself (streamed output) is checked the same way until it is closed
+ * (`keepInView(anchor, false)`).
  */
 export function useStickToBottom(
 	scrollRef: RefObject<HTMLElement | null>,
 	contentRef: RefObject<HTMLElement | null>,
 	resetKey: unknown,
-): { atBottom: boolean; scrollToBottom: (smooth?: boolean) => void; keepInView: (anchor: HTMLElement | null) => void } {
+): { atBottom: boolean; scrollToBottom: (smooth?: boolean) => void; keepInView: (anchor: HTMLElement | null, expanded?: boolean) => void } {
 	const stick = useRef(true);
 	const lastTop = useRef(0);
+	// Set when keepInView unpinned the view: its own scroll may end near the bottom, which must not
+	// re-pin it. Cleared when the user scrolls, clicks or types in the list.
+	const held = useRef(false);
+	// The element keepInView last saw and its height then.
+	const watched = useRef<{ el: HTMLElement; height: number } | null>(null);
 	const [atBottom, setAtBottom] = useState(true);
 
 	const scrollToBottom = useCallback(
@@ -109,28 +116,41 @@ export function useStickToBottom(
 			const el = scrollRef.current;
 			if (!el) return;
 			stick.current = true;
+			held.current = false;
 			setAtBottom(true);
 			el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
 		},
 		[scrollRef],
 	);
 
+	/** Unpins when following `shift` px more to the bottom would scroll the top of `anchor` out of view. */
+	const unpinFor = useCallback((el: HTMLElement, anchor: HTMLElement, shift: number): boolean => {
+		if (shift <= 0 || anchor.getBoundingClientRect().top - el.getBoundingClientRect().top - shift >= 0) return false;
+		stick.current = false;
+		held.current = true;
+		setAtBottom(false);
+		return true;
+	}, []);
+
 	const keepInView = useCallback(
-		(anchor: HTMLElement | null) => {
+		(anchor: HTMLElement | null, expanded = true) => {
 			const el = scrollRef.current;
-			if (!el || !anchor || !stick.current) return;
+			if (!el || !anchor) return;
+			if (!expanded) {
+				if (watched.current?.el === anchor) watched.current = null;
+				return;
+			}
+			watched.current = { el: anchor, height: anchor.getBoundingClientRect().height };
 			// How far the pinned view is about to scroll (the ResizeObserver runs after this layout).
-			const shift = el.scrollHeight - el.clientHeight - el.scrollTop;
-			if (shift <= 0 || anchor.getBoundingClientRect().top - el.getBoundingClientRect().top - shift >= 0) return;
-			stick.current = false;
-			setAtBottom(false);
-			anchor.scrollIntoView({ block: "nearest" });
+			if (stick.current && unpinFor(el, anchor, el.scrollHeight - el.clientHeight - el.scrollTop)) anchor.scrollIntoView({ block: "nearest" });
 		},
-		[scrollRef],
+		[scrollRef, unpinFor],
 	);
 
 	useLayoutEffect(() => {
 		stick.current = true;
+		held.current = false;
+		watched.current = null;
 		setAtBottom(true);
 		const el = scrollRef.current;
 		if (el) el.scrollTop = el.scrollHeight;
@@ -142,28 +162,43 @@ export function useStickToBottom(
 		if (!el || !content) return;
 		const onScroll = () => {
 			const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-			if (distance <= STICK_THRESHOLD_PX) stick.current = true;
+			if (distance <= STICK_THRESHOLD_PX && !held.current) stick.current = true;
 			else if (el.scrollTop < lastTop.current) stick.current = false;
 			lastTop.current = el.scrollTop;
 			setAtBottom(stick.current);
 		};
+		const release = () => {
+			held.current = false;
+		};
 		// Content growth (streaming) and viewport shrink (composer grows) both keep a pinned view at the
 		// bottom; an unpinned view that ends up at the bottom without scrolling (content shrank) is pinned again.
 		const observer = new ResizeObserver(() => {
-			if (!stick.current && el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_THRESHOLD_PX) {
+			const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+			if (!stick.current && !held.current && distance <= STICK_THRESHOLD_PX) {
 				stick.current = true;
 				setAtBottom(true);
 			}
-			if (stick.current) el.scrollTop = el.scrollHeight;
+			if (!stick.current) return;
+			const w = watched.current;
+			if (w && !w.el.isConnected) watched.current = null;
+			else if (w) {
+				const height = w.el.getBoundingClientRect().height;
+				const grew = height > w.height;
+				w.height = height;
+				if (grew && unpinFor(el, w.el, distance)) return;
+			}
+			el.scrollTop = el.scrollHeight;
 		});
 		observer.observe(content);
 		observer.observe(el);
 		el.addEventListener("scroll", onScroll, { passive: true });
+		for (const type of ["wheel", "touchstart", "pointerdown", "keydown"] as const) el.addEventListener(type, release, { passive: true });
 		return () => {
 			observer.disconnect();
 			el.removeEventListener("scroll", onScroll);
+			for (const type of ["wheel", "touchstart", "pointerdown", "keydown"] as const) el.removeEventListener(type, release);
 		};
-	}, [scrollRef, contentRef]);
+	}, [scrollRef, contentRef, unpinFor]);
 
 	return { atBottom, scrollToBottom, keepInView };
 }

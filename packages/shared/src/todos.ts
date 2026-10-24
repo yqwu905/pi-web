@@ -57,12 +57,6 @@ export interface TodoSnapshot {
 	hidden: number[];
 }
 
-/** The list as a run started (rpiv hides the tasks completed by then at agent_start). */
-export interface TodoBaseline {
-	completed: number[];
-	nextId: number;
-}
-
 // ---------- validation (port of rpiv state/replay.ts) ----------
 
 const TODO_STATUSES: ReadonlySet<unknown> = new Set<TodoStatus>(["pending", "in_progress", "completed", "deleted"]);
@@ -128,47 +122,48 @@ function advance(track: Track, details: TodoDetails): void {
  * null when the branch holds no valid snapshot at all.
  *
  * `hidden` mirrors rpiv's overlay, which hides completed tasks from previous runs at agent_start:
- * tasks that are completed now and already were when the current run started. Given `baseline`
- * (the companion records it at agent_start) that is exact; otherwise a run is taken to start at
- * the last user message that does not follow a tool result (those are steering messages,
- * injected into a running turn).
+ * tasks that are completed now and already were when the current run started. Given `runStart`
+ * (the index of the run's first entry; the companion records the branch length at agent_start)
+ * that is exact; otherwise a run is taken to start at the last user message that does not follow
+ * a tool result (those are steering messages, injected into a running turn). Either way a later
+ * clear (nextId going down) drops the baseline, as rpiv's overlay does.
  */
-export function replayTodos(entries: Iterable<TodoSourceEntry>, baseline?: TodoBaseline): TodoSnapshot | null {
+export function replayTodos(entries: Iterable<TodoSourceEntry>, runStart?: number): TodoSnapshot | null {
 	const fromEntries: Track = { baseline: new Set() };
 	const fromToolResults: Track = { baseline: new Set() };
+	const startRun = () => {
+		fromEntries.baseline = completedIds(fromEntries.details);
+		fromToolResults.baseline = completedIds(fromToolResults.details);
+	};
 	let lastRole: string | undefined;
+	let index = 0;
 	for (const e of entries) {
+		if (index++ === runStart) startRun();
 		if (e.type === "custom") {
 			if (e.customType === TODO_STATE_ENTRY_TYPE && isTodoDetails(e.data)) advance(fromEntries, e.data);
 			continue;
 		}
+		// A prompt sent after navigating the tree follows the branch summary, not the tool result it branched from.
+		if (e.type === "branch_summary") lastRole = undefined;
 		if (e.type !== "message") continue;
 		const msg = e.message;
 		const afterToolResult = lastRole === "toolResult";
-		lastRole = msg?.role;
+		// pi persists system messages (tool loadout or prompt changes) right before a steering message.
+		if (msg?.role !== "system") lastRole = msg?.role;
 		if (msg?.role === "user") {
-			if (afterToolResult) continue;
-			fromEntries.baseline = completedIds(fromEntries.details);
-			fromToolResults.baseline = completedIds(fromToolResults.details);
+			if (runStart === undefined && !afterToolResult) startRun();
 			continue;
 		}
 		if (msg?.role !== "toolResult" || msg.toolName !== TODO_TOOL_NAME) continue;
 		if (!isTodoDetails(msg.details)) continue;
 		advance(fromToolResults, msg.details);
 	}
+	if (runStart !== undefined && runStart >= index) startRun();
 	const track = fromEntries.details ? fromEntries : fromToolResults;
 	if (!track.details) return null;
 	const tasks = track.details.tasks.filter((t) => t.status !== "deleted").map(toTodoTask);
-	// A smaller nextId than at the run start means the list was cleared since: its ids are reused.
-	const runBaseline = baseline ? new Set(track.details.nextId < baseline.nextId ? [] : baseline.completed) : track.baseline;
-	const hidden = tasks.filter((t) => t.status === "completed" && runBaseline.has(t.id)).map((t) => t.id);
+	const hidden = tasks.filter((t) => t.status === "completed" && track.baseline.has(t.id)).map((t) => t.id);
 	return { v: 1, tasks, nextId: track.details.nextId, hidden };
-}
-
-/** The baseline for runs starting now (no list yet: nothing to hide). */
-export function todoBaseline(snapshot: TodoSnapshot | null): TodoBaseline {
-	if (!snapshot) return { completed: [], nextId: 0 };
-	return { completed: snapshot.tasks.filter((t) => t.status === "completed").map((t) => t.id), nextId: snapshot.nextId };
 }
 
 /** Transcript messages as replay entries (live views without the companion's status; no state entries). */

@@ -8,7 +8,6 @@ import {
 	parseTodoStatus,
 	replayTodos,
 	TODO_STATE_ENTRY_TYPE,
-	todoBaseline,
 	type TodoSourceEntry,
 	type TodoTask,
 } from "./todos.js";
@@ -137,13 +136,27 @@ describe("replayTodos", () => {
 		expect(snap?.hidden).toEqual([]);
 	});
 
-	it("uses the baseline recorded at the run start when given", () => {
-		const entries = [userEntry, stateEntry([task(1, "completed"), task(2, "completed"), task(3, "pending")], 4)];
-		expect(replayTodos(entries, { completed: [1], nextId: 4 })?.hidden).toEqual([1]);
-		expect(replayTodos(entries, todoBaseline(null))?.hidden).toEqual([]);
-		// Cleared since the run started: the recorded ids belong to the old list.
-		expect(replayTodos([stateEntry([task(1, "completed")], 2)], { completed: [1], nextId: 4 })?.hidden).toEqual([]);
-		expect(todoBaseline(replayTodos(entries))).toEqual({ completed: [1, 2], nextId: 4 });
+	it("starts the run at the recorded entry index when given", () => {
+		const before = [userEntry, stateEntry([task(1, "completed"), task(2, "pending")], 3)];
+		// The run started after `before` (its prompt not persisted yet, or persisted since).
+		expect(replayTodos(before, before.length)?.hidden).toEqual([1]);
+		expect(replayTodos([...before, userEntry, stateEntry([task(1, "completed"), task(2, "completed")], 3)], before.length)?.hidden).toEqual([1]);
+		// Steering messages inside the run do not move it, unlike the inferred run start.
+		const steered = [...before, userEntry, stateEntry([task(1, "completed"), task(2, "completed")], 3), assistantEntry, userEntry];
+		expect(replayTodos(steered, before.length)?.hidden).toEqual([1]);
+		expect(replayTodos(steered)?.hidden).toEqual([1, 2]);
+		// Cleared and rebuilt to the same size within the run: the old ids are not applied to the new tasks.
+		const rebuilt = [...before, userEntry, stateEntry([], 1), stateEntry([task(1, "completed"), task(2, "pending")], 3)];
+		expect(replayTodos(rebuilt, before.length)?.hidden).toEqual([]);
+	});
+
+	it("infers run starts across system messages and tree navigation", () => {
+		const system: TodoSourceEntry = { type: "message", message: { role: "system" } };
+		const completed = stateEntry([task(1, "completed")], 2);
+		// toolResult → system (tool loadout change) → user: still a steering message.
+		expect(replayTodos([userEntry, completed, resultEntry([task(1, "completed")], 2), system, userEntry])?.hidden).toEqual([]);
+		// A prompt after navigating to a tool result follows the branch summary: a run start.
+		expect(replayTodos([userEntry, completed, resultEntry([task(1, "completed")], 2), { type: "branch_summary" }, userEntry])?.hidden).toEqual([1]);
 	});
 
 	it("replays transcript messages", () => {

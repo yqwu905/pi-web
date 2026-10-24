@@ -130,10 +130,10 @@ R/trash/sessions/
 - label：`pi.setLabel(entryId, label)`。
 - reload：`await ctx.waitForIdle()`，然后 `await ctx.reload()`。
 - 结果统一通过 `ctx.ui.setStatus("pi-web:result", JSON.stringify({reqId, ok, error?, cancelled?}))` 回报，异常时 ok=false。
-- rpiv-todo 任务清单：rpiv 的面板用 setWidget 组件工厂，RPC 模式会丢弃。伴随扩展在 session_start、session_tree、session_compact、agent_start、agent_end、turn_end、`todo` 的 tool_execution_end（含 codemode 的嵌套调用）之后，用 shared 的 `replayTodos` 重放 `ctx.sessionManager.getBranch()`（包括压缩前的条目），值有变化时 `ctx.ui.setStatus("pi-web:todos", encodeTodoStatus(snapshot))`（没有清单时清除）。
-  - 处理函数只同步记下 ui 和 sessionManager，再用 setTimeout(0) 合并成一次重放。旧版 rpiv 只把快照写在 toolResult 里，而 pi 在 await 完所有扩展的 message_end 处理之后才写入消息，所以靠 turn_end（此时本轮的工具结果都已写入）兜底。
+- rpiv-todo 任务清单：rpiv 的面板用 setWidget 组件工厂，RPC 模式会丢弃。伴随扩展在 session_start、session_tree、session_compact、agent_start、turn_start、agent_end、`todo` 的 tool_execution_end（含 codemode 的嵌套调用）之后，用 shared 的 `replayTodos` 重放 `ctx.sessionManager.getBranch()`（包括压缩前的条目），值有变化时 `ctx.ui.setStatus("pi-web:todos", encodeTodoStatus(snapshot))`（没有清单时清除）。
+  - 处理函数只同步记下 ui 和 sessionManager，再用 setTimeout(0) 合并成一次重放。旧版 rpiv 只把快照写在 toolResult 里，而 pi 在 await 完所有扩展的 message_end 处理之后才写入消息，所以靠下一轮的 turn_start 或 agent_end（此时工具结果都已写入）兜底。不用 turn_end：注册了它的处理函数，pi 每轮都要构建边界上下文。
   - 重放规则与 rpiv 的 `replayFromBranch` 一致：分支上有合法的 `rpiv-todo-state` 自定义条目时只看它们，否则看 `todo` toolResult 的 details；快照 `{v:1, tasks（不含已删除）, nextId, hidden}`。
-  - hidden 对应 rpiv 面板在 agent_start 时收起之前已完成的任务：伴随扩展在 agent_start 时（提示词写入会话之前）记下当时的清单（`todoBaseline`），本轮内 hidden = 当时已完成、现在仍是已完成的任务；运行中插入的 steer/follow-up 不改变它；clear 使 nextId 变小后不再收起。新会话或切换分支后、第一次运行之前，以及只读和旧版伴随扩展的回退路径，从分支推断运行起点：最后一条不紧跟在工具结果之后的用户消息（紧跟在工具结果之后的是 steer）。
+  - hidden 对应 rpiv 面板在 agent_start 时收起之前已完成的任务：伴随扩展在 agent_start 时（提示词写入会话之前）记下分支长度作为本轮起点，`replayTodos(branch, runStart)` 重放到这个位置时的已完成任务就是基准，本轮内 hidden = 基准中、现在仍是已完成的任务；运行中插入的 steer/follow-up 不改变它；之后 clear（nextId 变小）会清空基准，与 rpiv 一致。新会话或切换分支后、第一次运行之前，以及只读和旧版伴随扩展的回退路径，从分支推断运行起点：最后一条不紧跟在工具结果之后的用户消息（紧跟在工具结果之后的是 steer；中间的 system 消息不算，branch_summary 之后的算新起点）。
   - 每个扩展实例的第一次重放总会推送（包括清除），避免 reload 或切换会话后留下上一个会话的清单；定时器里的异常一律吞掉（抛出会让 pi 退出），session_shutdown 时取消尚未执行的重放。
 - 实现前请先在 `dist/core/extensions/types.d.ts` 中核对 API。
 
@@ -469,7 +469,7 @@ logs/pi-web.log
     - 工具卡片：toolCall 与 toolResult 按 toolCallId 配对，运行中的状态和 partialResult 取自 state.tools；耗时取 state.tools，没有时（刷新后、只读）取 toolResult 消息的 `durationMs`。
       - 所有卡片默认折叠（运行中、出错的也一样），折叠时标题行显示图标、工具名、目标（`todo` 显示为“3 项任务”“#3 → 已完成”等）、状态和耗时；出错时标题下多一行错误摘要，write/edit 生成参数时显示“生成中 · N 行”。
       - 消息区右上角的“展开全部工具调用”切换按钮（aria-pressed 表示当前状态）修改 `pi-web:ui` 中保存的 `toolsExpanded`，并清除所有卡片的手动选择；单张卡片的手动展开/折叠按 toolCallId 记在模块级 Map 中（最多 2000 条），页面刷新前跨分页、切换会话保留。
-      - 列表吸底时，点击展开的卡片在渲染后测量（`keepInView`）：继续吸底会把它的标题推出视野时才取消吸底，并把整张卡片滚入视野（放不下时标题对齐顶部），否则照常跟随新输出；未吸底的列表在内容变化后回到底部附近（如收起卡片）时重新吸底。
+      - 列表吸底时，点击展开的卡片在渲染后测量（`keepInView`）：继续吸底会把它的标题推出视野时才取消吸底，并把整张卡片滚入视野（放不下时标题对齐顶部），否则照常跟随新输出；之后这张卡片自身继续变高（流式输出）时同样检查，直到用户收起它。由此取消吸底后，在用户滚动、点击或按键之前不会因为接近底部而自动重新吸底；未吸底的列表在内容变化后回到底部附近（如收起卡片）时重新吸底。
       - bash：流式输出
       - read：文件内容
       - edit：用 diff 包对 oldText/newText 计算并渲染；参数格式以 pi 的 `dist/core/tools/edit.js` 为准

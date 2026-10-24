@@ -82,18 +82,18 @@ function ToolCardImpl({ tool, workspaceId }: ToolCardProps) {
 	const expanded = toolExpanded(override, toolsExpanded);
 	const keepInView = useContext(KeepInViewContext);
 	const cardRef = useRef<HTMLDivElement>(null);
-	const expandedByUser = useRef(false);
+	const toggledByUser = useRef(false);
 	const bodyId = useId();
 	const toggle = () => {
-		expandedByUser.current = !expanded;
+		toggledByUser.current = true;
 		toolOverrides.set(tool.id, !expanded, epoch);
 		setOverride(!expanded);
 	};
 	useLayoutEffect(() => {
 		// The list follows new output: a card opened by a click must not have its header scrolled away.
-		if (!expandedByUser.current) return;
-		expandedByUser.current = false;
-		if (expanded) keepInView?.(cardRef.current);
+		if (!toggledByUser.current) return;
+		toggledByUser.current = false;
+		keepInView?.(cardRef.current, expanded);
 	}, [expanded, keepInView]);
 	const running = tool.status === "running";
 	const busy = running || tool.status === "pending";

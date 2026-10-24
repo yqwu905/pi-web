@@ -18,9 +18,7 @@ import {
 	replayTodos,
 	TODO_STATUS_KEY,
 	TODO_TOOL_NAME,
-	type TodoBaseline,
 	type TodoSourceEntry,
-	todoBaseline,
 } from "@pi-web/shared";
 
 interface CompanionUi {
@@ -149,8 +147,8 @@ function mirrorTodos(pi: CompanionApi): void {
 	// left by the previous instance (before a reload or session switch) survives in Pi-Web, so the
 	// first replay always pushes, even when there is no task list.
 	let pushed: string | null | undefined;
-	// The list as the current run started; undefined until a run of this session starts.
-	let baseline: TodoBaseline | undefined;
+	// Branch index of the current run's first entry; undefined until a run of this session starts.
+	let runStart: number | undefined;
 
 	const push = () => {
 		timer = undefined;
@@ -158,7 +156,7 @@ function mirrorTodos(pi: CompanionApi): void {
 		target = undefined;
 		if (!current) return;
 		try {
-			const snapshot = replayTodos(current.sessionManager.getBranch(), baseline);
+			const snapshot = replayTodos(current.sessionManager.getBranch(), runStart);
 			const encoded = snapshot ? encodeTodoStatus(snapshot) : null;
 			if (encoded === pushed) return;
 			current.ui.setStatus(TODO_STATUS_KEY, encoded ?? undefined);
@@ -180,19 +178,19 @@ function mirrorTodos(pi: CompanionApi): void {
 
 	const restart = (ctx: CompanionEventContext) => {
 		// Another session or branch: infer its run starts again, as rpiv resets its overlay.
-		baseline = undefined;
+		runStart = undefined;
 		schedule(ctx);
 	};
 	pi.on("session_start", (_event, ctx) => restart(ctx));
 	pi.on("session_tree", (_event, ctx) => restart(ctx));
 	pi.on("session_compact", (_event, ctx) => schedule(ctx));
 	pi.on("agent_start", (_event, ctx) => {
-		// Before the prompt is persisted: the branch holds the list as the run starts. Steering and
-		// follow-up messages join the running run and do not move it.
+		// Before the prompt is persisted: the run's entries start after the current branch. Steering
+		// and follow-up messages join the running run and do not move it.
 		try {
-			baseline = todoBaseline(replayTodos(ctx.sessionManager.getBranch()));
+			runStart = ctx.sessionManager.getBranch().length;
 		} catch {
-			// Stale or unreadable: keep the previous baseline.
+			// Stale or unreadable: keep the previous run start.
 		}
 		schedule(ctx);
 	});
@@ -202,8 +200,10 @@ function mirrorTodos(pi: CompanionApi): void {
 		if (event.toolName === TODO_TOOL_NAME) schedule(ctx);
 	});
 	// A todo toolResult is the only snapshot of sessions written before rpiv's state entries; pi
-	// persists tool results before turn_end, after awaiting every extension's message_end handler.
-	pi.on("turn_end", (_event, ctx) => schedule(ctx));
+	// persists it after awaiting every extension's message_end handler, so it is on the branch by
+	// the next turn_start (or agent_end). turn_end is avoided: a handler for it makes pi build its
+	// boundary context on every turn.
+	pi.on("turn_start", (_event, ctx) => schedule(ctx));
 	pi.on("session_shutdown", () => {
 		// This runtime is being torn down: a pending replay would read a session that is no longer current.
 		clearTimeout(timer);
