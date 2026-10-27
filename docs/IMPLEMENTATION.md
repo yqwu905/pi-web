@@ -477,6 +477,8 @@ logs/pi-web.log
       - grep、find、ls 等：结果文本
       - 其他工具：显示 JSON
     - bashExecution、custom（display 为真时）、compactionSummary、branchSummary 也要渲染。
+    - 消息导航（`components/MessageNav.tsx`、`logic/nav.ts`）：有两条以上用户消息时，消息区右侧竖排显示每条用户消息的横线（用户消息带 `data-nav-key`）。滚动时按“视口 40% 处之上的最后一条”确定当前项并高亮（离底部不足 60% 视口高时这条线随之下移，到底部时位于视口底边，最后一轮较短时也能高亮最后一条）；点击的横线保持为当前项，直到列表从这次跳转停下的位置滚走（被分页隐藏的更早消息视为在上方）；鼠标悬停或键盘聚焦显示预览卡片（序号、文本前 4 行、图片数），移到其他横线时卡片跟随滑动；点击时横线弹跳一下，列表平滑滚动到该消息（`useStickToBottom` 的 `scrollToElement`：目标不在底部时取消吸底，并且在用户滚动、点击或按键之前不因经过底部附近而重新吸底），消息边框闪烁高亮；目标在未显示的更早分页里时先展开分页。横线多到放不下时导航条自身滚动，并保持当前项可见。显示导航条时，消息区右侧空白不足 16px 的部分用 padding 补足（`clamp(0px, 892px - 100%, 16px)`，宽屏不变），导航条不会盖住消息；手机宽度（<640px）不显示导航条。尊重 `prefers-reduced-motion`。
+    - 回复末尾的 Fork（`logic/fork.ts`）：每个已结束的 assistant 分组末尾、速率行前有 Fork 按钮。pi 的 RPC 只能在用户消息处 fork（新会话到这条消息之前为止）或从当前叶子 clone，所以对这轮回复之后的下一条用户消息调用 fork（`get_entries` 后从 leafId 沿 parentId 回溯当前分支，按 timestamp 找到它的 entryId），没有下一条时（最后一轮）用 clone；fork 返回的消息文本不放入输入框。fork 会先中止会话中正在运行的回合，所以运行中、压缩中、`!cmd` 执行中、离线或另一个 Fork 进行中时按钮禁用并在提示中说明原因。
   - 输入框：
     - `/` 补全来自 get_commands，过滤掉 `pi-web-` 开头的命令；
     - `!cmd` 发送 RPC bash，`!!cmd` 带 excludeFromContext；

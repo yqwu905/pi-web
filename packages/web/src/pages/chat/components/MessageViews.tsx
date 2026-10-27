@@ -9,7 +9,7 @@ import {
 	type StreamingTiming,
 	type UserMessage,
 } from "@pi-web/shared";
-import { Ban, Brain, ChevronDown, Gauge, GitBranch, Layers, Puzzle, SquareTerminal } from "lucide-react";
+import { Ban, Brain, ChevronDown, Gauge, GitBranch, GitFork, Layers, Puzzle, SquareTerminal } from "lucide-react";
 import { memo, type ReactNode, useMemo, useState } from "react";
 import { Markdown } from "../../../components/Markdown";
 import { Badge, Callout, Spinner } from "../../../components/ui";
@@ -35,11 +35,15 @@ function contentImages(content: UserMessage["content"] | CustomMessage["content"
 
 // ---------- user ----------
 
-export const UserMessageView = memo(function UserMessageView({ message }: { message: UserMessage }) {
+/** `navKey`: the message's anchor for the jump rail (data-nav-key). */
+export const UserMessageView = memo(function UserMessageView({ message, navKey }: { message: UserMessage; navKey?: string }) {
 	const text = contentToText(message.content);
 	const images = contentImages(message.content);
 	return (
-		<div className="flex max-w-[80%] flex-col gap-2 self-end rounded-xl border border-user-border bg-user px-3.5 py-2.5 text-base leading-[1.6] break-words whitespace-pre-wrap text-fg">
+		<div
+			data-nav-key={navKey}
+			className="flex max-w-[80%] flex-col gap-2 self-end rounded-xl border border-user-border bg-user px-3.5 py-2.5 text-base leading-[1.6] break-words whitespace-pre-wrap text-fg"
+		>
 			{text && <div>{text}</div>}
 			{images.length > 0 && <ImageThumbs images={images} size={120} />}
 		</div>
@@ -134,7 +138,7 @@ function AssistantMessageView({ view, workspaceId }: { view: AssistantView; work
 
 function ThroughputLine({ text, title }: { text: string; title: string }) {
 	return (
-		<div className="flex items-center gap-1 self-start text-2xs text-fg-3 tabular-nums" title={title}>
+		<div className="flex items-center gap-1 text-2xs text-fg-3 tabular-nums" title={title}>
 			<Gauge size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
 			{text}
 		</div>
@@ -146,6 +150,41 @@ function GroupThroughputLine({ views, timings }: { views: AssistantView[]; timin
 	const throughput = useMemo(() => groupThroughput(views.map((v) => v.message), timings), [views, timings]);
 	if (!throughput) return null;
 	return <ThroughputLine text={throughputText(throughput)} title={groupThroughputTitle(throughput)} />;
+}
+
+/**
+ * Forks a new session that continues after the reply (spinner until it is done). It takes the
+ * throughput line's 16px in the layout: the footer keeps its height when a reply finishes.
+ */
+function ForkReplyButton({ onFork, blocked }: { onFork: () => Promise<void>; blocked?: string }) {
+	const [busy, setBusy] = useState(false);
+	const fork = () => {
+		if (busy) return;
+		setBusy(true);
+		void onFork().finally(() => setBusy(false));
+	};
+	return (
+		<button
+			type="button"
+			onClick={fork}
+			disabled={Boolean(blocked) || busy}
+			aria-label="从这条回复 Fork 新对话"
+			title={blocked ?? "从这条回复 Fork 新对话"}
+			className="group/fork -my-1 inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-2xs text-fg-3 transition-[color,background-color,scale] duration-150 hover:bg-raised hover:text-fg active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-fg-3 motion-reduce:transition-none"
+		>
+			{busy ? (
+				<Spinner size={11} />
+			) : (
+				<GitFork
+					size={12}
+					strokeWidth={1.9}
+					aria-hidden="true"
+					className="shrink-0 transition-transform duration-200 group-enabled/fork:group-hover/fork:-rotate-12 motion-reduce:transition-none"
+				/>
+			)}
+			Fork
+		</button>
+	);
 }
 
 /** Tool-call arguments parsed so far, by call id: the streaming message holds `{}` until toolcall_end. */
@@ -176,21 +215,30 @@ export interface AssistantGroupProps {
 	/** For the group whose last message is streaming: its timing and throughputCalibration. */
 	streamingTiming?: StreamingTiming | null;
 	calibration?: number;
+	/** Fork after the finished group; called with the group's key (its first message's). */
+	onFork?: (key: string) => Promise<void>;
+	/** Why forking is unavailable right now (the button's tooltip); undefined when it is available. */
+	forkBlocked?: string;
 }
 
 export const AssistantGroupView = memo(
-	function AssistantGroupView({ messages, workspaceId, timings, streamingTiming, calibration }: AssistantGroupProps) {
+	function AssistantGroupView({ messages, workspaceId, timings, streamingTiming, calibration, onFork, forkBlocked }: AssistantGroupProps) {
 		const last = messages[messages.length - 1];
 		return (
 			<div className="flex min-w-0 flex-col gap-3">
 				{messages.map((view) => (
 					<AssistantMessageView key={view.key} view={view} workspaceId={workspaceId} />
 				))}
-				{last?.streaming ? (
-					<LiveThroughputLine view={last} timing={streamingTiming ?? null} calibration={calibration ?? 1} />
-				) : (
-					<GroupThroughputLine views={messages} timings={timings} />
-				)}
+				<div className="flex items-center gap-2 self-start empty:hidden">
+					{last?.streaming ? (
+						<LiveThroughputLine view={last} timing={streamingTiming ?? null} calibration={calibration ?? 1} />
+					) : (
+						<>
+							{onFork && messages.length > 0 && <ForkReplyButton onFork={() => onFork(messages[0].key)} blocked={forkBlocked} />}
+							<GroupThroughputLine views={messages} timings={timings} />
+						</>
+					)}
+				</div>
 			</div>
 		);
 	},
@@ -199,7 +247,9 @@ export const AssistantGroupView = memo(
 		assistantViewsEqual(a.messages, b.messages) &&
 		sameMessageTimings(a.messages, a.timings, b.timings) &&
 		a.streamingTiming === b.streamingTiming &&
-		a.calibration === b.calibration,
+		a.calibration === b.calibration &&
+		a.onFork === b.onFork &&
+		a.forkBlocked === b.forkBlocked,
 );
 
 // ---------- bash executions (! commands) ----------

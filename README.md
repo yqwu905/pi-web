@@ -6,7 +6,7 @@
 - **集中管理**：服务器 → 工作区 → 对话三层结构。对话界面支持流式输出、工具卡片（bash / read / edit diff / write …）、steer / follow-up 队列、模型和思考级别切换、会话树跳转与标签、Fork / Clone、压缩上下文，以及导出 HTML / JSONL。扩展 UI（select / confirm / input / editor / notify）也在网页中呈现。
 - **LLM 隧道代理**：服务器上 pi 的 LLM 请求，经 SSH 链路回到 Host 再发出（HTTP CONNECT，TLS 端到端），不依赖 sshd 的端口转发。Host 端强制执行域名白名单；默认只放行 LLM provider，可按服务器开放给工具命令。
 - **配置与插件同步**：把 Host 的 `~/.pi/agent`（settings、models、auth、mcp、AGENTS.md、extensions、skills、prompts、themes、npm/git 插件包）单向增量同步到服务器，支持自动同步。冲突文件会先备份再覆盖。OAuth 的 refresh token 只保存在 Host，由 Pi-Web 在过期前刷新，再把 access token 推送到服务器。
-- **对话体验**：每轮回复末尾显示模型的输出速率（tok/s，不含首字延迟）和首字延迟，生成中显示实时估算；工具调用默认折叠，可一键全部展开/折叠；rpiv-todo（`@juicesharp/rpiv-todo`）的任务清单显示在输入框上方，压缩上下文后依然完整（需要 agent 0.1.3：在服务器页升级 agent 后，新启动的 pi 进程生效）。
+- **对话体验**：每轮回复末尾显示模型的输出速率（tok/s，不含首字延迟）和首字延迟，生成中显示实时估算；工具调用默认折叠，可一键全部展开/折叠；右侧的消息导航条可悬停预览、点击跳转到任意一条用户消息；每轮回复末尾的 Fork 按钮可以接着这条回复开一个新对话；rpiv-todo（`@juicesharp/rpiv-todo`）的任务清单显示在输入框上方，压缩上下文后依然完整（需要 agent 0.1.3：在服务器页升级 agent 后，新启动的 pi 进程生效）。
 - **归档会话**：把不再需要的会话归档，侧栏只在每个工作区的“已归档”分组中显示它们，可随时恢复或删除；在归档的会话里发消息会自动恢复。归档只是 Pi-Web 中的隐藏标记（保存在 Host，服务器离线时也能操作），服务器上的会话文件不动，pi 自己的 `/resume` 照样能看到。
 - **工作区工具**：远程文件浏览（代码高亮、Markdown 预览）、Web 终端（xterm.js）、Git 变更与 diff 查看。
 - **环境变量**：在“服务器设置 → 环境变量”中配置服务器级变量（例如扩展需要的内网服务地址），作用于该服务器所有工作区的 pi 进程、Web 终端和 `~/.pi-web/bin/pi`；工作区可设置同名变量覆盖。修改后对新启动的 pi 进程和新打开的终端生效（已部署的服务器需先升级 agent，Web 终端和 `bin/pi` 才能读到）。

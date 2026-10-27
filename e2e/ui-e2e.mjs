@@ -1272,6 +1272,100 @@ async function main() {
 		{ allow: offlineNoise },
 	);
 
+	// ---------------------------------------------------------------- jump rail + fork after a reply
+	// Last: forking adds sessions (the archive steps expect one) titled 你好 like the original.
+	const S8 = "jump rail+fork";
+	const rail = () => page.getByRole("navigation", { name: "消息导航" });
+	const marks = () => rail().getByRole("button");
+	const forkButtons = () => messages().getByRole("button", { name: "从这条回复 Fork 新对话" });
+	const sessionInUrl = () => decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1));
+	/** Top of the first user message, relative to the message region. */
+	const firstMessageTop = () =>
+		messages().evaluate((el) => el.querySelector("[data-nav-key]").getBoundingClientRect().top - el.getBoundingClientRect().top);
+
+	await uiStep(S8, "jump rail: a mark per user message, the one in view highlighted; hovering previews it", async () => {
+		const userMessages = await messages().locator("[data-nav-key]").count();
+		assert(userMessages >= 5, "several user messages in the session", userMessages);
+		await waitUntil("one mark per user message", async () => (await marks().count()) === userMessages, { timeoutMs: 5000 });
+		await waitUntil("the last mark is current at the bottom", async () => (await marks().last().getAttribute("aria-current")) === "true", { timeoutMs: 5000 });
+		assert((await rail().locator('[aria-current="true"]').count()) === 1, "one current mark");
+		await marks().first().hover();
+		const preview = rail().locator(".animate-nav-preview");
+		await preview.waitFor();
+		const text = await preview.innerText();
+		assert(text.includes("#1") && text.includes("你好"), "the preview shows the first message", text);
+		await sleep(200); // fade-in
+		await shot("chat-nav-preview");
+		await marks().nth(1).hover();
+		await waitUntil("the preview follows the hovered mark", async () => (await preview.innerText()).includes("#2"), { timeoutMs: 2000 });
+		await page.mouse.move(400, 400);
+		await preview.waitFor({ state: "detached" });
+		// One tab stop (the current mark); the arrow keys move between the marks and preview them.
+		assert((await rail().locator('button[tabindex="0"]').count()) === 1, "one tab stop in the rail");
+		await marks().last().focus();
+		await page.keyboard.press("ArrowUp");
+		const previous = marks().nth(userMessages - 2);
+		await waitUntil("focus on the previous mark", async () => previous.evaluate((el) => el === document.activeElement), { timeoutMs: 2000 });
+		await waitUntil("its preview", async () => (await preview.count()) === 1 && (await preview.innerText()).includes(`#${userMessages - 1}`), { timeoutMs: 2000 });
+		await previous.blur();
+		await preview.waitFor({ state: "detached" });
+	});
+
+	await uiStep(S8, "jump rail: clicking a mark scrolls to its message and highlights it", async () => {
+		await marks().first().click();
+		await messages().locator("[data-nav-key].animate-nav-flash").first().waitFor({ timeout: 2000 });
+		await waitUntil("first message at the top", async () => Math.abs((await firstMessageTop()) - 16) <= 2, { timeoutMs: 5000 });
+		await waitUntil("the first mark is current", async () => (await marks().first().getAttribute("aria-current")) === "true", { timeoutMs: 5000 });
+		await page.getByRole("button", { name: "回到底部" }).waitFor();
+		await shot("chat-nav-jumped");
+		await page.getByRole("button", { name: "回到底部" }).click();
+		await waitUntil("the last mark is current again", async () => (await marks().last().getAttribute("aria-current")) === "true", { timeoutMs: 5000 });
+	});
+
+	await uiStep(S8, "fork: the Fork buttons are disabled while pi runs", async () => {
+		const groups = await forkButtons().count();
+		assert(groups >= 5, "a Fork button under every finished reply", groups);
+		await composer().fill("run: sleep 2; echo slept");
+		await composer().press("Enter");
+		await waitUntil("disabled while running", async () => await forkButtons().first().isDisabled(), { timeoutMs: 10_000 });
+		assert((await forkButtons().first().getAttribute("title")) === "正在运行，结束后才能 Fork", "the tooltip says why", await forkButtons().first().getAttribute("title"));
+		await messages().getByText("工具执行完成：slept").waitFor({ timeout: 60_000 });
+		await waitUntil("enabled again", async () => !(await forkButtons().first().isDisabled()), { timeoutMs: 10_000 });
+		assert((await forkButtons().count()) === groups + 1, "the new reply has one too", await forkButtons().count());
+	});
+
+	let forkedId;
+	await uiStep(S8, "fork an earlier reply: a new session that ends with it, the original stays", async () => {
+		await forkButtons().first().click();
+		await waitUntil("moved to the forked session", async () => sessionInUrl() !== sessionId, { timeoutMs: 20_000 });
+		forkedId = sessionInUrl();
+		await page.getByText("已 Fork 为新会话").waitFor();
+		await messages().getByText("收到：你好").waitFor({ timeout: 20_000 });
+		await waitUntil("only the first turn", async () => (await messages().locator("[data-nav-key]").count()) === 1, { timeoutMs: 10_000 });
+		assert((await messages().getByText("run: echo ui-e2e").count()) === 0, "the next prompt is not copied");
+		assert((await composer().inputValue()) === "", "the composer stays empty");
+		assert((await rail().count()) === 0, "no jump rail for a single message");
+		await composer().fill("分叉后继续");
+		await composer().press("Enter");
+		await messages().getByText("收到：分叉后继续").waitFor({ timeout: 60_000 });
+		await waitUntil("rail with two marks", async () => (await marks().count()) === 2, { timeoutMs: 5000 });
+		await shot("chat-forked");
+		const { sessions } = await api.get(`/workspaces/${workspaceId}/sessions`);
+		assert(sessions.length === 2, "the fork is a second session", sessions.length);
+		const original = await api.get(`/sessions/read?serverId=${serverId}&file=${encodeURIComponent(sessions.find((s) => s.id === sessionId).file)}`);
+		assert(JSON.stringify(original).includes("重连之后"), "the original session keeps its later turns");
+	});
+
+	await uiStep(S8, "fork the reply of the last turn: the whole conversation is copied", async () => {
+		await forkButtons().last().click();
+		await waitUntil("moved to another session", async () => sessionInUrl() !== forkedId, { timeoutMs: 20_000 });
+		await messages().getByText("收到：分叉后继续").waitFor({ timeout: 20_000 });
+		await messages().getByText("收到：你好").waitFor();
+		assert((await messages().locator("[data-nav-key]").count()) === 2, "both turns");
+		const { sessions } = await api.get(`/workspaces/${workspaceId}/sessions`);
+		assert(sessions.length === 3, "a third session", sessions.length);
+	});
+
 	// ---------------------------------------------------------------- diagnostics
 	if (runner.failed) {
 		console.log("\n---- pi-web output (tail) ----");

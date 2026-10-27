@@ -105,6 +105,10 @@
 
 	--animate-spin: pw-spin 0.9s linear infinite;
 	--animate-pulse-dot: pw-pulse 1.4s ease-in-out infinite;
+	/* Message jump rail: clicked mark, hover preview, highlight of the message jumped to. */
+	--animate-nav-pop: pw-nav-pop 0.32s ease-out;
+	--animate-nav-preview: pw-nav-preview 0.14s ease-out;
+	--animate-nav-flash: pw-nav-flash 1.6s ease-out;
 
 	@keyframes pw-spin {
 		to {
@@ -118,6 +122,27 @@
 		}
 		50% {
 			opacity: 0.35;
+		}
+	}
+	@keyframes pw-nav-pop {
+		40% {
+			transform: scale(1.5, 2);
+		}
+	}
+	@keyframes pw-nav-preview {
+		from {
+			opacity: 0;
+			transform: translateX(6px);
+		}
+	}
+	@keyframes pw-nav-flash {
+		0%,
+		30% {
+			border-color: var(--color-accent);
+			box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 35%, transparent);
+		}
+		100% {
+			box-shadow: 0 0 0 3px transparent;
 		}
 	}
 }

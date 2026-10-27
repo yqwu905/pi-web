@@ -95,13 +95,19 @@ export const KeepInViewContext = createContext<((anchor: HTMLElement | null, exp
  * after `anchor` grew, unpins the view when following that growth to the bottom would scroll
  * the top of `anchor` out of view, and brings as much of `anchor` into view as fits instead;
  * later growth of `anchor` itself (streamed output) is checked the same way until it is closed
- * (`keepInView(anchor, false)`).
+ * (`keepInView(anchor, false)`). `scrollToElement(target)` scrolls `target` to the top of the view
+ * and leaves it unpinned unless that is the bottom.
  */
 export function useStickToBottom(
 	scrollRef: RefObject<HTMLElement | null>,
 	contentRef: RefObject<HTMLElement | null>,
 	resetKey: unknown,
-): { atBottom: boolean; scrollToBottom: (smooth?: boolean) => void; keepInView: (anchor: HTMLElement | null, expanded?: boolean) => void } {
+): {
+	atBottom: boolean;
+	scrollToBottom: (smooth?: boolean) => void;
+	keepInView: (anchor: HTMLElement | null, expanded?: boolean) => void;
+	scrollToElement: (target: HTMLElement, offset?: number, smooth?: boolean) => void;
+} {
 	const stick = useRef(true);
 	const lastTop = useRef(0);
 	// Set when keepInView unpinned the view: its own scroll may end near the bottom, which must not
@@ -119,6 +125,21 @@ export function useStickToBottom(
 			held.current = false;
 			setAtBottom(true);
 			el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+		},
+		[scrollRef],
+	);
+
+	const scrollToElement = useCallback(
+		(target: HTMLElement, offset = 0, smooth = true) => {
+			const el = scrollRef.current;
+			if (!el) return;
+			const top = Math.max(0, target.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - offset);
+			// Held like keepInView: the scroll passes near the bottom first and must not re-pin (streaming would pull it back).
+			const toBottom = el.scrollHeight - el.clientHeight - top <= STICK_THRESHOLD_PX;
+			stick.current = toBottom;
+			held.current = !toBottom;
+			setAtBottom(toBottom);
+			el.scrollTo({ top, behavior: smooth ? "smooth" : "auto" });
 		},
 		[scrollRef],
 	);
@@ -200,5 +221,5 @@ export function useStickToBottom(
 		};
 	}, [scrollRef, contentRef, unpinFor]);
 
-	return { atBottom, scrollToBottom, keepInView };
+	return { atBottom, scrollToBottom, keepInView, scrollToElement };
 }

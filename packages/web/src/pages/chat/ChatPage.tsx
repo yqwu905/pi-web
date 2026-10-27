@@ -22,6 +22,7 @@ import { SessionTreeModal } from "./components/SessionTreeModal";
 import { ArchivedBanner, CompactingBanner, ErrorBanner, ExitedBanner, ExtensionStatuses, ExtensionWidgets, RetryBanner } from "./components/StatusArea";
 import { TodoPanel } from "./components/TodoPanel";
 import { useMediaMinWidth, useStoredState } from "./hooks";
+import { replyForkTarget, userEntryOnBranch } from "./logic/fork";
 import { buildDisplayItems, hasRunningTool } from "./logic/messages";
 import { selectTodoSnapshot } from "./logic/todos";
 
@@ -283,6 +284,46 @@ function ChatView({
 		[state.ui.statuses, conv.readOnlyFile, state.messages],
 	);
 
+	// ---------- fork after a reply ----------
+
+	const latestItems = useRef(items);
+	useLayoutEffect(() => {
+		latestItems.current = items;
+	});
+	const [forking, setForking] = useState(false);
+	const { ensureLive, call } = conv;
+	// The new session continues after the reply; the view follows it like the other forks.
+	const forkReply = useCallback(
+		async (key: string) => {
+			const target = replyForkTarget(latestItems.current, key);
+			if (!target) return;
+			setForking(true);
+			try {
+				await ensureLive();
+				let cancelled: boolean | undefined;
+				if (target.type === "clone") cancelled = (await call({ type: "clone" }))?.cancelled;
+				else {
+					const data = await call({ type: "get_entries" });
+					const entryId = userEntryOnBranch(data?.entries ?? [], data?.leafId ?? null, target.timestamp);
+					if (!entryId) throw new Error("会话中找不到这条回复之后的消息，请刷新后重试");
+					cancelled = (await call({ type: "fork", entryId }))?.cancelled;
+				}
+				if (cancelled) toast.info("Fork 已被扩展取消");
+				else toast.success("已 Fork 为新会话");
+			} catch (e) {
+				toast.error(errorMessage(e), { title: "Fork 失败" });
+			} finally {
+				setForking(false);
+			}
+		},
+		[ensureLive, call],
+	);
+	// Forking replaces pi's session, which aborts whatever runs in it.
+	let forkBlocked: string | undefined;
+	if (offline) forkBlocked = "服务器未连接";
+	else if (state.isRunning || state.isCompacting || bashRunning) forkBlocked = "正在运行，结束后才能 Fork";
+	else if (forking) forkBlocked = "正在 Fork…";
+
 	// Each banner remembers its own dismissal (one shared slot brought the other back).
 	const [dismissedErrors, setDismissedErrors] = useState<ReadonlySet<string>>(() => new Set());
 	const dismissError = useCallback((message: string) => setDismissedErrors((prev) => new Set(prev).add(message)), []);
@@ -420,6 +461,8 @@ function ChatView({
 					placeholder={placeholder}
 					overlay={panelToggle}
 					timing={state.timing}
+					onForkReply={forkReply}
+					forkBlocked={forkBlocked}
 				/>
 				<div className="shrink-0 px-4 pb-4 sm:px-6">
 					<div className="mx-auto flex max-w-[860px] flex-col gap-2">
