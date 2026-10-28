@@ -5,6 +5,7 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { setSessionArchived } from "../api/archive";
 import { errorMessage, stopConversation } from "../api/client";
 import { useAllWorkspaces, useServerWorkspaces, useWorkspaceSessions } from "../api/hooks";
+import { Segmented } from "../components/ui/Choice";
 import { StatusDot } from "../components/ui/Display";
 import { IconButton } from "../components/ui/IconButton";
 import { Spinner } from "../components/ui/Spinner";
@@ -14,6 +15,7 @@ import { parseRoute, paths } from "../lib/routes";
 import {
 	archiveBlockedReason,
 	isArchived,
+	isInProgress,
 	liveConversationForSession,
 	matchesSessionQuery,
 	sessionRouteId,
@@ -48,6 +50,8 @@ type TrackFocus = (move: { file: string; archived: boolean } | null) => void;
 
 interface SidebarContext {
 	query: string;
+	/** Set while the 进行中 filter is on: the in-progress conversations of all workspaces. */
+	inProgress?: readonly ConversationView[];
 	activeServerId?: string;
 	activeWorkspaceId?: string;
 	activeSessionId?: string;
@@ -241,9 +245,14 @@ function ArchivedSessionRow({
 function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; server: ServerView; ctx: SidebarContext }) {
 	const wsId = workspace.config.id;
 	const searching = ctx.query.trim().length > 0;
+	const filtering = ctx.inProgress !== undefined;
+	// Searching or filtering narrows the list: everything that matches is shown, without the new-session row.
+	const narrowed = searching || filtering;
+	// The 进行中 filter shows only workspaces with an in-progress conversation, expanded.
+	const hasInProgress = ctx.inProgress?.some((c) => c.workspaceId === wsId) ?? false;
 	const stored = useUiStore((s) => s.expandedWorkspaces[wsId]);
 	const setExpanded = useUiStore((s) => s.setWorkspaceExpanded);
-	const expanded = searching || (stored ?? false);
+	const expanded = searching || hasInProgress || (stored ?? false);
 	const online = server.status.connection === "connected";
 	// Listing needs the agent: while offline keep showing the cached list instead of failing requests.
 	const sessionsQuery = useWorkspaceSessions(wsId, { enabled: expanded && online });
@@ -255,12 +264,20 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 
 	const sessions = sessionsQuery.data;
 	// Archived sessions leave the list (and the count) for the collapsed 已归档 group.
-	const groups = useMemo(() => sidebarSessionGroups(sessions ?? [], ctx.query), [sessions, ctx.query]);
+	const groups = useMemo(
+		() => sidebarSessionGroups(sessions ?? [], ctx.query, filtering ? liveConvs : undefined),
+		[sessions, ctx.query, filtering, liveConvs],
+	);
 	const filtered = groups.active;
 	const archived = groups.archived;
 	const extra = useMemo(
-		() => (sessions ? unlistedConversations(wsId, sessions, liveConvs).filter((c) => matchesSessionQuery({ name: c.info.sessionName, firstMessage: "" }, ctx.query)) : []),
-		[sessions, liveConvs, wsId, ctx.query],
+		() =>
+			sessions
+				? unlistedConversations(wsId, sessions, liveConvs).filter(
+						(c) => matchesSessionQuery({ name: c.info.sessionName, firstMessage: "" }, ctx.query) && (!filtering || isInProgress(c.info.status)),
+					)
+				: [],
+		[sessions, liveConvs, wsId, ctx.query, filtering],
 	);
 	const runningCount = liveConvs.filter((c) => c.info.status === "running" || c.info.status === "waiting_ui").length;
 	const count = sessions ? groups.count : workspace.sessionCount;
@@ -275,7 +292,7 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 	}
 	// The group is collapsed by default each time it appears again.
 	if (archivedOpen && sessions && !sessions.some(isArchived)) setArchivedOpen(false);
-	const showArchived = archivedOpen || searching;
+	const showArchived = archivedOpen || narrowed;
 
 	const nodeRef = useRef<HTMLDivElement>(null);
 	const focusMove = useRef<{ file: string; archived: boolean } | null>(null);
@@ -296,9 +313,10 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 		target?.focus();
 	}, [sessions]);
 
-	if (searching && sessions && filtered.length === 0 && extra.length === 0 && archived.length === 0) return null;
+	if (filtering && !hasInProgress) return null;
+	if (narrowed && sessions && filtered.length === 0 && extra.length === 0 && archived.length === 0) return null;
 
-	const visible = showAll || searching ? filtered : filtered.slice(0, SESSIONS_PREVIEW);
+	const visible = showAll || narrowed ? filtered : filtered.slice(0, SESSIONS_PREVIEW);
 	const pageActive = activeWs && Boolean(ctx.workspacePageActive);
 	const offline = !online;
 
@@ -383,7 +401,7 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 							trackFocus={trackFocus}
 						/>
 					))}
-					{!searching && filtered.length > SESSIONS_PREVIEW && (
+					{!narrowed && filtered.length > SESSIONS_PREVIEW && (
 						<button
 							type="button"
 							onClick={() => setShowAll((v) => !v)}
@@ -392,7 +410,7 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 							{showAll ? "收起" : `显示全部（${filtered.length}）`}
 						</button>
 					)}
-					{!searching && (
+					{!narrowed && (
 						<button
 							type="button"
 							onClick={() => navigate(paths.chat(wsId))}
@@ -408,8 +426,8 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 								type="button"
 								aria-expanded={showArchived}
 								data-archived-toggle=""
-								// While searching the group is always shown: the toggle does nothing then.
-								onClick={() => !searching && setArchivedOpen(!archivedOpen)}
+								// While searching or filtering the group is always shown: the toggle does nothing then.
+								onClick={() => !narrowed && setArchivedOpen(!archivedOpen)}
 								className="flex h-7 items-center gap-1.5 rounded-md border-0 bg-transparent px-2 text-left text-xs text-fg-3 hover:bg-raised hover:text-fg"
 							>
 								{showArchived ? (
@@ -445,9 +463,11 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 function ServerNode({ server, ctx }: { server: ServerView; ctx: SidebarContext }) {
 	const id = server.config.id;
 	const searching = ctx.query.trim().length > 0;
+	// The 进行中 filter lists only servers with an in-progress conversation (see Sidebar), expanded.
+	const narrowed = searching || ctx.inProgress !== undefined;
 	const stored = useUiStore((s) => s.expandedServers[id]);
 	const setExpanded = useUiStore((s) => s.setServerExpanded);
-	const expanded = searching || (stored ?? true);
+	const expanded = narrowed || (stored ?? true);
 	const workspaces = useServerWorkspaces(expanded ? id : undefined);
 	const status = serverStatusDisplay(server);
 	const active = ctx.activeServerId === id && !ctx.activeWorkspaceId;
@@ -492,11 +512,11 @@ function ServerNode({ server, ctx }: { server: ServerView; ctx: SidebarContext }
 						</span>
 					)}
 					{workspaces.isError && <span className="flex h-7 items-center px-2 text-xs text-fg-3">无法加载工作区</span>}
-					{workspaces.data?.length === 0 && !searching && <span className="flex h-7 items-center px-2 text-xs text-fg-3">暂无工作区</span>}
+					{workspaces.data?.length === 0 && !narrowed && <span className="flex h-7 items-center px-2 text-xs text-fg-3">暂无工作区</span>}
 					{workspaces.data?.map((w) => (
 						<WorkspaceNode key={w.config.id} workspace={w} server={server} ctx={ctx} />
 					))}
-					{!searching && workspaces.data && (
+					{!narrowed && workspaces.data && (
 						<button
 							type="button"
 							onClick={() => setNewWorkspaceOpen(true)}
@@ -524,11 +544,15 @@ function useAutoExpand(serverId: string | undefined, workspaceId: string | undef
 }
 
 /**
- * Left sidebar (264px): session search, server → workspace → session tree with live
- * running/waiting badges, and footer links (同步中心, 添加服务器).
+ * Left sidebar (264px): session search, the 全部/进行中 filter, server → workspace → session tree
+ * with live running/waiting badges, and footer links (同步中心, 添加服务器).
  */
 export function Sidebar({ className }: { className?: string }) {
 	const [query, setQuery] = useState("");
+	const [filter, setFilter] = useState<"all" | "inProgress">("all");
+	const liveConvs = useLiveConversations();
+	// Conversations outside a workspace have no row in the tree.
+	const inProgress = useMemo(() => liveConvs.filter((c) => c.workspaceId && isInProgress(c.info.status)), [liveConvs]);
 	const location = useLocation();
 	const route = parseRoute(location.pathname);
 	const servers = useServers();
@@ -541,12 +565,14 @@ export function Sidebar({ className }: { className?: string }) {
 	const activeServerId = route.kind === "server" || route.kind === "serverSettings" ? route.serverId : workspaceServerId;
 	const ctx: SidebarContext = {
 		query,
+		inProgress: filter === "inProgress" ? inProgress : undefined,
 		activeServerId,
 		activeWorkspaceId,
 		activeSessionId: route.kind === "workspace" && route.tab === "chat" ? route.sessionId : undefined,
 		workspacePageActive: route.kind === "workspace" && route.tab !== "chat",
 	};
 	useAutoExpand(workspaceServerId, activeWorkspaceId);
+	const shownServers = ctx.inProgress ? servers.filter((s) => ctx.inProgress?.some((c) => c.serverId === s.config.id)) : servers;
 
 	const footerLink = (active: boolean) =>
 		cn(
@@ -577,6 +603,25 @@ export function Sidebar({ className }: { className?: string }) {
 						className="min-w-0 flex-1 border-0 bg-transparent text-sm text-fg outline-none placeholder:text-fg-3 focus-visible:outline-none [&::-webkit-search-cancel-button]:hidden"
 					/>
 				</div>
+				<Segmented
+					aria-label="筛选会话"
+					tone="sunken"
+					value={filter}
+					onChange={setFilter}
+					options={[
+						{ value: "all", label: "全部" },
+						{
+							value: "inProgress",
+							label: (
+								<>
+									进行中
+									{inProgress.length > 0 && <span className="text-2xs font-medium text-accent">{inProgress.length}</span>}
+								</>
+							),
+							title: "运行中、启动中或等待确认的会话",
+						},
+					]}
+				/>
 			</div>
 
 			<div className="relative flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 py-2">
@@ -602,7 +647,10 @@ export function Sidebar({ className }: { className?: string }) {
 						还没有服务器，点击添加第一台
 					</Link>
 				)}
-				{servers.map((s, i) => (
+				{loaded && servers.length > 0 && shownServers.length === 0 && (
+					<span className="flex min-h-8 items-center px-2 text-xs text-fg-3">没有进行中的会话</span>
+				)}
+				{shownServers.map((s, i) => (
 					<div key={s.config.id} className={cn(i > 0 && "mt-1.5")}>
 						<ServerNode server={s} ctx={ctx} />
 					</div>

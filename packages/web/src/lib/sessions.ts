@@ -99,18 +99,28 @@ export function splitArchived(sessions: readonly SessionSummary[]): { active: Se
 	return { active, archived };
 }
 
+/** The conversation is in progress (the sidebar's 进行中 filter): starting, running or waiting for a dialog answer. */
+export function isInProgress(status: ConvStatus | undefined): boolean {
+	return status === "running" || status === "starting" || status === "waiting_ui";
+}
+
 /**
  * A workspace's sessions in the sidebar for a search query: the matching active and archived
  * sessions, and the number shown next to the workspace (active sessions only, ignoring the query).
+ * With `inProgressOf` (the workspace's live conversations), only sessions whose conversation is
+ * in progress are kept; the count ignores this filter too.
  */
 export function sidebarSessionGroups(
 	sessions: readonly SessionSummary[],
 	query: string,
+	inProgressOf?: readonly ConversationView[],
 ): { active: SessionSummary[]; archived: SessionSummary[]; count: number } {
 	const { active, archived } = splitArchived(sessions);
+	const keep = (s: SessionSummary) =>
+		matchesSessionQuery(s, query) && (!inProgressOf || isInProgress(liveConversationForSession(s, inProgressOf)?.info.status));
 	return {
-		active: active.filter((s) => matchesSessionQuery(s, query)),
-		archived: archived.filter((s) => matchesSessionQuery(s, query)),
+		active: active.filter(keep),
+		archived: archived.filter(keep),
 		count: active.length,
 	};
 }

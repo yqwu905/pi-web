@@ -1,6 +1,6 @@
 import type { ConversationView, SessionSummary } from "@pi-web/shared";
 import { describe, expect, it } from "vitest";
-import { archiveBlockedReason, canRememberSession, isArchived, pickResumeTarget, sidebarSessionGroups, splitArchived } from "./sessions";
+import { archiveBlockedReason, canRememberSession, isArchived, isInProgress, pickResumeTarget, sidebarSessionGroups, splitArchived } from "./sessions";
 
 function session(id: string, extra: Partial<SessionSummary> = {}): SessionSummary {
 	return {
@@ -47,6 +47,31 @@ describe("archived sessions", () => {
 		expect(groups.count).toBe(2);
 		expect(sidebarSessionGroups([a, b, c, d], "FIRST C").archived.map((s) => s.id)).toEqual(["c"]);
 		expect(sidebarSessionGroups([], "x")).toEqual({ active: [], archived: [], count: 0 });
+	});
+
+	it("keeps only sessions whose conversation is in progress with the 进行中 filter; the count ignores it", () => {
+		expect(isInProgress(undefined)).toBe(false);
+		expect(isInProgress("idle")).toBe(false);
+		expect(isInProgress("exited")).toBe(false);
+		expect(isInProgress("starting")).toBe(true);
+		expect(isInProgress("running")).toBe(true);
+		expect(isInProgress("waiting_ui")).toBe(true);
+		const withStatus = (view: ConversationView, status: ConversationView["info"]["status"]): ConversationView => ({ ...view, info: { ...view.info, status } });
+		const live = [
+			withStatus(conv("c1", "w", "a", 0), "running"),
+			withStatus(conv("c2", "w", "d", 0), "idle"),
+			withStatus(conv("c3", "w", "e", 0), "waiting_ui"),
+			withStatus(conv("c4", "w", "f", 0), "exited"),
+		];
+		const e = session("e", { name: "加载数据" });
+		const f = session("f");
+		const groups = sidebarSessionGroups([a, b, c, d, e, f], "", live);
+		expect(groups.active.map((s) => s.id)).toEqual(["a", "e"]);
+		expect(groups.archived).toEqual([]);
+		expect(groups.count).toBe(4);
+		// Combined with a search query.
+		expect(sidebarSessionGroups([a, b, c, d, e, f], "加载", live).active.map((s) => s.id)).toEqual(["e"]);
+		expect(sidebarSessionGroups([a, d], "", []).active).toEqual([]);
 	});
 
 	it("blocks archiving while the conversation runs or waits for a dialog", () => {
