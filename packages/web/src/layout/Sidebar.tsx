@@ -1,5 +1,20 @@
 import type { ConversationView, ServerView, SessionSummary, WorkspaceView } from "@pi-web/shared";
-import { Archive, ArchiveRestore, ChevronDown, ChevronRight, Folder, FolderPlus, Plus, RefreshCw, Search, Server as ServerIcon, Settings2, Trash2 } from "lucide-react";
+import {
+	Archive,
+	ArchiveRestore,
+	ChevronDown,
+	ChevronRight,
+	ChevronsDownUp,
+	Folder,
+	FolderPlus,
+	ListCollapse,
+	Plus,
+	RefreshCw,
+	Search,
+	Server as ServerIcon,
+	Settings2,
+	Trash2,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { setSessionArchived } from "../api/archive";
@@ -572,6 +587,11 @@ export function Sidebar({ className }: { className?: string }) {
 		workspacePageActive: route.kind === "workspace" && route.tab !== "chat",
 	};
 	useAutoExpand(workspaceServerId, activeWorkspaceId);
+	const collapseServers = useUiStore((s) => s.collapseServers);
+	const collapseAllWorkspaces = useUiStore((s) => s.collapseAllWorkspaces);
+	// Searching or filtering keeps the matching rows expanded: collapsing would show no change.
+	const narrowed = query.trim().length > 0 || ctx.inProgress !== undefined;
+	const collapseHint = narrowed ? "搜索或筛选时分组保持展开" : undefined;
 	const shownServers = ctx.inProgress ? servers.filter((s) => ctx.inProgress?.some((c) => c.serverId === s.config.id)) : servers;
 
 	const footerLink = (active: boolean) =>
@@ -627,14 +647,28 @@ export function Sidebar({ className }: { className?: string }) {
 			<div className="relative flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 py-2">
 				<div className="flex items-center justify-between px-2 pt-1.5 pb-1">
 					<span className="section-label">服务器</span>
-					<Link
-						to={paths.addServer()}
-						aria-label="添加服务器"
-						title="添加服务器"
-						className="flex size-6 items-center justify-center rounded-sm text-fg-2 hover:bg-raised hover:text-fg"
-					>
-						<Plus size={14} strokeWidth={2} aria-hidden="true" />
-					</Link>
+					<div className="flex items-center gap-0.5">
+						<IconButton aria-label="折叠所有工作区" title={collapseHint} size="sm" disabled={narrowed} onClick={collapseAllWorkspaces}>
+							<ListCollapse size={14} strokeWidth={2} />
+						</IconButton>
+						<IconButton
+							aria-label="折叠所有服务器"
+							title={collapseHint}
+							size="sm"
+							disabled={narrowed}
+							onClick={() => collapseServers(servers.map((s) => s.config.id))}
+						>
+							<ChevronsDownUp size={14} strokeWidth={2} />
+						</IconButton>
+						<Link
+							to={paths.addServer()}
+							aria-label="添加服务器"
+							title="添加服务器"
+							className="flex size-6 items-center justify-center rounded-sm text-fg-2 hover:bg-raised hover:text-fg"
+						>
+							<Plus size={14} strokeWidth={2} aria-hidden="true" />
+						</Link>
+					</div>
 				</div>
 				{!loaded && !error && (
 					<span className="flex h-8 items-center gap-2 px-2 text-xs text-fg-3">

@@ -446,7 +446,7 @@ logs/pi-web.log
   src/stores/{servers.ts,convs.ts,toasts.ts,conversation.ts}
   src/components/ui/*                        Button/IconButton/Input/Select/Textarea/Checkbox/Radio/Switch/Segmented/Card/Badge/StatusDot/Modal/Tabs/Toast/Spinner/ProgressBar/EmptyState/KeyValue
   src/components/{Markdown,CodeBlock,DiffView,JsonView}.tsx
-  src/layout/{AppShell,Header,Sidebar}.tsx   侧栏：服务器→工作区→会话树(懒加载)、运行/等待徽标、全部/进行中筛选、新建对话
+  src/layout/{AppShell,Header,Sidebar}.tsx   侧栏：服务器→工作区→会话树(懒加载)、运行/等待徽标、全部/进行中筛选、折叠所有工作区/服务器、新建对话
   src/pages/servers/{AddServer,ServerDetail,ServerSettings}.tsx
   src/pages/sync/SyncCenter.tsx  src/pages/settings/Settings.tsx
   src/pages/chat/*                           对话

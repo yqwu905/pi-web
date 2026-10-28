@@ -21,6 +21,10 @@ interface UiState {
 	toolsExpandedEpoch: number;
 	setServerExpanded(serverId: string, expanded: boolean): void;
 	setWorkspaceExpanded(workspaceId: string, expanded: boolean): void;
+	/** Collapses every server row of `serverIds` (the sidebar's 折叠所有服务器). */
+	collapseServers(serverIds: readonly string[]): void;
+	/** Collapses every workspace row (their default; the sidebar's 折叠所有工作区). */
+	collapseAllWorkspaces(): void;
 	rememberSession(workspaceId: string, sessionId: string): void;
 	forgetSession(workspaceId: string, sessionId: string): void;
 	/** Drops a session from the remembered slots of the workspaces `inWorkspace` accepts (e.g. it was archived on their server). */
@@ -44,6 +48,9 @@ export const useUiStore = create<UiState>()(
 			setServerExpanded: (serverId, expanded) => set((s) => ({ expandedServers: { ...s.expandedServers, [serverId]: expanded } })),
 			setWorkspaceExpanded: (workspaceId, expanded) =>
 				set((s) => ({ expandedWorkspaces: { ...s.expandedWorkspaces, [workspaceId]: expanded } })),
+			collapseServers: (serverIds) =>
+				set((s) => ({ expandedServers: { ...s.expandedServers, ...Object.fromEntries(serverIds.map((id) => [id, false])) } })),
+			collapseAllWorkspaces: () => set({ expandedWorkspaces: {} }),
 			rememberSession: (workspaceId, sessionId) =>
 				set((s) =>
 					s.lastSession[workspaceId] === sessionId && s.lastVisited?.sessionId === sessionId
