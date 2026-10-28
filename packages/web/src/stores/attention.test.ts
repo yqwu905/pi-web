@@ -20,7 +20,10 @@ describe("attention", () => {
 		noteConversationChange(view("b", "running"), view("b", "waiting_ui"), path);
 		noteConversationChange(view("c", "idle"), view("c", "idle"), path);
 		noteConversationChange(undefined, view("d", "idle"), path);
-		expect(useAttentionStore.getState().unread).toEqual({ "s-a": "done", "s-b": "waiting" });
+		expect(useAttentionStore.getState().unread).toEqual({
+			"s-a": { reason: "done", serverId: "srv", workspaceId: "ws" },
+			"s-b": { reason: "waiting", serverId: "srv", workspaceId: "ws" },
+		});
 	});
 
 	it("leaves the open conversation alone and clears it when it is opened", () => {
@@ -30,7 +33,7 @@ describe("attention", () => {
 		expect(useAttentionStore.getState().unread).toEqual({});
 		stop();
 		noteConversationChange(view("a", "running"), view("a", "idle"), path);
-		expect(useAttentionStore.getState().unread).toEqual({ "s-a": "done" });
+		expect(useAttentionStore.getState().unread).toEqual({ "s-a": { reason: "done", serverId: "srv", workspaceId: "ws" } });
 		setViewing("a", "s-a")();
 		expect(useAttentionStore.getState().unread).toEqual({});
 	});

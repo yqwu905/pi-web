@@ -7,16 +7,28 @@
 import type { ConversationView } from "@pi-web/shared";
 import { create } from "zustand";
 
+/** Why a conversation is unread, and where it runs (the sidebar's 进行中 filter lists unread sessions too). */
+export interface UnreadMark {
+	reason: "done" | "waiting";
+	serverId: string;
+	workspaceId: string | null;
+}
+
 interface AttentionState {
 	/** Keyed by session id (falls back to the conversation id before the session has one). */
-	unread: Record<string, "done" | "waiting">;
-	mark(key: string, reason: "done" | "waiting"): void;
+	unread: Record<string, UnreadMark>;
+	mark(key: string, mark: UnreadMark): void;
 	clear(key: string): void;
 }
 
 export const useAttentionStore = create<AttentionState>()((set) => ({
 	unread: {},
-	mark: (key, reason) => set((s) => (s.unread[key] === reason ? s : { unread: { ...s.unread, [key]: reason } })),
+	mark: (key, mark) =>
+		set((s) => {
+			const prev = s.unread[key];
+			if (prev && prev.reason === mark.reason && prev.serverId === mark.serverId && prev.workspaceId === mark.workspaceId) return s;
+			return { unread: { ...s.unread, [key]: mark } };
+		}),
 	clear: (key) =>
 		set((s) => {
 			if (!(key in s.unread)) return s;
@@ -85,7 +97,7 @@ export function noteConversationChange(prev: ConversationView | undefined, next:
 	const key = attentionKey(next);
 	const watched = viewing?.convId === next.convId && isVisible();
 	if (watched) return;
-	useAttentionStore.getState().mark(key, reason);
+	useAttentionStore.getState().mark(key, { reason, serverId: next.serverId, workspaceId: next.workspaceId });
 	if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
 	const title = next.info.sessionName || "对话";
 	try {

@@ -29,8 +29,9 @@ import { formatRelativeTime } from "../lib/format";
 import { parseRoute, paths } from "../lib/routes";
 import {
 	archiveBlockedReason,
+	filterKeepsRow,
+	inProgressItems,
 	isArchived,
-	isInProgress,
 	liveConversationForSession,
 	matchesSessionQuery,
 	sessionRouteId,
@@ -65,8 +66,8 @@ type TrackFocus = (move: { file: string; archived: boolean } | null) => void;
 
 interface SidebarContext {
 	query: string;
-	/** Set while the 进行中 filter is on: the in-progress conversations of all workspaces. */
-	inProgress?: readonly ConversationView[];
+	/** Set while the 进行中 filter is on: where it has rows (in-progress conversations, unread sessions, the open session). */
+	inProgress?: readonly { serverId: string; workspaceId: string }[];
 	activeServerId?: string;
 	activeWorkspaceId?: string;
 	activeSessionId?: string;
@@ -95,7 +96,7 @@ function SessionRow({
 	const routeId = session ? sessionRouteId(session) : conv?.info.sessionId;
 	const unread = useAttentionStore((s) => {
 		const key = conv?.info.sessionId ?? session?.id ?? routeId;
-		return key ? s.unread[key] : undefined;
+		return key ? s.unread[key]?.reason : undefined;
 	});
 	const title = session ? sessionTitle(session) : conv?.info.sessionName || "新对话";
 	const subtitle =
@@ -263,7 +264,7 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 	const filtering = ctx.inProgress !== undefined;
 	// Searching or filtering narrows the list: everything that matches is shown, without the new-session row.
 	const narrowed = searching || filtering;
-	// The 进行中 filter shows only workspaces with an in-progress conversation, expanded.
+	// The 进行中 filter shows only workspaces it has rows in, expanded.
 	const hasInProgress = ctx.inProgress?.some((c) => c.workspaceId === wsId) ?? false;
 	const stored = useUiStore((s) => s.expandedWorkspaces[wsId]);
 	const setExpanded = useUiStore((s) => s.setWorkspaceExpanded);
@@ -272,6 +273,9 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 	// Listing needs the agent: while offline keep showing the cached list instead of failing requests.
 	const sessionsQuery = useWorkspaceSessions(wsId, { enabled: expanded && online });
 	const liveConvs = useLiveConversations(wsId);
+	const unread = useAttentionStore((s) => s.unread);
+	const openId = ctx.activeWorkspaceId === wsId ? ctx.activeSessionId : undefined;
+	const filter = useMemo(() => (filtering ? { live: liveConvs, unread, openId } : undefined), [filtering, liveConvs, unread, openId]);
 	const navigate = useNavigate();
 	const [showAll, setShowAll] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
@@ -280,8 +284,8 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 	const sessions = sessionsQuery.data;
 	// Archived sessions leave the list (and the count) for the collapsed 已归档 group.
 	const groups = useMemo(
-		() => sidebarSessionGroups(sessions ?? [], ctx.query, filtering ? liveConvs : undefined),
-		[sessions, ctx.query, filtering, liveConvs],
+		() => sidebarSessionGroups(sessions ?? [], ctx.query, filter),
+		[sessions, ctx.query, filter],
 	);
 	const filtered = groups.active;
 	const archived = groups.archived;
@@ -289,10 +293,10 @@ function WorkspaceNode({ workspace, server, ctx }: { workspace: WorkspaceView; s
 		() =>
 			sessions
 				? unlistedConversations(wsId, sessions, liveConvs).filter(
-						(c) => matchesSessionQuery({ name: c.info.sessionName, firstMessage: "" }, ctx.query) && (!filtering || isInProgress(c.info.status)),
+						(c) => matchesSessionQuery({ name: c.info.sessionName, firstMessage: "" }, ctx.query) && (!filter || filterKeepsRow(filter, c)),
 					)
 				: [],
-		[sessions, liveConvs, wsId, ctx.query, filtering],
+		[sessions, liveConvs, wsId, ctx.query, filter],
 	);
 	const runningCount = liveConvs.filter((c) => c.info.status === "running" || c.info.status === "waiting_ui").length;
 	const count = sessions ? groups.count : workspace.sessionCount;
@@ -566,8 +570,8 @@ export function Sidebar({ className }: { className?: string }) {
 	const [query, setQuery] = useState("");
 	const [filter, setFilter] = useState<"all" | "inProgress">("all");
 	const liveConvs = useLiveConversations();
-	// Conversations outside a workspace have no row in the tree.
-	const inProgress = useMemo(() => liveConvs.filter((c) => c.workspaceId && isInProgress(c.info.status)), [liveConvs]);
+	const unread = useAttentionStore((s) => s.unread);
+	const inProgress = useMemo(() => inProgressItems(liveConvs, unread), [liveConvs, unread]);
 	const location = useLocation();
 	const route = parseRoute(location.pathname);
 	const servers = useServers();
@@ -578,12 +582,15 @@ export function Sidebar({ className }: { className?: string }) {
 	const activeWorkspaceId = route.kind === "workspace" ? route.workspaceId : undefined;
 	const workspaceServerId = activeWorkspaceId ? allWorkspaces.data?.find((w) => w.config.id === activeWorkspaceId)?.config.serverId : undefined;
 	const activeServerId = route.kind === "server" || route.kind === "serverSettings" ? route.serverId : workspaceServerId;
+	const activeSessionId = route.kind === "workspace" && route.tab === "chat" ? route.sessionId : undefined;
+	// The open session stays listed while it is open (opening an unread session clears its mark).
+	const openItem = activeSessionId && activeWorkspaceId && workspaceServerId ? { serverId: workspaceServerId, workspaceId: activeWorkspaceId } : undefined;
 	const ctx: SidebarContext = {
 		query,
-		inProgress: filter === "inProgress" ? inProgress : undefined,
+		inProgress: filter === "inProgress" ? (openItem ? [...inProgress, openItem] : inProgress) : undefined,
 		activeServerId,
 		activeWorkspaceId,
-		activeSessionId: route.kind === "workspace" && route.tab === "chat" ? route.sessionId : undefined,
+		activeSessionId,
 		workspacePageActive: route.kind === "workspace" && route.tab !== "chat",
 	};
 	useAutoExpand(workspaceServerId, activeWorkspaceId);
@@ -638,7 +645,7 @@ export function Sidebar({ className }: { className?: string }) {
 									{inProgress.length > 0 && <span className="text-2xs font-medium text-accent">{inProgress.length}</span>}
 								</>
 							),
-							title: "运行中、启动中或等待确认的会话",
+							title: "运行中、启动中、等待确认或有未读回复的会话",
 						},
 					]}
 				/>

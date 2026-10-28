@@ -1,6 +1,16 @@
 import type { ConversationView, SessionSummary } from "@pi-web/shared";
 import { describe, expect, it } from "vitest";
-import { archiveBlockedReason, canRememberSession, isArchived, isInProgress, pickResumeTarget, sidebarSessionGroups, splitArchived } from "./sessions";
+import {
+	archiveBlockedReason,
+	canRememberSession,
+	filterKeepsRow,
+	inProgressItems,
+	isArchived,
+	isInProgress,
+	pickResumeTarget,
+	sidebarSessionGroups,
+	splitArchived,
+} from "./sessions";
 
 function session(id: string, extra: Partial<SessionSummary> = {}): SessionSummary {
 	return {
@@ -65,13 +75,38 @@ describe("archived sessions", () => {
 		];
 		const e = session("e", { name: "加载数据" });
 		const f = session("f");
-		const groups = sidebarSessionGroups([a, b, c, d, e, f], "", live);
+		const groups = sidebarSessionGroups([a, b, c, d, e, f], "", { live, unread: {} });
 		expect(groups.active.map((s) => s.id)).toEqual(["a", "e"]);
 		expect(groups.archived).toEqual([]);
 		expect(groups.count).toBe(4);
 		// Combined with a search query.
-		expect(sidebarSessionGroups([a, b, c, d, e, f], "加载", live).active.map((s) => s.id)).toEqual(["e"]);
-		expect(sidebarSessionGroups([a, d], "", []).active).toEqual([]);
+		expect(sidebarSessionGroups([a, b, c, d, e, f], "加载", { live, unread: {} }).active.map((s) => s.id)).toEqual(["e"]);
+		expect(sidebarSessionGroups([a, d], "", { live: [], unread: {} }).active).toEqual([]);
+		// Unread sessions (also without a live conversation, also archived ones) and the open session are kept too.
+		const unread = { d: { serverId: "srv", workspaceId: "w" }, c: { serverId: "srv", workspaceId: "w" } };
+		const withUnread = sidebarSessionGroups([a, b, c, d, e, f], "", { live, unread, openId: "f" });
+		expect(withUnread.active.map((s) => s.id)).toEqual(["a", "d", "e", "f"]);
+		expect(withUnread.archived.map((s) => s.id)).toEqual(["c"]);
+		expect(withUnread.count).toBe(4);
+	});
+
+	it("lists where the 进行中 filter has rows, once per session", () => {
+		const running = { ...conv("c1", "w1", "a", 0), info: { ...conv("c1", "w1", "a", 0).info, status: "running" as const } };
+		const noWorkspace = { ...running, convId: "c2", workspaceId: null, info: { ...running.info, convId: "c2", sessionId: "x" } };
+		const idle = conv("c3", "w2", "b", 0);
+		const items = inProgressItems([running, noWorkspace, idle], {
+			a: { serverId: "srv", workspaceId: "w1" },
+			d: { serverId: "srv2", workspaceId: "w3" },
+			y: { serverId: "srv", workspaceId: null },
+		});
+		expect(items).toEqual([
+			{ serverId: "srv", workspaceId: "w1" },
+			{ serverId: "srv2", workspaceId: "w3" },
+		]);
+		// A new conversation without a session id yet: its 未读 mark is keyed by the conversation id.
+		const fresh = { ...idle, info: { ...idle.info, sessionId: undefined } };
+		expect(filterKeepsRow({ live: [fresh], unread: {} }, fresh)).toBe(false);
+		expect(filterKeepsRow({ live: [fresh], unread: { c3: { serverId: "srv", workspaceId: "w2" } } }, fresh)).toBe(true);
 	});
 
 	it("blocks archiving while the conversation runs or waits for a dialog", () => {

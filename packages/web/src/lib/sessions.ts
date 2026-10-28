@@ -99,25 +99,63 @@ export function splitArchived(sessions: readonly SessionSummary[]): { active: Se
 	return { active, archived };
 }
 
-/** The conversation is in progress (the sidebar's 进行中 filter): starting, running or waiting for a dialog answer. */
+/** The conversation is in progress: starting, running or waiting for a dialog answer. */
 export function isInProgress(status: ConvStatus | undefined): boolean {
 	return status === "running" || status === "starting" || status === "waiting_ui";
+}
+
+/** The sidebar's 未读 marks: session id (else conversation id) → where the conversation runs. */
+export type UnreadMarks = Readonly<Record<string, { serverId: string; workspaceId: string | null }>>;
+
+/** The sidebar's 进行中 filter for one workspace: in-progress conversations, unread sessions and the open session. */
+export interface InProgressFilter {
+	/** The workspace's live conversations. */
+	live: readonly ConversationView[];
+	unread: UnreadMarks;
+	/** Route id of the open session: it stays listed while open (opening an unread session clears its mark). */
+	openId?: string;
+}
+
+/**
+ * Where the 进行中 filter has rows: one entry per in-progress conversation or unread session
+ * (keyed like the 未读 marks, so a running session that is also unread counts once).
+ * Conversations outside a workspace have no row in the tree and are left out.
+ */
+export function inProgressItems(live: readonly ConversationView[], unread: UnreadMarks): { serverId: string; workspaceId: string }[] {
+	const items = new Map<string, { serverId: string; workspaceId: string }>();
+	for (const c of live) {
+		if (c.workspaceId && isInProgress(c.info.status)) items.set(c.info.sessionId ?? c.convId, { serverId: c.serverId, workspaceId: c.workspaceId });
+	}
+	for (const [key, mark] of Object.entries(unread)) {
+		if (mark.workspaceId && !items.has(key)) items.set(key, { serverId: mark.serverId, workspaceId: mark.workspaceId });
+	}
+	return [...items.values()];
+}
+
+/** Whether the 进行中 filter keeps a sidebar row: its conversation is in progress, it is unread, or it is the open session. */
+export function filterKeepsRow(filter: InProgressFilter, conv: ConversationView | undefined, session?: SessionSummary): boolean {
+	const key = conv?.info.sessionId ?? session?.id ?? conv?.convId;
+	const routeId = session ? sessionRouteId(session) : conv?.info.sessionId;
+	return (
+		isInProgress(conv?.info.status) ||
+		(key !== undefined && Object.hasOwn(filter.unread, key)) ||
+		(routeId !== undefined && routeId === filter.openId)
+	);
 }
 
 /**
  * A workspace's sessions in the sidebar for a search query: the matching active and archived
  * sessions, and the number shown next to the workspace (active sessions only, ignoring the query).
- * With `inProgressOf` (the workspace's live conversations), only sessions whose conversation is
- * in progress are kept; the count ignores this filter too.
+ * With the 进行中 `filter`, only the rows it keeps are listed; the count ignores the filter too.
  */
 export function sidebarSessionGroups(
 	sessions: readonly SessionSummary[],
 	query: string,
-	inProgressOf?: readonly ConversationView[],
+	filter?: InProgressFilter,
 ): { active: SessionSummary[]; archived: SessionSummary[]; count: number } {
 	const { active, archived } = splitArchived(sessions);
 	const keep = (s: SessionSummary) =>
-		matchesSessionQuery(s, query) && (!inProgressOf || isInProgress(liveConversationForSession(s, inProgressOf)?.info.status));
+		matchesSessionQuery(s, query) && (!filter || filterKeepsRow(filter, liveConversationForSession(s, filter.live), s));
 	return {
 		active: active.filter(keep),
 		archived: archived.filter(keep),
